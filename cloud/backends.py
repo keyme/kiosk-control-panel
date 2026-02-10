@@ -6,3 +6,10 @@ class DeviceBackend:
 
     def ping(self):
         return {'status': 'ok', 'source': 'device'}
+
+
+class CloudBackend:
+    """Backend for the control panel when running on the cloud (REST + static only)."""
+
+    def ping(self):
+        return {'status': 'ok', 'source': 'cloud'}

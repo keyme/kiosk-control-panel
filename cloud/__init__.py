@@ -8,35 +8,35 @@ from flask import Blueprint, Response, jsonify, request
 
 _log = logging.getLogger(__name__)
 
-from control_panel.api.testcuts import (
+from control_panel.cloud.testcuts import (
     kiosk_to_hostname,
     list_testcut_ids,
     list_testcut_images,
     BUCKET as TESTCUTS_BUCKET,
 )
-from control_panel.api.bitting_calibration import list_bitting_dates, list_bitting_images
-from control_panel.api.bump_tower_calibration import (
+from control_panel.cloud.bitting_calibration import list_bitting_dates, list_bitting_images
+from control_panel.cloud.bump_tower_calibration import (
     list_bump_tower_runs,
     list_bump_tower_images,
 )
-from control_panel.api.grip_calibration import list_grip_runs, list_grip_images
-from control_panel.api.gripper_cam_calibration import (
+from control_panel.cloud.grip_calibration import list_grip_runs, list_grip_images
+from control_panel.cloud.gripper_cam_calibration import (
     list_gripper_cam_runs,
     list_gripper_cam_images,
 )
-from control_panel.api.gripper_leds_check import (
+from control_panel.cloud.gripper_leds_check import (
     list_gripper_leds_runs,
     list_gripper_leds_images,
 )
-from control_panel.api.overhead_cam_calibration import (
+from control_panel.cloud.overhead_cam_calibration import (
     list_overhead_cam_runs,
     list_overhead_cam_images,
 )
-from control_panel.api.pickup_y_calibration import (
+from control_panel.cloud.pickup_y_calibration import (
     list_pickup_y_runs,
     list_pickup_y_images,
 )
-from control_panel.api.calibration_trace import (
+from control_panel.cloud.calibration_trace import (
     list_trace_runs,
     get_trace,
     dewarp_image,

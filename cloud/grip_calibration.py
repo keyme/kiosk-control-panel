@@ -1,6 +1,6 @@
 # Grip calibration: list runs and images from S3 (keyme-calibration/grip_calibration/...).
 
-from control_panel.api.run_based_calibration import list_images, list_runs
+from control_panel.cloud.run_based_calibration import list_images, list_runs
 
 PREFIX = "grip_calibration"
 

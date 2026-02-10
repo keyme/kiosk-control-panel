@@ -9,14 +9,12 @@ import json as _json
 from datetime import datetime
 from functools import partial, wraps
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, request
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 
 import pylib as keyme
 
-from control_panel.api import create_blueprint
-from control_panel.api.backends import DeviceBackend
 from control_panel.python.putil import SocketErrors, WebsocketError, WebsocketSuccess
 from control_panel.python.shared import PORTS
 from control_panel.python import wellness
@@ -37,13 +35,10 @@ if sys.version_info[0] == 3 and sys.version_info[1] >= 6:
         keyme.log.error(f"Engine.IO payload config skipped: {e}")
 
 
-# Setup the flask server.
+# Setup the flask server. Device: Socket.IO only; no REST, no static/JS.
 app = Flask(__name__)
 CORS(app)
 app.config['CORS_HEADERS'] = 'Content-Type'
-
-# Shared REST API (same blueprint used by device and cloud; device uses DeviceBackend).
-app.register_blueprint(create_blueprint(DeviceBackend()))
 
 # Flask-SocketIO server. Threading mode keeps dependencies minimal (no eventlet/gevent).
 socket = SocketIO(app, async_mode='threading', logger=False, engineio_logger=False)
@@ -57,8 +52,6 @@ class SocketIOLogFilter(logging.Filter):
 
 
 logging.getLogger('werkzeug').addFilter(SocketIOLogFilter())
-
-DIST_DIR = os.path.join(keyme.config.PATH, 'control_panel', 'web', 'dist')
 
 
 def _handle_errors(handler=None, return_value=None):
@@ -91,44 +84,6 @@ def _handle_errors(handler=None, return_value=None):
         return WebsocketSuccess(data).to_json()
     return wrapper
 
-
-def _send_index_html():
-    resp = send_from_directory(DIST_DIR, 'index.html')
-    # Never cache the HTML entrypoint; it must refresh to pick up new hashed assets.
-    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
-    resp.headers['Pragma'] = 'no-cache'
-    resp.headers['Expires'] = '0'
-    return resp
-
-
-# Serve React production build.
-@app.route('/')
-def root():
-    if os.path.isfile(os.path.join(DIST_DIR, 'index.html')):
-        return _send_index_html()
-    return jsonify({"message": "Control panel UI not built. Run npm run build in control_panel/web."}), 404
-
-
-@app.route('/assets/<path:path>')
-def static_asset(path):
-    resp = send_from_directory(os.path.join(DIST_DIR, 'assets'), path)
-    resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
-    return resp
-
-
-@app.errorhandler(404)
-def spa_fallback(error):
-    """
-    SPA fallback: allow deep links like /calibration to load the React app.
-
-    Important: do NOT intercept /socket.io* or /assets/*, otherwise Socket.IO
-    and static assets break.
-    """
-    if request.path.startswith('/assets/') or request.path.startswith('/socket.io') or request.path.startswith('/api'):
-        return error
-    if os.path.isfile(os.path.join(DIST_DIR, 'index.html')):
-        return _send_index_html()
-    return error
 
 _IPC_ERRORS = (keyme.ipc.exceptions.TimeoutException, keyme.ipc.exceptions.IPCException)
 

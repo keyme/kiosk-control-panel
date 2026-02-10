@@ -1,15 +1,15 @@
-# Pickup Y calibration: flat list under pickup_y_calibration/{kiosk_short_name}/.
-# Filenames: {kiosk}_{timestamp}_{suffix}.jpg. Runs = 5-min flexible grouping by timestamp.
+# Overhead cam calibration: flat list under overhead_cam_calibration/{kiosk_short_name}/.
+# Filenames: {kiosk}_{timestamp}_{suffix}.png. Runs = 5-min flexible grouping by timestamp.
 
 from typing import Dict, List
 
 import boto3
 
-from control_panel.api.run_based_calibration import _kiosk_to_short_name
-from control_panel.api.run_grouping import group_by_max_gap_minutes
-from control_panel.api.testcuts import BUCKET, PRESIGNED_EXPIRES
+from control_panel.cloud.run_based_calibration import _kiosk_to_short_name
+from control_panel.cloud.run_grouping import group_by_max_gap_minutes
+from control_panel.cloud.testcuts import BUCKET, PRESIGNED_EXPIRES
 
-PREFIX = "pickup_y_calibration"
+PREFIX = "overhead_cam_calibration"
 
 
 def _ts_from_filename(filename: str) -> str:
@@ -18,7 +18,7 @@ def _ts_from_filename(filename: str) -> str:
     return parts[1] if len(parts) >= 2 else ""
 
 
-def list_pickup_y_runs(s3_client, bucket: str, kiosk: str) -> List[str]:
+def list_overhead_cam_runs(s3_client, bucket: str, kiosk: str) -> List[str]:
     """List run IDs (earliest ts per 5-min group), sorted descending."""
     short = _kiosk_to_short_name(kiosk)
     base = f"{PREFIX}/{short}/"
@@ -43,7 +43,7 @@ def list_pickup_y_runs(s3_client, bucket: str, kiosk: str) -> List[str]:
     return sorted(runs, key=lambda r: r["run_id"], reverse=True)
 
 
-def list_pickup_y_images(
+def list_overhead_cam_images(
     s3_client, bucket: str, kiosk: str, run_id: str
 ) -> Dict[str, List]:
     """List objects in the run that has this run_id (5-min grouping). Section = filename."""

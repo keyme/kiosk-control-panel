@@ -6,8 +6,8 @@ from typing import Dict, List
 
 import boto3
 
-from control_panel.api.run_grouping import group_by_max_gap_minutes, parse_timestamp
-from control_panel.api.testcuts import (
+from control_panel.cloud.run_grouping import group_by_max_gap_minutes, parse_timestamp
+from control_panel.cloud.testcuts import (
     BUCKET,
     PRESIGNED_EXPIRES,
 )

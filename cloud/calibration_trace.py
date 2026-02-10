@@ -8,8 +8,8 @@ import boto3
 import cv2
 import numpy as np
 
-from control_panel.api.run_based_calibration import _kiosk_to_short_name
-from control_panel.api.testcuts import BUCKET, PRESIGNED_EXPIRES
+from control_panel.cloud.run_based_calibration import _kiosk_to_short_name
+from control_panel.cloud.testcuts import BUCKET, PRESIGNED_EXPIRES
 
 PREFIX = "gripper_cam_calibration"
 TRACE_FILENAME = "trace.json"
