@@ -65,6 +65,46 @@ Port can be overridden with the `PORT` env var (e.g. `PORT=9000` before the comm
 - **`PORT`** — Server port (default 8080).
 - **`CONTROL_PANEL_STATIC_ROOT`** — Path to the React build (default: `cloud/web/dist` next to `main.py`). Set this if you deploy the static files elsewhere.
 
+**Docker (build from control_panel dir):**
+
+Build (includes JS build in image):
+
+```bash
+cd control_panel
+docker build -f cloud/Dockerfile -t control-panel-cloud .
+```
+
+Run (port 8080):
+
+```bash
+docker run -p 8080:8080 control-panel-cloud
+```
+
+The app uses boto3 to access S3 (calibration data). Pass AWS credentials in one of these ways:
+
+- **Environment variables** (good for CI or injected secrets):
+
+```bash
+docker run -p 8080:8080 \
+  -e AWS_ACCESS_KEY_ID=... \
+  -e AWS_SECRET_ACCESS_KEY=... \
+  -e AWS_DEFAULT_REGION=us-east-1 \
+  control-panel-cloud
+```
+
+- **Mount local AWS config** (reuse `~/.aws` from the host):
+
+```bash
+docker run -p 8080:8080 \
+  -v ~/.aws:/home/appuser/.aws:ro \
+  -e HOME=/home/appuser \
+  control-panel-cloud
+```
+
+(Use `-u $(id -u):$(id -g)` and a writable dir if the container user cannot read your `~/.aws`; or create a dedicated credentials file and mount that.)
+
+- **IAM roles:** On ECS (task role), EKS (pod IRSA), or EC2 (instance profile), boto3 uses the role automatically; no env or mount needed.
+
 ## Config
 
 - **`config/ports.json`:** `python` — Flask/Socket.IO server port (2026); `react` — Vite dev server port (8081).
