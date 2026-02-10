@@ -1,0 +1,12 @@
+[project]
+name = "control-panel-cloud"
+version = "0.1.0"
+description = "Control panel cloud app (FastAPI): REST API + static serving"
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "boto3",
+    "numpy",
+    "opencv-python-headless",
+]

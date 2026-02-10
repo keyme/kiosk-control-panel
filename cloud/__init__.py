@@ -1,10 +1,11 @@
 # Shared REST API for control panel (device and cloud).
-# Use create_blueprint(backend) to get a Flask blueprint; register it on the app.
+# Use create_router(backend) to get a FastAPI APIRouter; include it with prefix="/api".
 
 import logging
 
 import boto3
-from flask import Blueprint, Response, jsonify, request
+from fastapi import APIRouter, Body, Query
+from fastapi.responses import JSONResponse, Response
 
 _log = logging.getLogger(__name__)
 
@@ -43,353 +44,325 @@ from control_panel.cloud.calibration_trace import (
 )
 
 
-def create_blueprint(backend):
+def create_router(backend):
     """
-    Create the shared API blueprint.
+    Create the shared API router.
     backend must implement: ping() -> dict (for GET /api/ping).
     """
-    api = Blueprint('api', __name__, url_prefix='/api')
+    router = APIRouter()
 
-    @api.route('/ping', methods=['GET'])
+    @router.get("/ping")
     def ping():
-        data = backend.ping()
-        return jsonify(data)
+        return backend.ping()
 
-    @api.route('/calibration/testcuts/ids', methods=['GET'])
-    def calibration_testcuts_ids():
-        kiosk = request.args.get('kiosk')
+    @router.get("/calibration/testcuts/ids")
+    def calibration_testcuts_ids(kiosk: str = Query(None)):
         if not kiosk:
-            return jsonify({'error': 'Missing required query parameter: kiosk'}), 400
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         host = kiosk_to_hostname(kiosk)
         if not host:
-            return jsonify({'error': 'Invalid kiosk'}), 400
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
         try:
-            s3 = boto3.client('s3')
+            s3 = boto3.client("s3")
             ids = list_testcut_ids(s3, TESTCUTS_BUCKET, host)
-            return jsonify(ids)
+            return ids
         except Exception as e:
             _log.exception("Testcuts list IDs failed")
-            return jsonify({'error': str(e)}), 503
+            return JSONResponse({"error": str(e)}, status_code=503)
 
-    @api.route('/calibration/testcuts/images', methods=['GET'])
-    def calibration_testcuts_images():
-        kiosk = request.args.get('kiosk')
-        id_param = request.args.get('id')
+    @router.get("/calibration/testcuts/images")
+    def calibration_testcuts_images(kiosk: str = Query(None), id: str = Query(None)):
         if not kiosk:
-            return jsonify({'error': 'Missing required query parameter: kiosk'}), 400
-        if id_param is None or id_param == '':
-            return jsonify({'error': 'Missing required query parameter: id'}), 400
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
+        if id is None or id == "":
+            return JSONResponse({"error": "Missing required query parameter: id"}, status_code=400)
         try:
-            id_int = int(id_param)
+            id_int = int(id)
         except ValueError:
-            return jsonify({'error': 'Parameter id must be an integer'}), 400
+            return JSONResponse({"error": "Parameter id must be an integer"}, status_code=400)
         host = kiosk_to_hostname(kiosk)
         if not host:
-            return jsonify({'error': 'Invalid kiosk'}), 400
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
         try:
-            s3 = boto3.client('s3')
+            s3 = boto3.client("s3")
             sections = list_testcut_images(s3, TESTCUTS_BUCKET, host, id_int)
-            return jsonify(sections)
+            return sections
         except Exception as e:
             _log.exception("Testcuts list images failed")
-            return jsonify({'error': str(e)}), 503
+            return JSONResponse({"error": str(e)}, status_code=503)
 
-    @api.route('/calibration/bitting_calibration/dates', methods=['GET'])
-    def calibration_bitting_dates():
-        kiosk = request.args.get('kiosk')
+    @router.get("/calibration/bitting_calibration/dates")
+    def calibration_bitting_dates(kiosk: str = Query(None)):
         if not kiosk:
-            return jsonify({'error': 'Missing required query parameter: kiosk'}), 400
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         host = kiosk_to_hostname(kiosk)
         if not host:
-            return jsonify({'error': 'Invalid kiosk'}), 400
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
         try:
-            s3 = boto3.client('s3')
+            s3 = boto3.client("s3")
             dates = list_bitting_dates(s3, TESTCUTS_BUCKET, host)
-            return jsonify(dates)
+            return dates
         except Exception as e:
             _log.exception("Bitting calibration list dates failed")
-            return jsonify({'error': str(e)}), 503
+            return JSONResponse({"error": str(e)}, status_code=503)
 
-    @api.route('/calibration/bitting_calibration/images', methods=['GET'])
-    def calibration_bitting_images():
-        kiosk = request.args.get('kiosk')
-        date_param = request.args.get('date')
+    @router.get("/calibration/bitting_calibration/images")
+    def calibration_bitting_images(kiosk: str = Query(None), date: str = Query(None)):
         if not kiosk:
-            return jsonify({'error': 'Missing required query parameter: kiosk'}), 400
-        if not date_param or not date_param.strip():
-            return jsonify({'error': 'Missing required query parameter: date'}), 400
-        date = date_param.strip()
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
+        if not date or not date.strip():
+            return JSONResponse({"error": "Missing required query parameter: date"}, status_code=400)
+        date_val = date.strip()
         host = kiosk_to_hostname(kiosk)
         if not host:
-            return jsonify({'error': 'Invalid kiosk'}), 400
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
         try:
-            s3 = boto3.client('s3')
-            sections = list_bitting_images(s3, TESTCUTS_BUCKET, host, date)
-            return jsonify(sections)
+            s3 = boto3.client("s3")
+            sections = list_bitting_images(s3, TESTCUTS_BUCKET, host, date_val)
+            return sections
         except Exception as e:
             _log.exception("Bitting calibration list images failed")
-            return jsonify({'error': str(e)}), 503
+            return JSONResponse({"error": str(e)}, status_code=503)
 
-    @api.route('/calibration/bump_tower_calibration/runs', methods=['GET'])
-    def calibration_bump_tower_runs():
-        kiosk = request.args.get('kiosk')
+    @router.get("/calibration/bump_tower_calibration/runs")
+    def calibration_bump_tower_runs(kiosk: str = Query(None)):
         if not kiosk:
-            return jsonify({'error': 'Missing required query parameter: kiosk'}), 400
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         host = kiosk_to_hostname(kiosk)
         if not host:
-            return jsonify({'error': 'Invalid kiosk'}), 400
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
         try:
-            s3 = boto3.client('s3')
+            s3 = boto3.client("s3")
             runs = list_bump_tower_runs(s3, TESTCUTS_BUCKET, host)
-            return jsonify(runs)
+            return runs
         except Exception as e:
             _log.exception("Bump tower calibration list runs failed")
-            return jsonify({'error': str(e)}), 503
+            return JSONResponse({"error": str(e)}, status_code=503)
 
-    @api.route('/calibration/bump_tower_calibration/images', methods=['GET'])
-    def calibration_bump_tower_images():
-        kiosk = request.args.get('kiosk')
-        run_id = request.args.get('run_id')
+    @router.get("/calibration/bump_tower_calibration/images")
+    def calibration_bump_tower_images(kiosk: str = Query(None), run_id: str = Query(None)):
         if not kiosk:
-            return jsonify({'error': 'Missing required query parameter: kiosk'}), 400
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         if not run_id or not run_id.strip():
-            return jsonify({'error': 'Missing required query parameter: run_id'}), 400
-        run_id = run_id.strip()
+            return JSONResponse({"error": "Missing required query parameter: run_id"}, status_code=400)
+        run_id_val = run_id.strip()
         host = kiosk_to_hostname(kiosk)
         if not host:
-            return jsonify({'error': 'Invalid kiosk'}), 400
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
         try:
-            s3 = boto3.client('s3')
-            sections = list_bump_tower_images(s3, TESTCUTS_BUCKET, host, run_id)
-            return jsonify(sections)
+            s3 = boto3.client("s3")
+            sections = list_bump_tower_images(s3, TESTCUTS_BUCKET, host, run_id_val)
+            return sections
         except Exception as e:
             _log.exception("Bump tower calibration list images failed")
-            return jsonify({'error': str(e)}), 503
+            return JSONResponse({"error": str(e)}, status_code=503)
 
-    @api.route('/calibration/grip_calibration/runs', methods=['GET'])
-    def calibration_grip_runs():
-        kiosk = request.args.get('kiosk')
+    @router.get("/calibration/grip_calibration/runs")
+    def calibration_grip_runs(kiosk: str = Query(None)):
         if not kiosk:
-            return jsonify({'error': 'Missing required query parameter: kiosk'}), 400
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         host = kiosk_to_hostname(kiosk)
         if not host:
-            return jsonify({'error': 'Invalid kiosk'}), 400
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
         try:
-            s3 = boto3.client('s3')
+            s3 = boto3.client("s3")
             runs = list_grip_runs(s3, TESTCUTS_BUCKET, host)
-            return jsonify(runs)
+            return runs
         except Exception as e:
             _log.exception("Grip calibration list runs failed")
-            return jsonify({'error': str(e)}), 503
+            return JSONResponse({"error": str(e)}, status_code=503)
 
-    @api.route('/calibration/grip_calibration/images', methods=['GET'])
-    def calibration_grip_images():
-        kiosk = request.args.get('kiosk')
-        run_id = request.args.get('run_id')
+    @router.get("/calibration/grip_calibration/images")
+    def calibration_grip_images(kiosk: str = Query(None), run_id: str = Query(None)):
         if not kiosk:
-            return jsonify({'error': 'Missing required query parameter: kiosk'}), 400
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         if not run_id or not run_id.strip():
-            return jsonify({'error': 'Missing required query parameter: run_id'}), 400
-        run_id = run_id.strip()
+            return JSONResponse({"error": "Missing required query parameter: run_id"}, status_code=400)
+        run_id_val = run_id.strip()
         host = kiosk_to_hostname(kiosk)
         if not host:
-            return jsonify({'error': 'Invalid kiosk'}), 400
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
         try:
-            s3 = boto3.client('s3')
-            sections = list_grip_images(s3, TESTCUTS_BUCKET, host, run_id)
-            return jsonify(sections)
+            s3 = boto3.client("s3")
+            sections = list_grip_images(s3, TESTCUTS_BUCKET, host, run_id_val)
+            return sections
         except Exception as e:
             _log.exception("Grip calibration list images failed")
-            return jsonify({'error': str(e)}), 503
+            return JSONResponse({"error": str(e)}, status_code=503)
 
-    @api.route('/calibration/gripper_cam_calibration/runs', methods=['GET'])
-    def calibration_gripper_cam_runs():
-        kiosk = request.args.get('kiosk')
+    @router.get("/calibration/gripper_cam_calibration/runs")
+    def calibration_gripper_cam_runs(kiosk: str = Query(None)):
         if not kiosk:
-            return jsonify({'error': 'Missing required query parameter: kiosk'}), 400
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         host = kiosk_to_hostname(kiosk)
         if not host:
-            return jsonify({'error': 'Invalid kiosk'}), 400
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
         try:
-            s3 = boto3.client('s3')
+            s3 = boto3.client("s3")
             runs = list_gripper_cam_runs(s3, TESTCUTS_BUCKET, host)
-            return jsonify(runs)
+            return runs
         except Exception as e:
             _log.exception("Gripper cam calibration list runs failed")
-            return jsonify({'error': str(e)}), 503
+            return JSONResponse({"error": str(e)}, status_code=503)
 
-    @api.route('/calibration/gripper_cam_calibration/images', methods=['GET'])
-    def calibration_gripper_cam_images():
-        kiosk = request.args.get('kiosk')
-        run_id = request.args.get('run_id')
+    @router.get("/calibration/gripper_cam_calibration/images")
+    def calibration_gripper_cam_images(kiosk: str = Query(None), run_id: str = Query(None)):
         if not kiosk:
-            return jsonify({'error': 'Missing required query parameter: kiosk'}), 400
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         if not run_id or not run_id.strip():
-            return jsonify({'error': 'Missing required query parameter: run_id'}), 400
-        run_id = run_id.strip()
+            return JSONResponse({"error": "Missing required query parameter: run_id"}, status_code=400)
+        run_id_val = run_id.strip()
         host = kiosk_to_hostname(kiosk)
         if not host:
-            return jsonify({'error': 'Invalid kiosk'}), 400
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
         try:
-            s3 = boto3.client('s3')
-            sections = list_gripper_cam_images(s3, TESTCUTS_BUCKET, host, run_id)
-            return jsonify(sections)
+            s3 = boto3.client("s3")
+            sections = list_gripper_cam_images(s3, TESTCUTS_BUCKET, host, run_id_val)
+            return sections
         except Exception as e:
             _log.exception("Gripper cam calibration list images failed")
-            return jsonify({'error': str(e)}), 503
+            return JSONResponse({"error": str(e)}, status_code=503)
 
-    @api.route('/calibration/gripper_leds_check/runs', methods=['GET'])
-    def calibration_gripper_leds_runs():
-        kiosk = request.args.get('kiosk')
+    @router.get("/calibration/gripper_leds_check/runs")
+    def calibration_gripper_leds_runs(kiosk: str = Query(None)):
         if not kiosk:
-            return jsonify({'error': 'Missing required query parameter: kiosk'}), 400
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         host = kiosk_to_hostname(kiosk)
         if not host:
-            return jsonify({'error': 'Invalid kiosk'}), 400
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
         try:
-            s3 = boto3.client('s3')
+            s3 = boto3.client("s3")
             runs = list_gripper_leds_runs(s3, TESTCUTS_BUCKET, host)
-            return jsonify(runs)
+            return runs
         except Exception as e:
             _log.exception("Gripper LEDs check list runs failed")
-            return jsonify({'error': str(e)}), 503
+            return JSONResponse({"error": str(e)}, status_code=503)
 
-    @api.route('/calibration/gripper_leds_check/images', methods=['GET'])
-    def calibration_gripper_leds_images():
-        kiosk = request.args.get('kiosk')
-        run_id = request.args.get('run_id')
+    @router.get("/calibration/gripper_leds_check/images")
+    def calibration_gripper_leds_images(kiosk: str = Query(None), run_id: str = Query(None)):
         if not kiosk:
-            return jsonify({'error': 'Missing required query parameter: kiosk'}), 400
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         if not run_id or not run_id.strip():
-            return jsonify({'error': 'Missing required query parameter: run_id'}), 400
-        run_id = run_id.strip()
+            return JSONResponse({"error": "Missing required query parameter: run_id"}, status_code=400)
+        run_id_val = run_id.strip()
         host = kiosk_to_hostname(kiosk)
         if not host:
-            return jsonify({'error': 'Invalid kiosk'}), 400
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
         try:
-            s3 = boto3.client('s3')
-            sections = list_gripper_leds_images(s3, TESTCUTS_BUCKET, host, run_id)
-            return jsonify(sections)
+            s3 = boto3.client("s3")
+            sections = list_gripper_leds_images(s3, TESTCUTS_BUCKET, host, run_id_val)
+            return sections
         except Exception as e:
             _log.exception("Gripper LEDs check list images failed")
-            return jsonify({'error': str(e)}), 503
+            return JSONResponse({"error": str(e)}, status_code=503)
 
-    @api.route('/calibration/overhead_cam_calibration/runs', methods=['GET'])
-    def calibration_overhead_cam_runs():
-        kiosk = request.args.get('kiosk')
+    @router.get("/calibration/overhead_cam_calibration/runs")
+    def calibration_overhead_cam_runs(kiosk: str = Query(None)):
         if not kiosk:
-            return jsonify({'error': 'Missing required query parameter: kiosk'}), 400
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         host = kiosk_to_hostname(kiosk)
         if not host:
-            return jsonify({'error': 'Invalid kiosk'}), 400
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
         try:
-            s3 = boto3.client('s3')
+            s3 = boto3.client("s3")
             runs = list_overhead_cam_runs(s3, TESTCUTS_BUCKET, host)
-            return jsonify(runs)
+            return runs
         except Exception as e:
             _log.exception("Overhead cam calibration list runs failed")
-            return jsonify({'error': str(e)}), 503
+            return JSONResponse({"error": str(e)}, status_code=503)
 
-    @api.route('/calibration/overhead_cam_calibration/images', methods=['GET'])
-    def calibration_overhead_cam_images():
-        kiosk = request.args.get('kiosk')
-        run_id = request.args.get('run_id')
+    @router.get("/calibration/overhead_cam_calibration/images")
+    def calibration_overhead_cam_images(kiosk: str = Query(None), run_id: str = Query(None)):
         if not kiosk:
-            return jsonify({'error': 'Missing required query parameter: kiosk'}), 400
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         if not run_id or not run_id.strip():
-            return jsonify({'error': 'Missing required query parameter: run_id'}), 400
-        run_id = run_id.strip()
+            return JSONResponse({"error": "Missing required query parameter: run_id"}, status_code=400)
+        run_id_val = run_id.strip()
         host = kiosk_to_hostname(kiosk)
         if not host:
-            return jsonify({'error': 'Invalid kiosk'}), 400
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
         try:
-            s3 = boto3.client('s3')
-            sections = list_overhead_cam_images(s3, TESTCUTS_BUCKET, host, run_id)
-            return jsonify(sections)
+            s3 = boto3.client("s3")
+            sections = list_overhead_cam_images(s3, TESTCUTS_BUCKET, host, run_id_val)
+            return sections
         except Exception as e:
             _log.exception("Overhead cam calibration list images failed")
-            return jsonify({'error': str(e)}), 503
+            return JSONResponse({"error": str(e)}, status_code=503)
 
-    @api.route('/calibration/pickup_y_calibration/runs', methods=['GET'])
-    def calibration_pickup_y_runs():
-        kiosk = request.args.get('kiosk')
+    @router.get("/calibration/pickup_y_calibration/runs")
+    def calibration_pickup_y_runs(kiosk: str = Query(None)):
         if not kiosk:
-            return jsonify({'error': 'Missing required query parameter: kiosk'}), 400
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         host = kiosk_to_hostname(kiosk)
         if not host:
-            return jsonify({'error': 'Invalid kiosk'}), 400
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
         try:
-            s3 = boto3.client('s3')
+            s3 = boto3.client("s3")
             runs = list_pickup_y_runs(s3, TESTCUTS_BUCKET, host)
-            return jsonify(runs)
+            return runs
         except Exception as e:
             _log.exception("Pickup Y calibration list runs failed")
-            return jsonify({'error': str(e)}), 503
+            return JSONResponse({"error": str(e)}, status_code=503)
 
-    @api.route('/calibration/pickup_y_calibration/images', methods=['GET'])
-    def calibration_pickup_y_images():
-        kiosk = request.args.get('kiosk')
-        run_id = request.args.get('run_id')
+    @router.get("/calibration/pickup_y_calibration/images")
+    def calibration_pickup_y_images(kiosk: str = Query(None), run_id: str = Query(None)):
         if not kiosk:
-            return jsonify({'error': 'Missing required query parameter: kiosk'}), 400
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         if not run_id or not run_id.strip():
-            return jsonify({'error': 'Missing required query parameter: run_id'}), 400
-        run_id = run_id.strip()
+            return JSONResponse({"error": "Missing required query parameter: run_id"}, status_code=400)
+        run_id_val = run_id.strip()
         host = kiosk_to_hostname(kiosk)
         if not host:
-            return jsonify({'error': 'Invalid kiosk'}), 400
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
         try:
-            s3 = boto3.client('s3')
-            sections = list_pickup_y_images(s3, TESTCUTS_BUCKET, host, run_id)
-            return jsonify(sections)
+            s3 = boto3.client("s3")
+            sections = list_pickup_y_images(s3, TESTCUTS_BUCKET, host, run_id_val)
+            return sections
         except Exception as e:
             _log.exception("Pickup Y calibration list images failed")
-            return jsonify({'error': str(e)}), 503
+            return JSONResponse({"error": str(e)}, status_code=503)
 
-    @api.route('/calibration/trace/gripper_cam/runs', methods=['GET'])
-    def calibration_trace_gripper_cam_runs():
-        kiosk = request.args.get('kiosk')
+    @router.get("/calibration/trace/gripper_cam/runs")
+    def calibration_trace_gripper_cam_runs(kiosk: str = Query(None)):
         if not kiosk:
-            return jsonify({'error': 'Missing required query parameter: kiosk'}), 400
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         try:
-            s3 = boto3.client('s3')
+            s3 = boto3.client("s3")
             runs = list_trace_runs(s3, TESTCUTS_BUCKET, kiosk)
-            return jsonify(runs)
+            return runs
         except Exception as e:
             _log.exception("Calibration trace list runs failed")
-            return jsonify({'error': str(e)}), 503
+            return JSONResponse({"error": str(e)}, status_code=503)
 
-    @api.route('/calibration/trace/gripper_cam', methods=['GET'])
-    def calibration_trace_gripper_cam():
-        kiosk = request.args.get('kiosk')
-        run_id = request.args.get('run_id')
+    @router.get("/calibration/trace/gripper_cam")
+    def calibration_trace_gripper_cam(kiosk: str = Query(None), run_id: str = Query(None)):
         if not kiosk:
-            return jsonify({'error': 'Missing required query parameter: kiosk'}), 400
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         if not run_id or not run_id.strip():
-            return jsonify({'error': 'Missing required query parameter: run_id'}), 400
-        run_id = run_id.strip()
+            return JSONResponse({"error": "Missing required query parameter: run_id"}, status_code=400)
+        run_id_val = run_id.strip()
         try:
-            s3 = boto3.client('s3')
-            trace = get_trace(s3, TESTCUTS_BUCKET, kiosk, run_id)
+            s3 = boto3.client("s3")
+            trace = get_trace(s3, TESTCUTS_BUCKET, kiosk, run_id_val)
             if trace is None:
-                return jsonify({'error': 'Trace not found'}), 404
-            return jsonify(trace)
+                return JSONResponse({"error": "Trace not found"}, status_code=404)
+            return trace
         except Exception as e:
             _log.exception("Calibration trace get failed")
-            return jsonify({'error': str(e)}), 503
+            return JSONResponse({"error": str(e)}, status_code=503)
 
-    @api.route('/calibration/trace/gripper_cam/dewarp', methods=['POST'])
-    def calibration_trace_gripper_cam_dewarp():
-        data = request.get_json(silent=True) or {}
-        image_url = data.get('image_url')
-        homography = data.get('homography')
+    @router.post("/calibration/trace/gripper_cam/dewarp")
+    def calibration_trace_gripper_cam_dewarp(body: dict = Body(default=None)):
+        data = body or {}
+        image_url = data.get("image_url")
+        homography = data.get("homography")
         if not image_url:
-            return jsonify({'error': 'Missing image_url'}), 400
+            return JSONResponse({"error": "Missing image_url"}, status_code=400)
         if not homography:
-            return jsonify({'error': 'Missing homography matrix'}), 400
+            return JSONResponse({"error": "Missing homography matrix"}, status_code=400)
         png_bytes, err = dewarp_image(image_url, homography)
         if err:
-            return jsonify({'error': err}), 400
-        return Response(png_bytes, mimetype='image/png')
+            return JSONResponse({"error": err}, status_code=400)
+        return Response(content=png_bytes, media_type="image/png")
 
-    return api
+    return router

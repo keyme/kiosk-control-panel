@@ -24,14 +24,14 @@ flowchart LR
 ```
 
 - **Device:** `python/main.py` starts `python/server.py` — Socket.IO only; no REST API, no static/JS serving. Bridges to the kiosk stack via ZeroMQ.
-- **Cloud:** `cloud/main.py` — Flask app with REST API blueprint and serves the React build (`cloud/web/dist`); no Socket.IO.
+- **Cloud:** `cloud/main.py` — FastAPI app with REST API router and serves the React build (`cloud/web/dist`); no Socket.IO. Only the cloud subtree is a uv project; device (`python/`) is unchanged.
 
 **Components:**
 
 | Layer | Location | Role |
 |-------|----------|------|
 | **React UI** | `cloud/web/` | Single-page app; built and served by cloud. Uses REST for data, Socket.IO (to device) for live status and control. |
-| **REST API + static** | `cloud/` — entrypoint `cloud/main.py` | Flask app: blueprints for calibration, testcuts, reports, etc.; serves `cloud/web/dist`. Stateless; cloud-only. |
+| **REST API + static** | `cloud/` — entrypoint `cloud/main.py` | FastAPI app; uv project in `cloud/` only. API routes for calibration, testcuts, reports, etc.; serves `cloud/web/dist`. Stateless; cloud-only. |
 | **Socket.IO server** | `python/` — entrypoint `python/main.py` (device) | Flask + Socket.IO only. Real-time events, panel status, terminals, IPC. Proxies commands to kiosk via ZeroMQ. No REST, no JS. |
 | **Kiosk stack** | (other services) | Hardware and services on device; communicate with control panel over ZeroMQ. |
 
@@ -49,16 +49,16 @@ Vite runs on port 8081 and proxies `/socket.io` to the Python port (2026). Run t
 
 ## Running (cloud)
 
-The cloud runs REST API and serves the React build via `control_panel/cloud/main.py`. No Socket.IO. The web app lives under `cloud/web/`.
+The cloud is a FastAPI app managed with uv. It runs the REST API and serves the React build via `control_panel/cloud/main.py`. No Socket.IO. The web app lives under `cloud/web/`.
 
 1. Build the web app: `cd control_panel/cloud/web && npm run build`
-2. From repo root (or with `CONTROL_PANEL_STATIC_ROOT` set to the built `cloud/web/dist` path), run:
+2. From **repo root**, run the cloud app with uv (only `control_panel/cloud` is a uv project):
 
 ```bash
-python -m control_panel.cloud.main
+uv run --project control_panel/cloud uvicorn control_panel.cloud.main:app --host 0.0.0.0 --port 8080
 ```
 
-Static root is resolved from the `cloud/main.py` file location, so `cloud/web/dist` is found regardless of CWD when running the cloud server.
+Port can be overridden with the `PORT` env var (e.g. `PORT=9000` before the command). Static root is resolved from the `cloud/main.py` file location, so `cloud/web/dist` is found regardless of CWD.
 
 **Env (optional):**
 
@@ -72,4 +72,4 @@ Static root is resolved from the `cloud/main.py` file location, so `cloud/web/di
 
 ## REST API and cloud
 
-REST API and JS serving run on the cloud via `control_panel/cloud/main.py` (uses the blueprints in `cloud/`). The device server (`python/main.py`) provides Socket.IO only. See **Running (cloud)** for how to start and configure the cloud server.
+REST API and JS serving run on the cloud via `control_panel/cloud/main.py` (FastAPI app; routes in `cloud/__init__.py`). The device server (`python/main.py`) is unchanged and provides Socket.IO only. Cloud dependencies are managed with uv (`control_panel/cloud/pyproject.toml`). See **Running (cloud)** for how to start and configure the cloud server.

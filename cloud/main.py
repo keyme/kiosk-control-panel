@@ -1,59 +1,77 @@
 #!/usr/bin/env python3
 """
 Cloud entrypoint: REST API + static JS serving. No Socket.IO.
-Run with static root and port via env (see README).
+Run with static root and port via env (see README). FastAPI app; run with uvicorn.
 """
 import os
 
-from flask import Flask, request, send_from_directory
-from flask_cors import CORS
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, PlainTextResponse
+from starlette.staticfiles import StaticFiles
 
-from control_panel.cloud import create_blueprint
+from control_panel.cloud import create_router
 from control_panel.cloud.backends import CloudBackend
 
-app = Flask(__name__)
-CORS(app)
-app.config['CORS_HEADERS'] = 'Content-Type'
+app = FastAPI(title="Control Panel Cloud")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-app.register_blueprint(create_blueprint(CloudBackend()))
+app.include_router(create_router(CloudBackend()), prefix="/api")
 
 # Static root: env CONTROL_PANEL_STATIC_ROOT or default cloud/web/dist (resolved absolute)
-_default_static = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web', 'dist')
-_STATIC_ROOT = os.path.abspath(os.environ.get('CONTROL_PANEL_STATIC_ROOT', _default_static))
+_default_static = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "dist")
+_STATIC_ROOT = os.path.abspath(os.environ.get("CONTROL_PANEL_STATIC_ROOT", _default_static))
+
+_index_html = os.path.join(_STATIC_ROOT, "index.html")
+_assets_dir = os.path.join(_STATIC_ROOT, "assets")
+
+if os.path.isdir(_assets_dir):
+    app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
 
 
 def _send_index_html():
-    resp = send_from_directory(_STATIC_ROOT, 'index.html')
-    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
-    resp.headers['Pragma'] = 'no-cache'
-    resp.headers['Expires'] = '0'
-    return resp
+    return FileResponse(
+        _index_html,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
-@app.route('/')
+@app.get("/")
 def root():
-    if os.path.isfile(os.path.join(_STATIC_ROOT, 'index.html')):
+    if os.path.isfile(_index_html):
         return _send_index_html()
-    return 'Control panel UI not built. Set CONTROL_PANEL_STATIC_ROOT or run npm run build in control_panel/cloud/web.', 404
+    return PlainTextResponse(
+        "Control panel UI not built. Set CONTROL_PANEL_STATIC_ROOT or run npm run build in control_panel/cloud/web.",
+        status_code=404,
+    )
 
 
-@app.route('/assets/<path:path>')
-def static_asset(path):
-    resp = send_from_directory(os.path.join(_STATIC_ROOT, 'assets'), path)
-    resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
-    return resp
-
-
-@app.errorhandler(404)
-def spa_fallback(error):
-    """SPA fallback: non-API paths serve index.html."""
-    if request.path.startswith('/api'):
-        return error
-    if os.path.isfile(os.path.join(_STATIC_ROOT, 'index.html')):
+@app.get("/{path:path}")
+def spa_fallback(path: str):
+    """SPA fallback: non-API, non-assets paths serve index.html."""
+    if path.startswith("api") or path.startswith("assets"):
+        return PlainTextResponse("Not Found", status_code=404)
+    if os.path.isfile(_index_html):
         return _send_index_html()
-    return error
+    return PlainTextResponse("Not Found", status_code=404)
 
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run(
+        "control_panel.cloud.main:app",
+        host="0.0.0.0",
+        port=port,
+        reload=False,
+    )
