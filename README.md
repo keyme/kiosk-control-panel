@@ -1,50 +1,57 @@
 # Control Panel
 
-React UI and Python Socket.IO backend for kiosk control and status, with ZeroMQ IPC to the rest of the stack.
+React UI with a Python backend: **Socket.IO runs on the device** (kiosk control and status, ZeroMQ IPC to the rest of the stack); **REST API runs on the cloud**.
 
 ## Architecture
 
+**Split:** The UI is served from the cloud. It calls the **cloud** for REST (config, reports, calibration data) and the **device** for real-time control and status over Socket.IO. The device server bridges Socket.IO to the rest of the kiosk stack via ZeroMQ.
+
+**High-level flow:**
+
 ```mermaid
 graph LR
-    A["React UI<br/>web/"] -->|Socket.IO| B["Flask Server<br/>python/"]
-    B -->|REST API| A
-    B -->|ZeroMQ IPC| C["Rest of Stack<br/>kiosk services"]
-    D["Cloud Server<br/>optional"] -->|Socket.IO| B
-    D -->|serves| A
+    subgraph Cloud
+        B["REST API<br/>control_panel/api/"]
+    end
+    subgraph Device
+        C["Socket.IO server<br/>control_panel/python/"]
+        D["Kiosk stack<br/>ZeroMQ"]
+    end
+    A["React UI<br/>control_panel/web/"] -->|REST| B
+    A -->|Socket.IO| C
+    C <-->|ZeroMQ IPC| D
 ```
 
-## Deployment modes
+**Components:**
 
-The same build can be used on-device or from the cloud. The connection target is set via the **title bar text field** in the UI (e.g. type `ns1136` and press Enter). Short names are resolved to `{name}.keymekiosk.com`, port 2026. There are no URL params for host, device, or port.
+| Layer | Location | Role |
+|-------|----------|------|
+| **React UI** | `web/` | Single-page app; served by cloud. Uses REST for data, Socket.IO for live status and control. |
+| **REST API** | `api/` (cloud) | Flask blueprints — calibration, testcuts, reports, wellness, etc. Stateless; backed by cloud storage. |
+| **Socket.IO server** | `python/` (device) | Flask + Socket.IO. Real-time events, panel status, terminals. Proxies commands to kiosk via ZeroMQ. |
+| **Kiosk stack** | (other services) | Hardware and services on device; communicate with control panel over ZeroMQ. |
 
-- **On device:** Open e.g. `http://ns1136.keymekiosk.com:2026/`. The title bar defaults to the current hostname (e.g. `ns1136`). Socket.IO and API use the same origin.
-- **From cloud:** Open the cloud URL; type the device short name (e.g. `ns1136`) in the title bar and press Enter. Socket.IO and API both use `http://ns1136.keymekiosk.com:2026`.
+## Running (device)
 
-Socket URL and API base are derived in `web/src/lib/socketUrl.js`: `buildBaseUrl(deviceHost)` and `getInitialDeviceHost()` for the initial value. The title bar drives the active device.
-
-## Running
-
-**Device (production):** Started by the manager as `control_panel/python/main.py`. Listens on the port in `config/ports.json` (`python`, default 2026). Ensure the web app is built:
+The device runs the Socket.IO server. Started by the manager as `control_panel/python/main.py`. Listens on the port in `config/ports.json` (`python`, default 2026). Build the web app first:
 
 ```bash
 cd control_panel/web && npm run build
 ```
 
-**Web dev:** From repo root (or `control_panel/web`):
+**Web dev:** From repo root or `control_panel/web`:
 
 ```bash
 cd control_panel/web && npm run dev
 ```
 
-Vite runs on port 8081 and proxies `/socket.io` to the Python port (2026). Run the Python server separately (e.g. `control_panel/python/main.py`) so the socket connects.
-
-**Dev mode:** Use the title bar device field to connect. For device-like behavior use `http://localhost:8081/` (default host is localhost; socket goes through the Vite proxy to 2026). To simulate another device, type its host in the title bar (e.g. `ns1136`) and press Enter.
+Vite runs on port 8081 and proxies `/socket.io` to the Python port (2026). Run the Python server separately (`control_panel/python/main.py`) so the socket connects.
 
 ## Config
 
-- **`config/ports.json`:** `python` — port for the Flask/Socket.IO server (2026); `react` — Vite dev server port (8081).
-- **`config/control_panel.json`:** Optional; e.g. `max_decode_packets` for Engine.IO.
+- **`config/ports.json`:** `python` — Flask/Socket.IO server port (2026); `react` — Vite dev server port (8081).
+- **`config/control_panel.json`:** Optional, e.g. `max_decode_packets` for Engine.IO.
 
-## REST API (planned)
+## REST API
 
-Device and cloud will share the same REST API code (`control_panel/api/` Flask blueprints). The device server will register the API with a device backend (IPC/local state); a future cloud server will serve the same UI and API with a cloud backend. The frontend uses the current page origin for REST API; only Socket.IO uses the title-bar device host (e.g. ns1136).
+REST API is hosted on the cloud (`control_panel/api/` Flask blueprints). The device server provides Socket.IO only; the cloud serves the UI and the REST API.
