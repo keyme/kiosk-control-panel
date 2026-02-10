@@ -1,8 +1,6 @@
 # Bitting calibration: list dates and images from S3 (keyme-calibration/bitting_calibration/{kiosk_short_name}/{date}/).
 # S3 uses short name (e.g. ns1136), not hostname.
 
-from typing import Dict, List
-
 import boto3
 
 from control_panel.cloud.api.testcuts import (
@@ -29,7 +27,7 @@ def _list_dirs(s3_client, bucket: str, prefix: str):
             yield cp["Prefix"]
 
 
-def list_bitting_dates(s3_client, bucket: str, kiosk: str) -> List[str]:
+def list_bitting_dates(s3_client, bucket: str, kiosk: str) -> list[str]:
     """List date folders under bitting_calibration/{short_name}/, return sorted descending (newest first)."""
     short = _kiosk_to_short_name(kiosk)
     base_prefix = f"bitting_calibration/{short}/"
@@ -41,7 +39,7 @@ def list_bitting_dates(s3_client, bucket: str, kiosk: str) -> List[str]:
     return sorted(dates, reverse=True)
 
 
-def list_bitting_images(s3_client, bucket: str, kiosk: str, date: str) -> Dict[str, List]:
+def list_bitting_images(s3_client, bucket: str, kiosk: str, date: str) -> dict[str, list]:
     """
     List objects under bitting_calibration/{short_name}/{date}/.
     Section = filename; one image per section. Same response shape as testcuts: { section_name: [ { key, filename, url } ] }.

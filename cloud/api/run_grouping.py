@@ -3,13 +3,13 @@
 # Each item appears in exactly one run. run_id = earliest timestamp in the run.
 
 from datetime import datetime
-from typing import List, Optional, Tuple, TypeVar
+from typing import TypeVar
 
 T = TypeVar("T")
 TIMESTAMP_FMT = "%Y-%m-%d-%H-%M-%S-UTC"
 
 
-def parse_timestamp(ts_str: str) -> Optional[datetime]:
+def parse_timestamp(ts_str: str) -> datetime | None:
     """Parse YYYY-MM-DD-HH-MM-SS-UTC; return None if invalid."""
     if not ts_str or not ts_str.strip():
         return None
@@ -20,8 +20,8 @@ def parse_timestamp(ts_str: str) -> Optional[datetime]:
 
 
 def group_by_max_gap_minutes(
-    items: List[Tuple[str, T]], max_gap_minutes: int = 5
-) -> List[Tuple[str, str, List[T]]]:
+    items: list[tuple[str, T]], max_gap_minutes: int = 5
+) -> list[tuple[str, str, list[T]]]:
     """
     Take list of (timestamp_str, payload). Parse timestamps, skip invalid, sort by datetime.
     Group into runs: consecutive items (by time) are in the same run if

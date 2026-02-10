@@ -14,7 +14,7 @@ COPY cloud/web/ ./
 RUN npm run build
 
 # Stage 2: Install Python dependencies
-FROM python:3.12-slim AS builder
+FROM 821954540415.dkr.ecr.us-east-1.amazonaws.com/python:3.13-slim AS builder
 
 WORKDIR /app
 
@@ -36,7 +36,7 @@ RUN uv pip install --system \
     opencv-python-headless
 
 # Stage 3: Runtime
-FROM python:3.12-slim
+FROM 821954540415.dkr.ecr.us-east-1.amazonaws.com/python:3.13-slim
 
 WORKDIR /app
 
@@ -53,7 +53,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed Python env from builder
-COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code (context is control_panel/ -> /app/control_panel/)

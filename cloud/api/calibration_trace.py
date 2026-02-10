@@ -2,7 +2,7 @@
 # S3 layout: gripper_cam_calibration/{kiosk_short}/trace_{run_id}/trace.json and artifacts.
 
 import urllib.request
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import boto3
 import cv2
@@ -15,7 +15,7 @@ PREFIX = "gripper_cam_calibration"
 TRACE_FILENAME = "trace.json"
 
 
-def list_trace_runs(s3_client, bucket: str, kiosk: str) -> List[dict]:
+def list_trace_runs(s3_client, bucket: str, kiosk: str) -> list[dict]:
     """
     List calibration trace runs: folders under PREFIX/{short}/ named trace_*.
     Returns [ { "run_id": "2026-02-09-20-46-20-UTC" }, ... ] sorted newest first.
@@ -51,7 +51,7 @@ def _artifact_key(bucket: str, run_prefix: str, path: str) -> str:
     return run_prefix + p.lstrip("/")
 
 
-def get_trace(s3_client, bucket: str, kiosk: str, run_id: str) -> Dict[str, Any]:
+def get_trace(s3_client, bucket: str, kiosk: str, run_id: str) -> dict[str, Any] | None:
     """
     Get trace.json from S3 for the given run_id, and add presigned url to each artifact.
     Returns the trace dict (trace_version, calibration_type, run_id, started_at, steps)
@@ -91,7 +91,7 @@ def get_trace(s3_client, bucket: str, kiosk: str, run_id: str) -> Dict[str, Any]
     return trace
 
 
-def dewarp_image(image_url: str, homography: List[List[float]]) -> Tuple[Optional[bytes], Optional[str]]:
+def dewarp_image(image_url: str, homography: list[list[float]]) -> tuple[bytes | None, str | None]:
     """
     Fetch image from URL, apply perspective warp with homography (3x3), return PNG bytes.
     Returns (png_bytes, None) on success or (None, error_message) on failure.

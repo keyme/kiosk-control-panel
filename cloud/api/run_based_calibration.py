@@ -2,8 +2,6 @@
 # S3 layout: {prefix}/{kiosk_short_name}/{folder_name}/ with images inside.
 # Runs = groups of folders whose timestamps are within 5 minutes (flexible grouping).
 
-from typing import Dict, List
-
 import boto3
 
 from control_panel.cloud.api.run_grouping import group_by_max_gap_minutes, parse_timestamp
@@ -30,7 +28,7 @@ def _list_dirs(s3_client, bucket: str, prefix: str):
             yield cp["Prefix"]
 
 
-def list_runs(s3_client, bucket: str, kiosk: str, prefix: str) -> List[dict]:
+def list_runs(s3_client, bucket: str, kiosk: str, prefix: str) -> list[dict]:
     """List runs with run_id, start_ts, end_ts (earliest/latest per 5-min group), sorted descending."""
     short = _kiosk_to_short_name(kiosk)
     base = f"{prefix}/{short}/"
@@ -49,7 +47,7 @@ def list_runs(s3_client, bucket: str, kiosk: str, prefix: str) -> List[dict]:
 
 def list_images(
     s3_client, bucket: str, kiosk: str, run_id: str, prefix: str
-) -> Dict[str, List]:
+) -> dict[str, list]:
     """
     List objects from all folders in the run that has this run_id (5-min grouping).
     Section = filename; merge lists if same filename from different folders.

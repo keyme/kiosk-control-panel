@@ -1,7 +1,6 @@
 # Testcuts calibration: list IDs and images from S3 (keyme-calibration/testcuts/{kiosk_hostname}/{id_path}/).
 
 import re
-from typing import Dict, List
 
 import boto3
 
@@ -31,7 +30,7 @@ def extract_id(prefix: str) -> int:
     return int(a) * 1_000_000 + int(b) * 1_000 + int(c)
 
 
-def list_testcut_ids(s3_client, bucket: str, kiosk_hostname: str) -> List[int]:
+def list_testcut_ids(s3_client, bucket: str, kiosk_hostname: str) -> list[int]:
     """Three-level list_dirs from testcuts/{host}/, extract_id, dedupe, return sorted(ids, reverse=True)."""
     base_prefix = f"testcuts/{kiosk_hostname}/"
     ids = set()
@@ -54,7 +53,7 @@ def _section_sort_key(section_name: str) -> int:
     return int(m.group(1)) if m else 0
 
 
-def list_testcut_images(s3_client, bucket: str, kiosk_hostname: str, id_int: int) -> Dict[str, List]:
+def list_testcut_images(s3_client, bucket: str, kiosk_hostname: str, id_int: int) -> dict[str, list]:
     """
     List objects under testcuts/{host}/{id_path}/, group by section, sort sections and images.
     Each list item has key, filename, and presigned url.

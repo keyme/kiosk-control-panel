@@ -1,8 +1,6 @@
 # Pickup Y calibration: flat list under pickup_y_calibration/{kiosk_short_name}/.
 # Filenames: {kiosk}_{timestamp}_{suffix}.jpg. Runs = 5-min flexible grouping by timestamp.
 
-from typing import Dict, List
-
 import boto3
 
 from control_panel.cloud.api.run_based_calibration import _kiosk_to_short_name
@@ -18,7 +16,7 @@ def _ts_from_filename(filename: str) -> str:
     return parts[1] if len(parts) >= 2 else ""
 
 
-def list_pickup_y_runs(s3_client, bucket: str, kiosk: str) -> List[str]:
+def list_pickup_y_runs(s3_client, bucket: str, kiosk: str) -> list[dict]:
     """List run IDs (earliest ts per 5-min group), sorted descending."""
     short = _kiosk_to_short_name(kiosk)
     base = f"{PREFIX}/{short}/"
@@ -45,7 +43,7 @@ def list_pickup_y_runs(s3_client, bucket: str, kiosk: str) -> List[str]:
 
 def list_pickup_y_images(
     s3_client, bucket: str, kiosk: str, run_id: str
-) -> Dict[str, List]:
+) -> dict[str, list]:
     """List objects in the run that has this run_id (5-min grouping). Section = filename."""
     short = _kiosk_to_short_name(kiosk)
     base = f"{PREFIX}/{short}/"
