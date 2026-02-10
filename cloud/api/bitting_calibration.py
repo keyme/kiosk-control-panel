@@ -5,7 +5,7 @@ from typing import Dict, List
 
 import boto3
 
-from control_panel.cloud.testcuts import (
+from control_panel.cloud.api.testcuts import (
     BUCKET,
     PRESIGNED_EXPIRES,
     kiosk_to_hostname,

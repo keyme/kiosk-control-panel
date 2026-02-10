@@ -5,9 +5,9 @@ from typing import Dict, List
 
 import boto3
 
-from control_panel.cloud.run_based_calibration import _kiosk_to_short_name
-from control_panel.cloud.run_grouping import group_by_max_gap_minutes
-from control_panel.cloud.testcuts import BUCKET, PRESIGNED_EXPIRES
+from control_panel.cloud.api.run_based_calibration import _kiosk_to_short_name
+from control_panel.cloud.api.run_grouping import group_by_max_gap_minutes
+from control_panel.cloud.api.testcuts import BUCKET, PRESIGNED_EXPIRES
 
 PREFIX = "overhead_cam_calibration"
 
