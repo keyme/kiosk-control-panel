@@ -107,7 +107,7 @@ docker run -p 8080:8080 \
 
 ## Config
 
-- **`config/ports.json`:** `python` — Flask/Socket.IO server port (2026); `react` — Vite dev server port (8081).
+- **`config/ports.json`:** `python` — Flask/Socket.IO server port (2026). (Vite dev server uses port 8081, set in `cloud/web/vite.config.js`.)
 - **`config/control_panel.json`:** Optional, e.g. `max_decode_packets` for Engine.IO.
 
 ## REST API and cloud

@@ -11,7 +11,6 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from starlette.staticfiles import StaticFiles
 
 from control_panel.cloud.api import create_router
-from control_panel.cloud.api.backends import CloudBackend
 
 app = FastAPI(title="Control Panel Cloud")
 app.add_middleware(
@@ -22,7 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(create_router(CloudBackend()), prefix="/api")
+app.include_router(create_router(), prefix="/api")
 
 # Static root: env CONTROL_PANEL_STATIC_ROOT or default cloud/web/dist (one level up from api/)
 _default_static = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "dist")

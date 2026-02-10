@@ -1,6 +1,3 @@
-# Shared REST API for control panel (device and cloud).
-# Use create_router(backend) to get a FastAPI APIRouter; include it with prefix="/api".
-
 import logging
 
 import boto3
@@ -44,16 +41,13 @@ from control_panel.cloud.api.calibration_trace import (
 )
 
 
-def create_router(backend):
-    """
-    Create the shared API router.
-    backend must implement: ping() -> dict (for GET /api/ping).
-    """
+def create_router():
+    """Create the cloud API router."""
     router = APIRouter()
 
     @router.get("/ping")
     def ping():
-        return backend.ping()
+        return {"status": "ok", "source": "cloud"}
 
     @router.get("/calibration/testcuts/ids")
     def calibration_testcuts_ids(kiosk: str = Query(None)):
