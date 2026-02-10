@@ -37,11 +37,7 @@ if os.path.isdir(_assets_dir):
 def _send_index_html():
     return FileResponse(
         _index_html,
-        headers={
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-            "Pragma": "no-cache",
-            "Expires": "0",
-        },
+        headers={"Cache-Control": "no-store"},
     )
 
 
