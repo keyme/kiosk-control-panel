@@ -1,5 +1,5 @@
 # Stage 1: Build React frontend
-FROM node:20-bookworm-slim AS web-build
+FROM 821954540415.dkr.ecr.us-east-1.amazonaws.com/node:22.8.0-alpine AS web-build
 
 WORKDIR /web-build
 
