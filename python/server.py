@@ -642,6 +642,13 @@ def get_status_sections():
     return _cached('status_sections', _CACHE_TTL_SLOW_SEC, _status_sections)
 
 
+@socket.on('get_connection_count')
+def get_connection_count():
+    """Current number of Socket.IO connections to this control panel. Not cached."""
+    with _connection_lock:
+        return {'count': len(_connected_sids)}
+
+
 def _discover_process_configs():
     """Discover (process, filename) from filesystem. Walk PATH; skip top-level config dir.
     For each other top-level dir with a config/ subdir, collect every config/*.json."""

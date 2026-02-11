@@ -298,6 +298,13 @@ function requestStatusSections(sock, setStatusSections) {
   });
 }
 
+function requestConnectionCount(sock, setConnectionCount) {
+  sock.emit('get_connection_count', (res) => {
+    const n = res?.count;
+    setConnectionCount(typeof n === 'number' ? n : null);
+  });
+}
+
 const ACTIVITY_POLL_MS = 10000;
 const KIOSK_STATUS_POLL_MS = 20000;
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
@@ -313,6 +320,7 @@ export default function App() {
   const [wtfWhyDegraded, setWtfWhyDegraded] = useState(null);
   const [statusSections, setStatusSections] = useState(null);
   const [terminals, setTerminals] = useState(null);
+  const [connectionCount, setConnectionCount] = useState(null);
   const [lastError, setLastError] = useState(null);
   const [connectionRejected, setConnectionRejected] = useState(null);
   const [disconnectedDueToInactivity, setDisconnectedDueToInactivity] = useState(false);
@@ -334,6 +342,7 @@ export default function App() {
       requestPanelInfo(socket, setPanelInfo);
       requestComputerStats(socket, setComputerStats);
       requestTerminals(socket, setTerminals);
+      requestConnectionCount(socket, setConnectionCount);
     };
     const tickKioskStatus = () => {
       requestWtfWhyDegraded(socket, setWtfWhyDegraded);
@@ -358,6 +367,7 @@ export default function App() {
       setWtfWhyDegraded(null);
       setStatusSections(null);
       setTerminals(null);
+      setConnectionCount(null);
       if (pollInterval) clearInterval(pollInterval);
       if (kioskStatusInterval) clearInterval(kioskStatusInterval);
     };
@@ -435,9 +445,9 @@ export default function App() {
           terminals={terminals}
         >
           <Routes>
-            <Route path="/" element={<Status computerStats={computerStats} wtfWhyDegraded={wtfWhyDegraded} status={statusSections} terminals={terminals} />} />
+            <Route path="/" element={<Status computerStats={computerStats} wtfWhyDegraded={wtfWhyDegraded} status={statusSections} terminals={terminals} connectionCount={connectionCount} />} />
             <Route path=":kiosk" element={<KioskSync />}>
-              <Route index element={<Status computerStats={computerStats} wtfWhyDegraded={wtfWhyDegraded} status={statusSections} terminals={terminals} />} />
+              <Route index element={<Status computerStats={computerStats} wtfWhyDegraded={wtfWhyDegraded} status={statusSections} terminals={terminals} connectionCount={connectionCount} />} />
               <Route path="calibration" element={<Calibration />}>
                 <Route index element={<CalibrationIndexRedirect />} />
                 <Route path="report" element={<CalibrationReport />} />

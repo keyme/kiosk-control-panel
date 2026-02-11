@@ -10,6 +10,7 @@ import {
   ChevronUp,
   Cpu,
   Gauge,
+  Link2,
   MemoryStick,
   Clock,
   Thermometer,
@@ -440,7 +441,7 @@ function formatCpuMem(v) {
   return v != null && typeof v === 'number' ? `${v}%` : '—';
 }
 
-export default function Status({ computerStats, wtfWhyDegraded, status: statusProp, terminals }) {
+export default function Status({ computerStats, wtfWhyDegraded, status: statusProp, terminals, connectionCount }) {
   const s = computerStats ?? PC_STATS_DUMMY;
   const k = KIOSK_STATS_DUMMY;
   const w = wtfWhyDegraded;
@@ -474,6 +475,7 @@ export default function Status({ computerStats, wtfWhyDegraded, status: statusPr
             <StatItem icon={Thermometer} label="CPU temp" value={s.cpu_temp || '—'} />
             <StatItem icon={Gauge} label="Load average" value={s.load_average || '—'} />
             <StatItem icon={Monitor} label="OS version" value={s.os_version || '—'} />
+            <StatItem icon={Link2} label="Socket.IO connections" value={connectionCount != null ? String(connectionCount) : '—'} />
           </div>
           <TerminalsBlock terminals={terminals} />
           <TimeUpdatedFooter timeUpdated={s.time_updated || null} />
