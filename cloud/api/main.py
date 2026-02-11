@@ -6,6 +6,15 @@ Run with static root and port via env (see README). Entrypoint for uvicorn is co
 import logging
 import os
 
+# So app logs (INFO) are visible when run under uvicorn (e.g. in Docker).
+# Uvicorn only sets level for its own loggers; root stays WARNING and filters our logs.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s [%(name)s] %(message)s",
+    force=True,
+)
+# force=True (Python 3.8+) applies config even if root already has handlers (e.g. uvicorn).
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
