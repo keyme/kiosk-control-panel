@@ -604,7 +604,8 @@ def _discover_process_configs():
 
 @socket.on('get_all_configs')
 def get_all_configs():
-    """Load all process configs on demand: discover (process, filename), cascade_load each, return nested payload."""
+    """Load all process configs on demand: discover (process, filename), cascade_load each;
+    also include top-level hardware config (config/hardware.json). Return nested payload."""
     specs = _discover_process_configs()
     configs = {}
     for process, filename in specs:
@@ -616,7 +617,13 @@ def get_all_configs():
         except Exception as e:
             keyme.log.error("Failed to load %s/%s: %s", process, filename, e)
             configs[process][filename] = None
-    return WebsocketSuccess({'configs': configs}).to_json()
+    # Top-level hardware manifest (config/hardware.json); not per-process.
+    hardware = getattr(keyme.config, 'hardware', None)
+    if hardware is not None and hasattr(hardware, 'copy'):
+        hardware = dict(hardware)
+    elif hardware is None:
+        hardware = {}
+    return WebsocketSuccess({'configs': configs, 'hardware': hardware}).to_json()
 
 
 def _take_image_on_device(camera, resize_factor=0.5):

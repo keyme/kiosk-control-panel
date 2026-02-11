@@ -6,8 +6,12 @@ import { cn } from '@/lib/utils';
 import JSONEditor from 'jsoneditor';
 import 'jsoneditor/dist/jsoneditor.min.css';
 
+const GLOBAL_HARDWARE_LABEL = 'Global (hardware)';
+const HARDWARE_FILENAME = 'hardware.json';
+
 export default function ConfigPage({ socket }) {
   const [configs, setConfigs] = useState(null);
+  const [hardware, setHardware] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedProcess, setSelectedProcess] = useState(null);
@@ -21,8 +25,13 @@ export default function ConfigPage({ socket }) {
     setError(null);
     socket.emit('get_all_configs', (res) => {
       setLoading(false);
-      if (res?.success && res?.data?.configs != null) {
-        setConfigs(res.data.configs);
+      if (res?.success && res?.data != null) {
+        setConfigs(res.data.configs ?? {});
+        setHardware(
+          res.data.hardware != null && typeof res.data.hardware === 'object'
+            ? res.data.hardware
+            : null
+        );
         setError(null);
         setSelectedProcess(null);
         setSelectedFilename(null);
@@ -35,17 +44,25 @@ export default function ConfigPage({ socket }) {
     });
   }, [socket, loading]);
 
-  const processes = configs ? Object.keys(configs).sort() : [];
+  const processes = [
+    ...(hardware != null ? [GLOBAL_HARDWARE_LABEL] : []),
+    ...(configs ? Object.keys(configs).sort() : []),
+  ];
   const filenames =
-    configs && selectedProcess && configs[selectedProcess]
-      ? Object.keys(configs[selectedProcess]).sort()
-      : [];
+    selectedProcess === GLOBAL_HARDWARE_LABEL
+      ? [HARDWARE_FILENAME]
+      : configs && selectedProcess && configs[selectedProcess]
+        ? Object.keys(configs[selectedProcess]).sort()
+        : [];
   const selectedConfig =
-    configs && selectedProcess && selectedFilename
-      ? configs[selectedProcess][selectedFilename]
-      : null;
+    selectedProcess === GLOBAL_HARDWARE_LABEL && selectedFilename === HARDWARE_FILENAME
+      ? hardware
+      : configs && selectedProcess && selectedFilename
+        ? configs[selectedProcess][selectedFilename]
+        : null;
 
-  const hasConfigs = configs && Object.keys(configs).length > 0;
+  const hasConfigs =
+    (configs && Object.keys(configs).length > 0) || hardware != null;
 
   useEffect(() => {
     const el = editorRef.current;
@@ -125,7 +142,9 @@ export default function ConfigPage({ socket }) {
                       type="button"
                       onClick={() => {
                         setSelectedProcess(p);
-                        setSelectedFilename(null);
+                        setSelectedFilename(
+                          p === GLOBAL_HARDWARE_LABEL ? HARDWARE_FILENAME : null
+                        );
                       }}
                       className={cn(
                         'w-full rounded px-2 py-1.5 text-left text-sm',
