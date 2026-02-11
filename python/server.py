@@ -164,7 +164,7 @@ def _activity():
 def _kiosk_state():
     """Kiosk state from ABILITIES_MANAGER GET_STATUS key 'state' (abilities_manager/tools/get_status.py)."""
     try:
-        r = keyme.ipc.send_sync('ABILITIES_MANAGER', 'GET_STATUS', {'key': 'state'})
+        r = keyme.ipc.send_sync('ABILITIES_MANAGER', 'GET_STATUS', {'key': 'state'}, logging=False)
         s = (r.get('data') or {}).get('status')
         return s if isinstance(s, str) else 'UNKNOWN'
     except _IPC_ERRORS + (TypeError, AttributeError, KeyError) as e:
