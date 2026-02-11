@@ -329,7 +329,16 @@ const STATUS_POLL_MS = 10000;
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 const FRONTEND_CONNECTION_LIMIT = 15; // If count > this, show message and disconnect.
 
-export default function App() {
+/** True when route is Status (root or :kiosk index). */
+function isStatusPage(pathname) {
+  return pathname === '/' || /^\/[^/]+$/.test(pathname);
+}
+
+function AppContent() {
+  const location = useLocation();
+  const pathnameRef = useRef(location.pathname);
+  pathnameRef.current = location.pathname;
+
   const [deviceHost, setDeviceHost] = useState(() => getInitialDeviceHost());
   const baseUrl = useMemo(() => buildBaseUrl(deviceHost), [deviceHost]);
   const [socket, setSocket] = useState(null);
@@ -359,7 +368,9 @@ export default function App() {
     let pollInterval = null;
     const tick = () => {
       requestPanelInfo(socket, setPanelInfo);
-      requestStatusSnapshot(socket, setComputerStats, setTerminals, setConnectionCount, setWtfWhyDegraded, setStatusSections);
+      if (isStatusPage(pathnameRef.current)) {
+        requestStatusSnapshot(socket, setComputerStats, setTerminals, setConnectionCount, setWtfWhyDegraded, setStatusSections);
+      }
     };
     const finishConnectionSetup = () => {
       setConnectionRejected(null);
@@ -448,7 +459,6 @@ export default function App() {
   }, [socket, connected]);
 
   return (
-    <BrowserRouter>
       <DeviceHostContext.Provider value={{ deviceHost, setDeviceHost }}>
         <Layout
           kioskName={kioskName}
@@ -495,6 +505,13 @@ export default function App() {
           </Routes>
         </Layout>
       </DeviceHostContext.Provider>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AppContent />
     </BrowserRouter>
   );
 }
