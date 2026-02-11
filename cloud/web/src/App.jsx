@@ -316,7 +316,7 @@ function requestConnectionCountWithCallback(sock, callback) {
 const ACTIVITY_POLL_MS = 10000;
 const KIOSK_STATUS_POLL_MS = 20000;
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
-const FRONTEND_CONNECTION_LIMIT = 6; // If count > this, show message and disconnect (backend still enforces 10).
+const FRONTEND_CONNECTION_LIMIT = 10; // If count > this, show message and disconnect.
 
 export default function App() {
   const [deviceHost, setDeviceHost] = useState(() => getInitialDeviceHost());
@@ -392,16 +392,10 @@ export default function App() {
       if (kioskStatusInterval) clearInterval(kioskStatusInterval);
     };
     const onConnectError = (err) => setLastError(err?.message || String(err));
-    const onConnectionRejected = (data) => {
-      const max = data?.max ?? 10;
-      setConnectionRejected(`Maximum number of viewers (${max}) reached. Try again later.`);
-      setConnected(false);
-    };
 
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     socket.on('connect_error', onConnectError);
-    socket.on('connection_rejected', onConnectionRejected);
 
     if (socket.connected) {
       requestConnectionCountWithCallback(socket, (count) => {
@@ -419,7 +413,6 @@ export default function App() {
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
       socket.off('connect_error', onConnectError);
-      socket.off('connection_rejected', onConnectionRejected);
       if (pollInterval) clearInterval(pollInterval);
       if (kioskStatusInterval) clearInterval(kioskStatusInterval);
     };

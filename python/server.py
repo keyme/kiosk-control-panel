@@ -14,7 +14,7 @@ from functools import partial, wraps
 
 from flask import Flask, request
 from flask_cors import CORS
-from flask_socketio import SocketIO, disconnect, emit
+from flask_socketio import SocketIO, emit
 
 import pylib as keyme
 
@@ -59,19 +59,12 @@ app.config['CORS_HEADERS'] = 'Content-Type'
 
 _cfg_path = os.path.join(keyme.config.PATH, "control_panel", "config", "control_panel.json")
 
-# Connection limit: reject new connections when at max (so we can emit connection_rejected before disconnect).
-MAX_SOCKETIO_CONNECTIONS = 10
-if os.path.isfile(_cfg_path):
-    try:
-        _conn_cfg = _json.load(open(_cfg_path))
-        MAX_SOCKETIO_CONNECTIONS = _conn_cfg.get("max_socketio_connections", MAX_SOCKETIO_CONNECTIONS)
-    except Exception:
-        pass
+# Track connected SIDs for get_connection_count. Connection limit is enforced by the frontend only.
 _connected_sids = set()
 _connection_lock = threading.Lock()
 
-# Flask-SocketIO server. always_connect=True so we can emit 'connection_rejected' to client before disconnecting.
-socket = SocketIO(app, async_mode='threading', logger=False, engineio_logger=False, always_connect=True)
+# Flask-SocketIO server.
+socket = SocketIO(app, async_mode='threading', logger=False, engineio_logger=False)
 socket.init_app(app, cors_allowed_origins='*')
 
 # TTL cache for polled handlers: key -> (timestamp, value). Reduces duplicate work when multiple clients poll.
@@ -573,25 +566,12 @@ def _status_sections():
 # This keeps the client surface minimal and auditable. (For future developers/LLMs.)
 
 
-def _delayed_disconnect(sid):
-    """Disconnect a client after a short delay so connection_rejected can be delivered."""
-    time.sleep(0.25)
-    disconnect(sid=sid)
-
-
 @socket.on('connect')
 def on_connect():
     sid = getattr(request, 'sid', None)
     if not sid:
         return
     with _connection_lock:
-        if len(_connected_sids) >= MAX_SOCKETIO_CONNECTIONS:
-            emit('connection_rejected', {
-                'reason': 'max_connections',
-                'max': MAX_SOCKETIO_CONNECTIONS,
-            }, room=sid)
-            socket.start_background_task(_delayed_disconnect, sid)
-            return
         _connected_sids.add(sid)
     socket.emit('hello', {
         'connected': True,
