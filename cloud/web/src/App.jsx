@@ -313,8 +313,8 @@ function requestConnectionCountWithCallback(sock, callback) {
   });
 }
 
-const ACTIVITY_POLL_MS = 10000;
-const KIOSK_STATUS_POLL_MS = 20000;
+const ACTIVITY_POLL_MS = 5000;
+const KIOSK_STATUS_POLL_MS = 10000;
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 const FRONTEND_CONNECTION_LIMIT = 15; // If count > this, show message and disconnect.
 
