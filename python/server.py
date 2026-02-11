@@ -1,7 +1,9 @@
 # System imports.
+import base64
 import logging
 import os
 import platform
+import random
 import subprocess
 import sys
 import time
@@ -18,6 +20,20 @@ import pylib as keyme
 from control_panel.python.putil import SocketErrors, WebsocketError, WebsocketSuccess
 from control_panel.python.shared import PORTS
 from control_panel.python import wellness
+
+# Cameras supported for take_image (same set as setup/scripts/putil/image.py).
+TAKE_IMAGE_CAMERAS = [
+    'bitting_video_left',
+    'bitting_video_right',
+    'gripper_camera',
+    'milling_video',
+    'overhead_camera',
+    'security_camera',
+    'screenshot',
+    'inventory_camera',
+    'bitting_video_left_roi_box',
+    'bitting_video_right_roi_box',
+]
 
 # Match gui5/python's protection against Engine.IO decode packet bursts.
 if sys.version_info[0] == 3 and sys.version_info[1] >= 6:
@@ -560,6 +576,99 @@ def get_wtf_why_degraded():
 def get_status_sections():
     """Trimmed status for Attention Needed, Cameras, Devices, Motion. One IPC GET_STATUS."""
     return _status_sections()
+
+
+def _take_image_on_device(camera):
+    """Run take_image.py or scrot on the device; return (image_base64, None) or (None, error_msg)."""
+    if camera not in TAKE_IMAGE_CAMERAS:
+        return None, 'Invalid camera'
+
+    temp_path = '/tmp/{}.jpg'.format(random.randrange(2 ** 31))
+    kiosk_path = keyme.config.PATH
+    scripts_dir = os.path.join(kiosk_path, 'scripts')
+    take_image_script = os.path.join(scripts_dir, 'take_image.py')
+    draw_roi_script = os.path.join(scripts_dir, 'draw_roi_crop_box.py')
+    resize_factor = '0.5'
+
+    # Resolve ROI variants to base camera + roi_side
+    if camera == 'bitting_video_left_roi_box':
+        base_camera = 'bitting_video_left'
+        roi_side = 'left'
+    elif camera == 'bitting_video_right_roi_box':
+        base_camera = 'bitting_video_right'
+        roi_side = 'right'
+    else:
+        base_camera = camera
+        roi_side = None
+
+    try:
+        if base_camera == 'screenshot':
+            env = dict(os.environ)
+            env['DISPLAY'] = ':0'
+            r = subprocess.run(
+                ['sudo', 'env', 'DISPLAY=:0', 'scrot', temp_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=15,
+                env=env,
+            )
+        else:
+            device_name = 'keyme_{}'.format(base_camera)
+            r = subprocess.run(
+                [sys.executable, take_image_script, device_name, temp_path,
+                 '--resize_factor', resize_factor],
+                cwd=kiosk_path,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=60,
+            )
+            if r.returncode == 0 and roi_side is not None:
+                r_roi = subprocess.run(
+                    [sys.executable, draw_roi_script, roi_side, temp_path,
+                     temp_path, resize_factor],
+                    cwd=kiosk_path,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=15,
+                )
+                if r_roi.returncode != 0:
+                    keyme.log.warning(
+                        'draw_roi_crop_box failed: %s', (r_roi.stderr or b'').decode(errors='replace')
+                    )
+
+        if r.returncode != 0:
+            err = (r.stderr or b'').decode(errors='replace') or (r.stdout or b'').decode(errors='replace')
+            return None, 'Capture failed: {}'.format(err.strip() or 'exit {}'.format(r.returncode))
+
+        if not os.path.isfile(temp_path):
+            return None, 'Capture produced no file'
+
+        with open(temp_path, 'rb') as f:
+            data = f.read()
+        return base64.b64encode(data).decode('ascii'), None
+    except subprocess.TimeoutExpired:
+        return None, 'Capture timed out'
+    except (OSError, IOError) as e:
+        return None, '{}: {}'.format(type(e).__name__, e)
+    finally:
+        try:
+            if os.path.isfile(temp_path):
+                os.remove(temp_path)
+        except OSError:
+            pass
+
+
+@socket.on('take_image')
+def take_image(message):
+    """Take a camera image on the device; return { camera, imageBase64 } or { error } via ack."""
+    data = message if isinstance(message, dict) else {}
+    camera = (data.get('camera') or '').strip()
+    if not camera:
+        return {'error': 'Missing camera'}
+    image_b64, err = _take_image_on_device(camera)
+    if err:
+        return {'error': err}
+    return {'camera': camera, 'imageBase64': image_b64}
 
 
 @socket.on('get_wellness_check')

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useLayoutEffect, useMemo } from 'react';
+import { createContext, useContext, useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { BrowserRouter, Routes, Route, useParams, useNavigate, useLocation, Outlet } from 'react-router-dom';
 import io from 'socket.io-client';
 import {
@@ -17,6 +17,7 @@ import Calibration, { CalibrationIndexRedirect, CalibrationTracingIndexRedirect 
 import CalibrationReport from '@/pages/CalibrationReport';
 import CalibrationReportSection from '@/pages/CalibrationReportSection';
 import CalibrationTracingGripperCam from '@/pages/CalibrationTracingGripperCam';
+import CameraImagesPage from '@/pages/CameraImagesPage';
 import WellnessCheck from '@/pages/WellnessCheck';
 
 const TestcutsImagesPage = lazy(() => import('@/pages/TestcutsImagesPage'));
@@ -89,6 +90,18 @@ function Layout({ kioskName, connected, lastError, panelInfo, terminals, childre
   const navigate = useNavigate();
   const location = useLocation();
   const [editValue, setEditValue] = useState(deviceHost);
+  const deviceHostInputRef = useRef(null);
+
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'u') {
+        e.preventDefault();
+        deviceHostInputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   useLayoutEffect(() => {
     document.title = kioskName || 'Control Panel';
@@ -123,13 +136,14 @@ function Layout({ kioskName, connected, lastError, panelInfo, terminals, childre
         <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2 text-card-foreground md:gap-4">
           <StatusDot variant={connected ? 'ok' : 'error'} />
           <input
+            ref={deviceHostInputRef}
             type="text"
             value={editValue}
             onChange={(e) => setEditValue(e.target.value)}
             onBlur={commitHost}
             onKeyDown={(e) => e.key === 'Enter' && commitHost()}
-            placeholder="Device (e.g. ns1136 or 192.168.1.1)"
-            title="Change and press Enter to connect"
+            placeholder="e.g. ns1136 or 192.168.1.1 — Ctrl+U to focus"
+            title="Change and press Enter to connect. Ctrl+U to focus this field."
             className="min-w-0 max-w-[12rem] rounded border border-input bg-background px-2 py-1 text-lg font-semibold text-card-foreground outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-ring md:truncate"
             aria-label="Device host"
           />
@@ -383,6 +397,7 @@ export default function App() {
                 <Route path="tracing/gripper-cam" element={<WrapKiosk component={CalibrationTracingGripperCam} />} />
                 <Route path="tracing/gripper-cam/:runId" element={<WrapKiosk component={CalibrationTracingGripperCam} />} />
               </Route>
+              <Route path="cameras" element={<CameraImagesPage socket={socket} />} />
               <Route path="wellness" element={<WellnessCheck socket={socket} />} />
             </Route>
           </Routes>

@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, NavLink, useNavigate } from 'react-router-dom';
-import { Activity, Flag, Heart, MapPin, Wrench, ChevronDown, ChevronRight, FileText, Video, Search } from 'lucide-react';
+import { Activity, Camera, Flag, Heart, MapPin, Wrench, ChevronDown, ChevronRight, FileText, Video, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { CALIBRATION_REPORT_SECTIONS, formatSectionLabel } from '@/pages/calibrationReportSections';
 
 const QUICK_OPEN_PAGES = [
   { path: '/', label: 'Status' },
+  { path: '/cameras', label: 'Camera images' },
   { path: '/calibration/report', label: 'Calibration Reports' },
   { path: '/calibration/report/testcuts', label: 'Testcuts' },
   ...CALIBRATION_REPORT_SECTIONS.map((id) => ({ path: `/calibration/report/${id}`, label: formatSectionLabel(id) })),
@@ -202,6 +203,7 @@ export function AppSidebar({ panelInfo }) {
           Status
         </NavLink>
 
+
         <div>
           <button
             type="button"
@@ -323,6 +325,11 @@ export function AppSidebar({ panelInfo }) {
             </div>
           )}
         </div>
+
+        <NavLink to={prefix ? `${prefix}/cameras` : '/cameras'} className={linkClass}>
+          <Camera className="size-4 shrink-0" aria-hidden />
+          Camera images
+        </NavLink>
 
         <NavLink to={prefix ? `${prefix}/wellness` : '/wellness'} className={linkClass}>
           <Heart className="size-4 shrink-0" aria-hidden />
