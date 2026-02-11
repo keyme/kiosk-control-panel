@@ -594,7 +594,7 @@ def get_kiosk_name():
 
 @socket.on('get_panel_info')
 def get_panel_info():
-    """Title bar + store info. Fetch once on connect; no continuous polling."""
+    """Title bar + store info. Polled with status snapshot (e.g. every 10s)."""
     return _cached('panel_info', _CACHE_TTL_FAST_SEC, _panel_info)
 
 
@@ -633,6 +633,28 @@ def get_connection_count():
     """Current number of Socket.IO connections to this control panel. Not cached."""
     with _connection_lock:
         return {'count': len(_connected_sids)}
+
+
+def _build_status_snapshot_core():
+    """Build the cacheable part of the status snapshot (no connection_count)."""
+    return {
+        'computer_stats': _computer_stats(),
+        'terminals': _terminals(),
+        'wtf_why_degraded': _wtf_why_degraded(),
+        'status_sections': _status_sections(),
+    }
+
+
+_STATUS_SNAPSHOT_TTL_SEC = 6
+
+
+@socket.on('get_status_snapshot')
+def get_status_snapshot():
+    """Single response with computer_stats, terminals, wtf_why_degraded, status_sections (cached), and connection_count (fresh)."""
+    data = _cached('status_snapshot', _STATUS_SNAPSHOT_TTL_SEC, _build_status_snapshot_core)
+    with _connection_lock:
+        data = dict(data, connection_count=len(_connected_sids))
+    return data
 
 
 def _discover_process_configs():

@@ -313,8 +313,19 @@ function requestConnectionCountWithCallback(sock, callback) {
   });
 }
 
-const ACTIVITY_POLL_MS = 5000;
-const KIOSK_STATUS_POLL_MS = 10000;
+/** Single request for all Status page data. Callback receives { computer_stats, terminals, connection_count, wtf_why_degraded, status_sections }. */
+function requestStatusSnapshot(sock, setComputerStats, setTerminals, setConnectionCount, setWtfWhyDegraded, setStatusSections) {
+  sock.emit('get_status_snapshot', (res) => {
+    if (!res || typeof res !== 'object') return;
+    setComputerStats(res.computer_stats ?? null);
+    setTerminals(res.terminals ?? null);
+    setConnectionCount(typeof res.connection_count === 'number' ? res.connection_count : null);
+    setWtfWhyDegraded(res.wtf_why_degraded ?? null);
+    setStatusSections(res.status_sections ?? null);
+  });
+}
+
+const STATUS_POLL_MS = 10000;
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 const FRONTEND_CONNECTION_LIMIT = 15; // If count > this, show message and disconnect.
 
@@ -346,16 +357,9 @@ export default function App() {
   useEffect(() => {
     if (!socket) return;
     let pollInterval = null;
-    let kioskStatusInterval = null;
     const tick = () => {
       requestPanelInfo(socket, setPanelInfo);
-      requestComputerStats(socket, setComputerStats);
-      requestTerminals(socket, setTerminals);
-      requestConnectionCount(socket, setConnectionCount);
-    };
-    const tickKioskStatus = () => {
-      requestWtfWhyDegraded(socket, setWtfWhyDegraded);
-      requestStatusSections(socket, setStatusSections);
+      requestStatusSnapshot(socket, setComputerStats, setTerminals, setConnectionCount, setWtfWhyDegraded, setStatusSections);
     };
     const finishConnectionSetup = () => {
       setConnectionRejected(null);
@@ -364,9 +368,7 @@ export default function App() {
       requestKioskName(socket, setKioskName);
       requestPanelInfo(socket, setPanelInfo);
       tick();
-      tickKioskStatus();
-      pollInterval = setInterval(tick, ACTIVITY_POLL_MS);
-      kioskStatusInterval = setInterval(tickKioskStatus, KIOSK_STATUS_POLL_MS);
+      pollInterval = setInterval(tick, STATUS_POLL_MS);
     };
     const onConnect = () => {
       requestConnectionCountWithCallback(socket, (count) => {
@@ -389,7 +391,6 @@ export default function App() {
       setTerminals(null);
       setConnectionCount(null);
       if (pollInterval) clearInterval(pollInterval);
-      if (kioskStatusInterval) clearInterval(kioskStatusInterval);
     };
     const onConnectError = (err) => setLastError(err?.message || String(err));
 
@@ -414,7 +415,6 @@ export default function App() {
       socket.off('disconnect', onDisconnect);
       socket.off('connect_error', onConnectError);
       if (pollInterval) clearInterval(pollInterval);
-      if (kioskStatusInterval) clearInterval(kioskStatusInterval);
     };
   }, [socket]);
 
