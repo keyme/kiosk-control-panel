@@ -88,7 +88,7 @@ function TitleItem({ icon: Icon, label, children, className, title, ...rest }) {
   );
 }
 
-function Layout({ kioskName, connected, lastError, panelInfo, terminals, children }) {
+function Layout({ kioskName, connected, lastError, connectionRejected, disconnectedDueToInactivity, panelInfo, terminals, children }) {
   const { deviceHost, setDeviceHost } = useContext(DeviceHostContext);
   const navigate = useNavigate();
   const location = useLocation();
@@ -227,7 +227,17 @@ function Layout({ kioskName, connected, lastError, panelInfo, terminals, childre
         </div>
       </header>
 
-      {!connected && deviceHost.trim() && (
+      {connectionRejected && (
+        <div className="shrink-0 bg-amber-500/15 px-4 py-2 text-center text-sm text-amber-800 dark:text-amber-200" role="alert">
+          {connectionRejected}
+        </div>
+      )}
+      {disconnectedDueToInactivity && !connected && (
+        <div className="shrink-0 bg-amber-500/15 px-4 py-2 text-center text-sm text-amber-800 dark:text-amber-200" role="alert">
+          You were disconnected due to inactivity. Connect again to continue.
+        </div>
+      )}
+      {!connected && deviceHost.trim() && !connectionRejected && !disconnectedDueToInactivity && (
         <div className="shrink-0 bg-amber-500/15 px-4 py-2 text-center text-sm text-amber-800 dark:text-amber-200" role="alert">
           No connection to the kiosk, check your VPN; only limited functionality would be available.
         </div>
@@ -288,8 +298,9 @@ function requestStatusSections(sock, setStatusSections) {
   });
 }
 
-const ACTIVITY_POLL_MS = 5000;
-const KIOSK_STATUS_POLL_MS = 10000;
+const ACTIVITY_POLL_MS = 10000;
+const KIOSK_STATUS_POLL_MS = 20000;
+const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 
 export default function App() {
   const [deviceHost, setDeviceHost] = useState(() => getInitialDeviceHost());
@@ -303,6 +314,9 @@ export default function App() {
   const [statusSections, setStatusSections] = useState(null);
   const [terminals, setTerminals] = useState(null);
   const [lastError, setLastError] = useState(null);
+  const [connectionRejected, setConnectionRejected] = useState(null);
+  const [disconnectedDueToInactivity, setDisconnectedDueToInactivity] = useState(false);
+  const inactivityTimerRef = useRef(null);
 
   useEffect(() => {
     const sock = io(baseUrl, { path: '/socket.io' });
@@ -326,6 +340,8 @@ export default function App() {
       requestStatusSections(socket, setStatusSections);
     };
     const onConnect = () => {
+      setConnectionRejected(null);
+      setDisconnectedDueToInactivity(false);
       setConnected(true);
       requestKioskName(socket, setKioskName);
       requestPanelInfo(socket, setPanelInfo);
@@ -346,10 +362,16 @@ export default function App() {
       if (kioskStatusInterval) clearInterval(kioskStatusInterval);
     };
     const onConnectError = (err) => setLastError(err?.message || String(err));
+    const onConnectionRejected = (data) => {
+      const max = data?.max ?? 10;
+      setConnectionRejected(`Maximum number of viewers (${max}) reached. Try again later.`);
+      setConnected(false);
+    };
 
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     socket.on('connect_error', onConnectError);
+    socket.on('connection_rejected', onConnectionRejected);
 
     if (socket.connected) {
       setConnected(true);
@@ -365,10 +387,40 @@ export default function App() {
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
       socket.off('connect_error', onConnectError);
+      socket.off('connection_rejected', onConnectionRejected);
       if (pollInterval) clearInterval(pollInterval);
       if (kioskStatusInterval) clearInterval(kioskStatusInterval);
     };
   }, [socket]);
+
+  // Inactivity timeout: disconnect after 15 min with no user activity (only when connected).
+  useEffect(() => {
+    if (!socket || !connected) {
+      if (inactivityTimerRef.current) {
+        clearTimeout(inactivityTimerRef.current);
+        inactivityTimerRef.current = null;
+      }
+      return;
+    }
+    const scheduleDisconnect = () => {
+      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = setTimeout(() => {
+        inactivityTimerRef.current = null;
+        setDisconnectedDueToInactivity(true);
+        socket.disconnect();
+      }, INACTIVITY_TIMEOUT_MS);
+    };
+    const activityEvents = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
+    scheduleDisconnect();
+    activityEvents.forEach((ev) => window.addEventListener(ev, scheduleDisconnect));
+    return () => {
+      if (inactivityTimerRef.current) {
+        clearTimeout(inactivityTimerRef.current);
+        inactivityTimerRef.current = null;
+      }
+      activityEvents.forEach((ev) => window.removeEventListener(ev, scheduleDisconnect));
+    };
+  }, [socket, connected]);
 
   return (
     <BrowserRouter>
@@ -377,6 +429,8 @@ export default function App() {
           kioskName={kioskName}
           connected={connected}
           lastError={lastError}
+          connectionRejected={connectionRejected}
+          disconnectedDueToInactivity={disconnectedDueToInactivity}
           panelInfo={panelInfo}
           terminals={terminals}
         >

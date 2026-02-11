@@ -6,6 +6,7 @@ import platform
 import random
 import subprocess
 import sys
+import threading
 import time
 import json as _json
 from datetime import datetime
@@ -13,7 +14,7 @@ from functools import partial, wraps
 
 from flask import Flask, request
 from flask_cors import CORS
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO, disconnect, emit
 
 import pylib as keyme
 
@@ -56,9 +57,48 @@ app = Flask(__name__)
 CORS(app)
 app.config['CORS_HEADERS'] = 'Content-Type'
 
-# Flask-SocketIO server. Threading mode keeps dependencies minimal (no eventlet/gevent).
-socket = SocketIO(app, async_mode='threading', logger=False, engineio_logger=False)
+_cfg_path = os.path.join(keyme.config.PATH, "control_panel", "config", "control_panel.json")
+
+# Connection limit: reject new connections when at max (so we can emit connection_rejected before disconnect).
+MAX_SOCKETIO_CONNECTIONS = 10
+if os.path.isfile(_cfg_path):
+    try:
+        _conn_cfg = _json.load(open(_cfg_path))
+        MAX_SOCKETIO_CONNECTIONS = _conn_cfg.get("max_socketio_connections", MAX_SOCKETIO_CONNECTIONS)
+    except Exception:
+        pass
+_connected_sids = set()
+_connection_lock = threading.Lock()
+
+# Flask-SocketIO server. always_connect=True so we can emit 'connection_rejected' to client before disconnecting.
+socket = SocketIO(app, async_mode='threading', logger=False, engineio_logger=False, always_connect=True)
 socket.init_app(app, cors_allowed_origins='*')
+
+# TTL cache for polled handlers: key -> (timestamp, value). Reduces duplicate work when multiple clients poll.
+_CACHE_TTL_FAST_SEC = 4
+_CACHE_TTL_SLOW_SEC = 8
+_cache = {}
+_cache_lock = threading.Lock()
+if os.path.isfile(_cfg_path):
+    try:
+        _cfg = _json.load(open(_cfg_path))
+        _CACHE_TTL_FAST_SEC = _cfg.get("cache_ttl_fast_sec", _CACHE_TTL_FAST_SEC)
+        _CACHE_TTL_SLOW_SEC = _cfg.get("cache_ttl_slow_sec", _CACHE_TTL_SLOW_SEC)
+    except Exception:
+        pass
+
+
+def _cached(key, ttl_sec, compute_fn):
+    """Return cached value if non-expired, else compute, store and return. Thread-safe."""
+    now = time.time()
+    with _cache_lock:
+        if key in _cache:
+            ts, val = _cache[key]
+            if now - ts < ttl_sec:
+                return val
+        val = compute_fn()
+        _cache[key] = (now, val)
+        return val
 
 
 # Reduce socket.io log noise.
@@ -535,11 +575,29 @@ def _status_sections():
 
 @socket.on('connect')
 def on_connect():
+    sid = getattr(request, 'sid', None)
+    if not sid:
+        return
+    with _connection_lock:
+        if len(_connected_sids) >= MAX_SOCKETIO_CONNECTIONS:
+            emit('connection_rejected', {
+                'reason': 'max_connections',
+                'max': MAX_SOCKETIO_CONNECTIONS,
+            }, room=sid)
+            disconnect(sid=sid)
+            return
+        _connected_sids.add(sid)
     socket.emit('hello', {
         'connected': True,
         'service': 'CONTROL_PANEL',
         'kiosk_name': getattr(keyme.config, 'KIOSK_NAME', None) or ''
     })
+
+
+@socket.on('disconnect')
+def on_disconnect():
+    with _connection_lock:
+        _connected_sids.discard(getattr(request, 'sid', None))
 
 
 @socket.on('get_kiosk_name')
@@ -551,7 +609,7 @@ def get_kiosk_name():
 @socket.on('get_panel_info')
 def get_panel_info():
     """Title bar + store info. Fetch once on connect; no continuous polling."""
-    return _panel_info()
+    return _cached('panel_info', _CACHE_TTL_FAST_SEC, _panel_info)
 
 
 @socket.on('get_activity')
@@ -563,25 +621,25 @@ def get_activity():
 @socket.on('get_computer_stats')
 def get_computer_stats():
     """Computer Stats (CPU, memory, uptime, CPU temp, OS version). Poll every 5s."""
-    return _computer_stats()
+    return _cached('computer_stats', _CACHE_TTL_FAST_SEC, _computer_stats)
 
 
 @socket.on('get_terminals')
 def get_terminals():
     """Remote (SSH) and local terminal counts; SSH usernames from keyme_logins.csv + who. Poll with activity."""
-    return _terminals()
+    return _cached('terminals', _CACHE_TTL_FAST_SEC, _terminals)
 
 
 @socket.on('get_wtf_why_degraded')
 def get_wtf_why_degraded():
     """wtf and why-degraded command outputs (stdout+stderr). Poll with Kiosk Stats."""
-    return _wtf_why_degraded()
+    return _cached('wtf_why_degraded', _CACHE_TTL_SLOW_SEC, _wtf_why_degraded)
 
 
 @socket.on('get_status_sections')
 def get_status_sections():
     """Trimmed status for Attention Needed, Cameras, Devices, Motion. One IPC GET_STATUS."""
-    return _status_sections()
+    return _cached('status_sections', _CACHE_TTL_SLOW_SEC, _status_sections)
 
 
 def _discover_process_configs():
