@@ -578,17 +578,24 @@ def get_status_sections():
     return _status_sections()
 
 
-def _take_image_on_device(camera):
+def _take_image_on_device(camera, resize_factor=0.5):
     """Run take_image.py or scrot on the device; return (image_base64, None) or (None, error_msg)."""
     if camera not in TAKE_IMAGE_CAMERAS:
         return None, 'Invalid camera'
 
+    try:
+        resize_factor = float(resize_factor)
+        if not (0.1 <= resize_factor <= 1.0):
+            return None, 'resize_factor must be between 0.1 and 1.0'
+    except (TypeError, ValueError):
+        return None, 'Invalid resize_factor'
+
+    resize_factor_str = str(resize_factor)
     temp_path = '/tmp/{}.jpg'.format(random.randrange(2 ** 31))
     kiosk_path = keyme.config.PATH
     scripts_dir = os.path.join(kiosk_path, 'scripts')
     take_image_script = os.path.join(scripts_dir, 'take_image.py')
     draw_roi_script = os.path.join(scripts_dir, 'draw_roi_crop_box.py')
-    resize_factor = '0.5'
 
     # Resolve ROI variants to base camera + roi_side
     if camera == 'bitting_video_left_roi_box':
@@ -616,7 +623,7 @@ def _take_image_on_device(camera):
             device_name = 'keyme_{}'.format(base_camera)
             r = subprocess.run(
                 [sys.executable, take_image_script, device_name, temp_path,
-                 '--resize_factor', resize_factor],
+                 '--resize_factor', resize_factor_str],
                 cwd=kiosk_path,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -625,7 +632,7 @@ def _take_image_on_device(camera):
             if r.returncode == 0 and roi_side is not None:
                 r_roi = subprocess.run(
                     [sys.executable, draw_roi_script, roi_side, temp_path,
-                     temp_path, resize_factor],
+                     temp_path, resize_factor_str],
                     cwd=kiosk_path,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -665,7 +672,8 @@ def take_image(message):
     camera = (data.get('camera') or '').strip()
     if not camera:
         return {'error': 'Missing camera'}
-    image_b64, err = _take_image_on_device(camera)
+    resize_factor = data.get('resize_factor', 0.5)
+    image_b64, err = _take_image_on_device(camera, resize_factor)
     if err:
         return {'error': err}
     return {'camera': camera, 'imageBase64': image_b64}
