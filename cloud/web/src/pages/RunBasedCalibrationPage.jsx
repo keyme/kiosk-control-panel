@@ -61,10 +61,21 @@ export default function RunBasedCalibrationPage({ sectionId, kioskName }) {
     );
   }
 
+  const latestPath = kioskName
+    ? `/${kioskName}/calibration/report/${sectionId}/latest`
+    : `/calibration/report/${sectionId}/latest`;
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>{title}</CardTitle>
+        <button
+          type="button"
+          onClick={() => navigate(latestPath)}
+          className="text-primary mt-1 text-sm font-medium underline hover:no-underline"
+        >
+          Open latest
+        </button>
       </CardHeader>
       <CardContent className="space-y-4">
         <input

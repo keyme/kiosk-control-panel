@@ -41,10 +41,21 @@ export default function TestcutsPage({ kioskName }) {
     );
   }
 
+  const latestPath = kioskName
+    ? `/${kioskName}/calibration/report/testcuts/latest`
+    : '/calibration/report/testcuts/latest';
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Testcuts</CardTitle>
+        <button
+          type="button"
+          onClick={() => navigate(latestPath)}
+          className="text-primary mt-1 text-sm font-medium underline hover:no-underline"
+        >
+          Open latest
+        </button>
       </CardHeader>
       <CardContent className="space-y-4">
         <input

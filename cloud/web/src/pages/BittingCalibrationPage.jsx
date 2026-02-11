@@ -46,10 +46,21 @@ export default function BittingCalibrationPage({ kioskName }) {
     );
   }
 
+  const latestPath = kioskName
+    ? `/${kioskName}/calibration/report/bitting_calibration/latest`
+    : '/calibration/report/bitting_calibration/latest';
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Bitting Calibration</CardTitle>
+        <button
+          type="button"
+          onClick={() => navigate(latestPath)}
+          className="text-primary mt-1 text-sm font-medium underline hover:no-underline"
+        >
+          Open latest
+        </button>
       </CardHeader>
       <CardContent className="space-y-4">
         <input

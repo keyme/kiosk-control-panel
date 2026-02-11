@@ -602,6 +602,10 @@ export default function CalibrationTracingGripperCam({ kioskName: kioskNameProp 
     );
   }
 
+  const latestPath = kioskName
+    ? `/${kioskName}/calibration/tracing/gripper-cam/latest`
+    : '/calibration/tracing/gripper-cam/latest';
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-4">
@@ -628,6 +632,13 @@ export default function CalibrationTracingGripperCam({ kioskName: kioskNameProp 
             </option>
           ))}
         </select>
+        <button
+          type="button"
+          onClick={() => navigate(latestPath)}
+          className="text-primary text-sm font-medium underline hover:no-underline"
+        >
+          Open latest
+        </button>
         {runsLoading && <span className="text-muted-foreground text-sm">Loading runs…</span>}
         {!runsLoading && runs.length === 0 && (
           <span className="text-muted-foreground text-sm">No trace runs found.</span>

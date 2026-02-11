@@ -14,9 +14,11 @@ import {
 import { lazy, Suspense } from 'react';
 import Status from '@/pages/Status';
 import Calibration, { CalibrationIndexRedirect, CalibrationTracingIndexRedirect } from '@/pages/Calibration';
+import CalibrationLatestRedirect from '@/pages/CalibrationLatestRedirect';
 import CalibrationReport from '@/pages/CalibrationReport';
 import CalibrationReportSection from '@/pages/CalibrationReportSection';
 import CalibrationTracingGripperCam from '@/pages/CalibrationTracingGripperCam';
+import CalibrationTracingLatestRedirect from '@/pages/CalibrationTracingLatestRedirect';
 import CameraImagesPage from '@/pages/CameraImagesPage';
 import ConfigPage from '@/pages/ConfigPage';
 import WellnessCheck from '@/pages/WellnessCheck';
@@ -385,16 +387,25 @@ export default function App() {
               <Route path="calibration" element={<Calibration />}>
                 <Route index element={<CalibrationIndexRedirect />} />
                 <Route path="report" element={<CalibrationReport />} />
+                <Route path="report/testcuts/latest" element={<WrapKiosk component={CalibrationLatestRedirect} sectionId="testcuts" />} />
                 <Route path="report/testcuts/:id" element={<Suspense fallback={<div className="p-4 text-muted-foreground text-sm">Loading…</div>}><WrapKiosk component={TestcutsImagesPage} /></Suspense>} />
+                <Route path="report/bitting_calibration/latest" element={<WrapKiosk component={CalibrationLatestRedirect} sectionId="bitting_calibration" />} />
                 <Route path="report/bitting_calibration/:date" element={<Suspense fallback={<div className="p-4 text-muted-foreground text-sm">Loading…</div>}><WrapKiosk component={BittingCalibrationImagesPage} /></Suspense>} />
+                <Route path="report/bump_tower_calibration/latest" element={<WrapKiosk component={CalibrationLatestRedirect} sectionId="bump_tower_calibration" />} />
                 <Route path="report/bump_tower_calibration/:runId" element={<Suspense fallback={<div className="p-4 text-muted-foreground text-sm">Loading…</div>}><WrapKiosk component={RunBasedCalibrationImagesPage} sectionId="bump_tower_calibration" /></Suspense>} />
+                <Route path="report/grip_calibration/latest" element={<WrapKiosk component={CalibrationLatestRedirect} sectionId="grip_calibration" />} />
                 <Route path="report/grip_calibration/:runId" element={<Suspense fallback={<div className="p-4 text-muted-foreground text-sm">Loading…</div>}><WrapKiosk component={RunBasedCalibrationImagesPage} sectionId="grip_calibration" /></Suspense>} />
+                <Route path="report/gripper_cam_calibration/latest" element={<WrapKiosk component={CalibrationLatestRedirect} sectionId="gripper_cam_calibration" />} />
                 <Route path="report/gripper_cam_calibration/:runId" element={<Suspense fallback={<div className="p-4 text-muted-foreground text-sm">Loading…</div>}><WrapKiosk component={RunBasedCalibrationImagesPage} sectionId="gripper_cam_calibration" /></Suspense>} />
+                <Route path="report/gripper_leds_check/latest" element={<WrapKiosk component={CalibrationLatestRedirect} sectionId="gripper_leds_check" />} />
                 <Route path="report/gripper_leds_check/:runId" element={<Suspense fallback={<div className="p-4 text-muted-foreground text-sm">Loading…</div>}><WrapKiosk component={RunBasedCalibrationImagesPage} sectionId="gripper_leds_check" /></Suspense>} />
+                <Route path="report/overhead_cam_calibration/latest" element={<WrapKiosk component={CalibrationLatestRedirect} sectionId="overhead_cam_calibration" />} />
                 <Route path="report/overhead_cam_calibration/:runId" element={<Suspense fallback={<div className="p-4 text-muted-foreground text-sm">Loading…</div>}><WrapKiosk component={RunBasedCalibrationImagesPage} sectionId="overhead_cam_calibration" /></Suspense>} />
+                <Route path="report/pickup_y_calibration/latest" element={<WrapKiosk component={CalibrationLatestRedirect} sectionId="pickup_y_calibration" />} />
                 <Route path="report/pickup_y_calibration/:runId" element={<Suspense fallback={<div className="p-4 text-muted-foreground text-sm">Loading…</div>}><WrapKiosk component={RunBasedCalibrationImagesPage} sectionId="pickup_y_calibration" /></Suspense>} />
                 <Route path="report/:sectionId" element={<WrapKiosk component={CalibrationReportSection} />} />
                 <Route path="tracing" element={<CalibrationTracingIndexRedirect />} />
+                <Route path="tracing/gripper-cam/latest" element={<WrapKiosk component={CalibrationTracingLatestRedirect} />} />
                 <Route path="tracing/gripper-cam" element={<WrapKiosk component={CalibrationTracingGripperCam} />} />
                 <Route path="tracing/gripper-cam/:runId" element={<WrapKiosk component={CalibrationTracingGripperCam} />} />
               </Route>
