@@ -316,7 +316,7 @@ function requestConnectionCountWithCallback(sock, callback) {
 const ACTIVITY_POLL_MS = 10000;
 const KIOSK_STATUS_POLL_MS = 20000;
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
-const FRONTEND_CONNECTION_LIMIT = 10; // If count > this, show message and disconnect.
+const FRONTEND_CONNECTION_LIMIT = 15; // If count > this, show message and disconnect.
 
 export default function App() {
   const [deviceHost, setDeviceHost] = useState(() => getInitialDeviceHost());
@@ -372,7 +372,7 @@ export default function App() {
       requestConnectionCountWithCallback(socket, (count) => {
         setConnectionCount(count);
         if (count != null && count > FRONTEND_CONNECTION_LIMIT) {
-          setConnectionRejected(`Too many viewers connected (limit ${FRONTEND_CONNECTION_LIMIT}). Try again later.`);
+          setConnectionRejected(`Too many viewers connected to this kiosk (limit ${FRONTEND_CONNECTION_LIMIT}). Try again later.`);
           socket.disconnect();
           return;
         }
