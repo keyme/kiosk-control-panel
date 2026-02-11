@@ -20,6 +20,7 @@
     "cornerstone-tools": "^6.0.10",
     "cornerstone-web-image-loader": "^2.1.1",
     "hammerjs": "^2.0.8",
+    "jsoneditor": "^10.4.2",
     "lucide-react": "^0.563.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

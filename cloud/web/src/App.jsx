@@ -18,6 +18,7 @@ import CalibrationReport from '@/pages/CalibrationReport';
 import CalibrationReportSection from '@/pages/CalibrationReportSection';
 import CalibrationTracingGripperCam from '@/pages/CalibrationTracingGripperCam';
 import CameraImagesPage from '@/pages/CameraImagesPage';
+import ConfigPage from '@/pages/ConfigPage';
 import WellnessCheck from '@/pages/WellnessCheck';
 
 const TestcutsImagesPage = lazy(() => import('@/pages/TestcutsImagesPage'));
@@ -398,6 +399,7 @@ export default function App() {
                 <Route path="tracing/gripper-cam/:runId" element={<WrapKiosk component={CalibrationTracingGripperCam} />} />
               </Route>
               <Route path="cameras" element={<CameraImagesPage socket={socket} />} />
+              <Route path="config" element={<ConfigPage socket={socket} />} />
               <Route path="wellness" element={<WellnessCheck socket={socket} />} />
             </Route>
           </Routes>

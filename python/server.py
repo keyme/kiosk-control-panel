@@ -578,6 +578,47 @@ def get_status_sections():
     return _status_sections()
 
 
+def _discover_process_configs():
+    """Discover (process, filename) from filesystem. Walk PATH; skip top-level config dir.
+    For each other top-level dir with a config/ subdir, collect every config/*.json."""
+    path = keyme.config.PATH
+    config_dir = keyme.config.CONFIG_DIR
+    seen = []
+    try:
+        for name in sorted(os.listdir(path)):
+            if name == config_dir:
+                continue
+            process_dir = os.path.join(path, name)
+            if not os.path.isdir(process_dir):
+                continue
+            config_path = os.path.join(process_dir, config_dir)
+            if not os.path.isdir(config_path):
+                continue
+            for f in sorted(os.listdir(config_path)):
+                if f.endswith('.json'):
+                    seen.append((name, f))
+    except OSError as e:
+        keyme.log.error("Config discovery failed: %s", e)
+    return seen
+
+
+@socket.on('get_all_configs')
+def get_all_configs():
+    """Load all process configs on demand: discover (process, filename), cascade_load each, return nested payload."""
+    specs = _discover_process_configs()
+    configs = {}
+    for process, filename in specs:
+        if process not in configs:
+            configs[process] = {}
+        try:
+            cfg = keyme.config.cascade_load(filename, process=process, use_splits=True)
+            configs[process][filename] = cfg
+        except Exception as e:
+            keyme.log.error("Failed to load %s/%s: %s", process, filename, e)
+            configs[process][filename] = None
+    return WebsocketSuccess({'configs': configs}).to_json()
+
+
 def _take_image_on_device(camera, resize_factor=0.5):
     """Run take_image.py or scrot on the device; return (image_base64, None) or (None, error_msg)."""
     if camera not in TAKE_IMAGE_CAMERAS:

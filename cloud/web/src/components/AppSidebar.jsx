@@ -7,6 +7,7 @@ import { CALIBRATION_REPORT_SECTIONS, formatSectionLabel } from '@/pages/calibra
 const QUICK_OPEN_PAGES = [
   { path: '/', label: 'Status' },
   { path: '/cameras', label: 'Camera images' },
+  { path: '/config', label: 'Config' },
   { path: '/calibration/report', label: 'Calibration Reports' },
   { path: '/calibration/report/testcuts', label: 'Testcuts' },
   ...CALIBRATION_REPORT_SECTIONS.map((id) => ({ path: `/calibration/report/${id}`, label: formatSectionLabel(id) })),
@@ -329,6 +330,11 @@ export function AppSidebar({ panelInfo }) {
         <NavLink to={prefix ? `${prefix}/cameras` : '/cameras'} className={linkClass}>
           <Camera className="size-4 shrink-0" aria-hidden />
           Camera images
+        </NavLink>
+
+        <NavLink to={prefix ? `${prefix}/config` : '/config'} className={linkClass}>
+          <FileText className="size-4 shrink-0" aria-hidden />
+          Config
         </NavLink>
 
         <NavLink to={prefix ? `${prefix}/wellness` : '/wellness'} className={linkClass}>
