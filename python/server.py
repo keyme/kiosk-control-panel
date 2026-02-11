@@ -530,7 +530,7 @@ _PROCESS_KEYS = frozenset([
 def _get_status_full():
     """Fetch full status dict from ABILITIES_MANAGER GET_STATUS (key=None). Returns None on error."""
     try:
-        r = keyme.ipc.send_sync('ABILITIES_MANAGER', 'GET_STATUS', {'key': None})
+        r = keyme.ipc.send_sync('ABILITIES_MANAGER', 'GET_STATUS', {'key': None}, logging=False)
         return (r.get('data') or {}).get('status')
     except _IPC_ERRORS + (TypeError, AttributeError, KeyError) as e:
         keyme.log.error(f"GET_STATUS full failed: {e}")
