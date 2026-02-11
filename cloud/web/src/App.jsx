@@ -305,9 +305,18 @@ function requestConnectionCount(sock, setConnectionCount) {
   });
 }
 
+/** Request connection count and call callback(count). Used to gate connect setup by frontend limit. */
+function requestConnectionCountWithCallback(sock, callback) {
+  sock.emit('get_connection_count', (res) => {
+    const n = res?.count;
+    callback(typeof n === 'number' ? n : null);
+  });
+}
+
 const ACTIVITY_POLL_MS = 10000;
 const KIOSK_STATUS_POLL_MS = 20000;
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+const FRONTEND_CONNECTION_LIMIT = 6; // If count > this, show message and disconnect (backend still enforces 10).
 
 export default function App() {
   const [deviceHost, setDeviceHost] = useState(() => getInitialDeviceHost());
@@ -348,7 +357,7 @@ export default function App() {
       requestWtfWhyDegraded(socket, setWtfWhyDegraded);
       requestStatusSections(socket, setStatusSections);
     };
-    const onConnect = () => {
+    const finishConnectionSetup = () => {
       setConnectionRejected(null);
       setDisconnectedDueToInactivity(false);
       setConnected(true);
@@ -358,6 +367,17 @@ export default function App() {
       tickKioskStatus();
       pollInterval = setInterval(tick, ACTIVITY_POLL_MS);
       kioskStatusInterval = setInterval(tickKioskStatus, KIOSK_STATUS_POLL_MS);
+    };
+    const onConnect = () => {
+      requestConnectionCountWithCallback(socket, (count) => {
+        setConnectionCount(count);
+        if (count != null && count > FRONTEND_CONNECTION_LIMIT) {
+          setConnectionRejected(`Too many viewers connected (limit ${FRONTEND_CONNECTION_LIMIT}). Try again later.`);
+          socket.disconnect();
+          return;
+        }
+        finishConnectionSetup();
+      });
     };
     const onDisconnect = () => {
       setConnected(false);
@@ -384,13 +404,15 @@ export default function App() {
     socket.on('connection_rejected', onConnectionRejected);
 
     if (socket.connected) {
-      setConnected(true);
-      requestKioskName(socket, setKioskName);
-      requestPanelInfo(socket, setPanelInfo);
-      tick();
-      tickKioskStatus();
-      pollInterval = setInterval(tick, ACTIVITY_POLL_MS);
-      kioskStatusInterval = setInterval(tickKioskStatus, KIOSK_STATUS_POLL_MS);
+      requestConnectionCountWithCallback(socket, (count) => {
+        setConnectionCount(count);
+        if (count != null && count > FRONTEND_CONNECTION_LIMIT) {
+          setConnectionRejected(`Too many viewers connected (limit ${FRONTEND_CONNECTION_LIMIT}). Try again later.`);
+          socket.disconnect();
+          return;
+        }
+        finishConnectionSetup();
+      });
     }
 
     return () => {
