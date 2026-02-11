@@ -574,7 +574,7 @@ def on_connect():
     with _connection_lock:
         _connected_sids.add(sid)
         total = len(_connected_sids)
-    keyme.log.info("Control panel client connected sid=%s total_connections=%s", sid, total)
+    keyme.log.info(f"Control panel client connected sid={sid} total_connections={total}")
     socket.emit('hello', {
         'connected': True,
         'service': 'CONTROL_PANEL',
@@ -588,7 +588,7 @@ def on_disconnect():
     with _connection_lock:
         _connected_sids.discard(sid)
         total = len(_connected_sids)
-    keyme.log.info("Control panel client disconnected sid=%s total_connections=%s", sid, total)
+    keyme.log.info(f"Control panel client disconnected sid={sid} total_connections={total}")
 
 
 @socket.on('get_kiosk_name')
@@ -804,7 +804,7 @@ def take_image(message):
     camera = (data.get('camera') or '').strip()
     if not camera:
         return {'error': 'Missing camera'}
-    keyme.log.info("Control panel take_image camera=%s", camera)
+    keyme.log.info(f"Control panel take_image camera={camera}")
     resize_factor = data.get('resize_factor', 0.5)
     image_b64, err = _take_image_on_device(camera, resize_factor)
     if err:
@@ -846,6 +846,6 @@ def emit_async_request(request_obj):
 def run():
     port = PORTS['python']
     host = '0.0.0.0'
-    keyme.log.info("Control panel Socket.IO server starting host=%s port=%s", host, port)
+    keyme.log.info(f"Control panel Socket.IO server starting host={host} port={port}")
     socket.run(app, port=port, host=host)
 
