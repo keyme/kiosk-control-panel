@@ -573,6 +573,12 @@ def _status_sections():
 # This keeps the client surface minimal and auditable. (For future developers/LLMs.)
 
 
+def _delayed_disconnect(sid):
+    """Disconnect a client after a short delay so connection_rejected can be delivered."""
+    time.sleep(0.25)
+    disconnect(sid=sid)
+
+
 @socket.on('connect')
 def on_connect():
     sid = getattr(request, 'sid', None)
@@ -584,7 +590,7 @@ def on_connect():
                 'reason': 'max_connections',
                 'max': MAX_SOCKETIO_CONNECTIONS,
             }, room=sid)
-            disconnect(sid=sid)
+            socket.start_background_task(_delayed_disconnect, sid)
             return
         _connected_sids.add(sid)
     socket.emit('hello', {
