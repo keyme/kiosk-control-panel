@@ -149,3 +149,75 @@ body {
     @apply bg-background text-foreground;
   }
 }
+
+/* Config page JSON editor: fixed dark theme so background and text are always readable */
+.config-json-editor .jsoneditor {
+  border-color: #404040 !important;
+  background-color: #1e1e1e !important;
+  color: #e0e0e0 !important;
+}
+.config-json-editor .jsoneditor-menu,
+.config-json-editor .jsoneditor-navigation-bar {
+  border-color: #404040 !important;
+  background-color: #2d2d2d !important;
+  color: #b0b0b0 !important;
+}
+.config-json-editor .jsoneditor-frame,
+.config-json-editor .jsoneditor-content,
+.config-json-editor .jsoneditor div.jsoneditor-tree {
+  background-color: #1e1e1e !important;
+  color: #e0e0e0 !important;
+}
+.config-json-editor .jsoneditor td,
+.config-json-editor .jsoneditor th {
+  color: #e0e0e0 !important;
+  border-color: #404040 !important;
+}
+.config-json-editor .jsoneditor input[type="text"],
+.config-json-editor .jsoneditor input[type="search"] {
+  background-color: #2d2d2d !important;
+  color: #e0e0e0 !important;
+  border-color: #404040 !important;
+}
+.config-json-editor .jsoneditor .jsoneditor-tree button {
+  color: #b0b0b0 !important;
+}
+.config-json-editor .jsoneditor .jsoneditor-field {
+  color: #9cdcfe !important;
+}
+.config-json-editor .jsoneditor .jsoneditor-value.jsoneditor-string {
+  color: #ce9178 !important;
+}
+.config-json-editor .jsoneditor .jsoneditor-value.jsoneditor-number {
+  color: #b5cea8 !important;
+}
+.config-json-editor .jsoneditor .jsoneditor-value.jsoneditor-boolean {
+  color: #569cd6 !important;
+}
+.config-json-editor .jsoneditor .jsoneditor-value.jsoneditor-null {
+  color: #808080 !important;
+}
+.config-json-editor .jsoneditor .jsoneditor-separator {
+  color: #606060 !important;
+}
+.config-json-editor .jsoneditor .jsoneditor-buttons button {
+  background-color: #2d2d2d !important;
+  color: #e0e0e0 !important;
+  border-color: #404040 !important;
+}
+.config-json-editor .jsoneditor .jsoneditor-buttons button:hover {
+  background-color: #404040 !important;
+  color: #fff !important;
+}
+/* Override any nested elements that might still get white background from library */
+.config-json-editor .jsoneditor * {
+  border-color: #404040;
+}
+.config-json-editor .jsoneditor table,
+.config-json-editor .jsoneditor tbody,
+.config-json-editor .jsoneditor tr,
+.config-json-editor .jsoneditor .jsoneditor-tree-inner,
+.config-json-editor .jsoneditor .jsoneditor-values {
+  background-color: #1e1e1e !important;
+  color: #e0e0e0 !important;
+}

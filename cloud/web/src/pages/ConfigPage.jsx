@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageTitle } from '@/components/PageTitle';
-import { Download, Loader2, FileJson } from 'lucide-react';
+import { Download, Loader2, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import JSONEditor from 'jsoneditor';
 import 'jsoneditor/dist/jsoneditor.min.css';
@@ -96,7 +96,12 @@ export default function ConfigPage({ socket }) {
 
   return (
     <div className="flex flex-col gap-4 p-4">
-      <PageTitle title="Config" icon={FileJson} />
+      <PageTitle icon={Settings}>Kiosk config</PageTitle>
+      <p className="text-muted-foreground -mt-2 text-sm">
+        View merged config and hardware manifest from this kiosk. Configs are loaded per process
+        (global defaults plus hardware-specific and local overrides). &quot;Global (hardware)&quot; is
+        the top-level hardware manifest (config/hardware.json). Read-only.
+      </p>
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
@@ -201,7 +206,7 @@ export default function ConfigPage({ socket }) {
                 ) : (
                   <div
                     ref={editorRef}
-                    className="h-[60vh] min-h-[300px] [&_.jsoneditor]:border-0 [&_.jsoneditor]:!h-full"
+                    className="config-json-editor h-[60vh] min-h-[300px] [&_.jsoneditor]:border-0 [&_.jsoneditor]:!h-full"
                   />
                 )
               ) : (
