@@ -47,10 +47,12 @@ def create_router():
 
     @router.get("/ping")
     def ping():
+        _log.info("api ping")
         return {"status": "ok", "source": "cloud"}
 
     @router.get("/calibration/testcuts/ids")
     def calibration_testcuts_ids(kiosk: str = Query(None)):
+        _log.info("calibration testcuts ids kiosk=%s", kiosk)
         if not kiosk:
             return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         host = kiosk_to_hostname(kiosk)
@@ -66,6 +68,7 @@ def create_router():
 
     @router.get("/calibration/testcuts/images")
     def calibration_testcuts_images(kiosk: str = Query(None), id: str = Query(None)):
+        _log.info("calibration testcuts images kiosk=%s id=%s", kiosk, id)
         if not kiosk:
             return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         if id is None or id == "":
@@ -87,6 +90,7 @@ def create_router():
 
     @router.get("/calibration/bitting_calibration/dates")
     def calibration_bitting_dates(kiosk: str = Query(None)):
+        _log.info("calibration bitting_calibration dates kiosk=%s", kiosk)
         if not kiosk:
             return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         host = kiosk_to_hostname(kiosk)
@@ -102,6 +106,7 @@ def create_router():
 
     @router.get("/calibration/bitting_calibration/images")
     def calibration_bitting_images(kiosk: str = Query(None), date: str = Query(None)):
+        _log.info("calibration bitting_calibration images kiosk=%s date=%s", kiosk, date)
         if not kiosk:
             return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         if not date or not date.strip():
@@ -120,6 +125,7 @@ def create_router():
 
     @router.get("/calibration/bump_tower_calibration/runs")
     def calibration_bump_tower_runs(kiosk: str = Query(None)):
+        _log.info("calibration bump_tower_calibration runs kiosk=%s", kiosk)
         if not kiosk:
             return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         host = kiosk_to_hostname(kiosk)
@@ -135,6 +141,7 @@ def create_router():
 
     @router.get("/calibration/bump_tower_calibration/images")
     def calibration_bump_tower_images(kiosk: str = Query(None), run_id: str = Query(None)):
+        _log.info("calibration bump_tower_calibration images kiosk=%s run_id=%s", kiosk, run_id)
         if not kiosk:
             return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         if not run_id or not run_id.strip():
@@ -153,6 +160,7 @@ def create_router():
 
     @router.get("/calibration/grip_calibration/runs")
     def calibration_grip_runs(kiosk: str = Query(None)):
+        _log.info("calibration grip_calibration runs kiosk=%s", kiosk)
         if not kiosk:
             return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         host = kiosk_to_hostname(kiosk)
@@ -168,6 +176,7 @@ def create_router():
 
     @router.get("/calibration/grip_calibration/images")
     def calibration_grip_images(kiosk: str = Query(None), run_id: str = Query(None)):
+        _log.info("calibration grip_calibration images kiosk=%s run_id=%s", kiosk, run_id)
         if not kiosk:
             return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         if not run_id or not run_id.strip():
@@ -186,6 +195,7 @@ def create_router():
 
     @router.get("/calibration/gripper_cam_calibration/runs")
     def calibration_gripper_cam_runs(kiosk: str = Query(None)):
+        _log.info("calibration gripper_cam_calibration runs kiosk=%s", kiosk)
         if not kiosk:
             return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         host = kiosk_to_hostname(kiosk)
@@ -201,6 +211,7 @@ def create_router():
 
     @router.get("/calibration/gripper_cam_calibration/images")
     def calibration_gripper_cam_images(kiosk: str = Query(None), run_id: str = Query(None)):
+        _log.info("calibration gripper_cam_calibration images kiosk=%s run_id=%s", kiosk, run_id)
         if not kiosk:
             return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         if not run_id or not run_id.strip():
@@ -219,6 +230,7 @@ def create_router():
 
     @router.get("/calibration/gripper_leds_check/runs")
     def calibration_gripper_leds_runs(kiosk: str = Query(None)):
+        _log.info("calibration gripper_leds_check runs kiosk=%s", kiosk)
         if not kiosk:
             return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         host = kiosk_to_hostname(kiosk)
@@ -234,6 +246,7 @@ def create_router():
 
     @router.get("/calibration/gripper_leds_check/images")
     def calibration_gripper_leds_images(kiosk: str = Query(None), run_id: str = Query(None)):
+        _log.info("calibration gripper_leds_check images kiosk=%s run_id=%s", kiosk, run_id)
         if not kiosk:
             return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         if not run_id or not run_id.strip():
@@ -252,6 +265,7 @@ def create_router():
 
     @router.get("/calibration/overhead_cam_calibration/runs")
     def calibration_overhead_cam_runs(kiosk: str = Query(None)):
+        _log.info("calibration overhead_cam_calibration runs kiosk=%s", kiosk)
         if not kiosk:
             return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         host = kiosk_to_hostname(kiosk)
@@ -267,6 +281,7 @@ def create_router():
 
     @router.get("/calibration/overhead_cam_calibration/images")
     def calibration_overhead_cam_images(kiosk: str = Query(None), run_id: str = Query(None)):
+        _log.info("calibration overhead_cam_calibration images kiosk=%s run_id=%s", kiosk, run_id)
         if not kiosk:
             return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         if not run_id or not run_id.strip():
@@ -285,6 +300,7 @@ def create_router():
 
     @router.get("/calibration/pickup_y_calibration/runs")
     def calibration_pickup_y_runs(kiosk: str = Query(None)):
+        _log.info("calibration pickup_y_calibration runs kiosk=%s", kiosk)
         if not kiosk:
             return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         host = kiosk_to_hostname(kiosk)
@@ -300,6 +316,7 @@ def create_router():
 
     @router.get("/calibration/pickup_y_calibration/images")
     def calibration_pickup_y_images(kiosk: str = Query(None), run_id: str = Query(None)):
+        _log.info("calibration pickup_y_calibration images kiosk=%s run_id=%s", kiosk, run_id)
         if not kiosk:
             return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         if not run_id or not run_id.strip():
@@ -318,6 +335,7 @@ def create_router():
 
     @router.get("/calibration/trace/gripper_cam/runs")
     def calibration_trace_gripper_cam_runs(kiosk: str = Query(None)):
+        _log.info("calibration trace gripper_cam runs kiosk=%s", kiosk)
         if not kiosk:
             return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         try:
@@ -330,6 +348,7 @@ def create_router():
 
     @router.get("/calibration/trace/gripper_cam")
     def calibration_trace_gripper_cam(kiosk: str = Query(None), run_id: str = Query(None)):
+        _log.info("calibration trace gripper_cam kiosk=%s run_id=%s", kiosk, run_id)
         if not kiosk:
             return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
         if not run_id or not run_id.strip():
@@ -350,6 +369,7 @@ def create_router():
         data = body or {}
         image_url = data.get("image_url")
         homography = data.get("homography")
+        _log.info("calibration trace gripper_cam dewarp image_url=%s", (image_url[:80] + "..." if isinstance(image_url, str) and len(image_url) > 80 else image_url))
         if not image_url:
             return JSONResponse({"error": "Missing image_url"}, status_code=400)
         if not homography:
