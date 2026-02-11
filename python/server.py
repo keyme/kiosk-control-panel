@@ -527,6 +527,12 @@ def _status_sections():
     return out
 
 
+# IPC policy: Do not add generic client->ZMQ IPC (e.g. passthrough "ipc.send").
+# Any ZMQ IPC used by the control panel must be exposed via a dedicated Socket.IO
+# event and implemented in this file (fixed target/action or server-side checks).
+# This keeps the client surface minimal and auditable. (For future developers/LLMs.)
+
+
 @socket.on('connect')
 def on_connect():
     socket.emit('hello', {
@@ -749,32 +755,6 @@ def get_wellness_check():
     except (TypeError, ValueError, OSError, IOError, KeyError, AttributeError) as e:
         keyme.log.error(f"Wellness check failed: {e}")
         return {'error': '{}: {}'.format(type(e).__name__, e)}
-
-
-@socket.on('ipc.send')
-@_handle_errors
-def ipc_send(message):
-    """Fire-and-forget IPC. Message: { to, action, data }."""
-    to = message.get('to')
-    action = message.get('action')
-    data = message.get('data') or {}
-    if not to or not action:
-        raise ValueError('ipc.send requires \"to\" and \"action\"')
-    keyme.ipc.send(to, action, data)
-    return {}
-
-
-@socket.on('ipc.send_sync')
-@_handle_errors
-def ipc_send_sync(message):
-    """Synchronous IPC. Message: { to, action, data }. Returns response data."""
-    to = message.get('to')
-    action = message.get('action')
-    data = message.get('data') or {}
-    if not to or not action:
-        raise ValueError('ipc.send_sync requires \"to\" and \"action\"')
-    response = keyme.ipc.send_sync(to, action, data)
-    return response.get('data', {})
 
 
 def emit_async_request(request_obj):
