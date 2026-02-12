@@ -19,15 +19,7 @@ export default defineConfig({
     assetsDir: 'assets',
     sourcemap: false,
     chunkSizeWarningLimit: 800,
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (id.includes('node_modules/cornerstone-core') || id.includes('node_modules/cornerstone-tools') || id.includes('node_modules/cornerstone-web-image-loader') || id.includes('node_modules/cornerstone-math') || id.includes('node_modules/hammerjs')) {
-            return 'cornerstone';
-          }
-        },
-      },
-    },
+    rollupOptions: {},
   },
   server: {
     port: 8081,

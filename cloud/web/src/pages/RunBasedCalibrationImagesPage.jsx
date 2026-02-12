@@ -2,7 +2,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import CornerstoneViewer from '@/components/CornerstoneViewer';
+import ImageViewer from '@/components/ImageViewer';
 import { apiUrl } from '@/lib/apiUrl';
 import { formatSectionLabel, formatRunSpan, formatRunIdForDisplay } from '@/pages/calibrationReportSections';
 
@@ -20,7 +20,7 @@ export default function RunBasedCalibrationImagesPage({ sectionId, kioskName: ki
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [fullscreenGallery, setFullscreenGallery] = useState(null);
-  const [cornerstoneImage, setCornerstoneImage] = useState(null);
+  const [viewerImage, setViewerImage] = useState(null);
   const title = formatSectionLabel(sectionId);
   const reportPath = kioskName ? `/${kioskName}/calibration/report/${sectionId}` : `/calibration/report/${sectionId}`;
 
@@ -46,15 +46,15 @@ export default function RunBasedCalibrationImagesPage({ sectionId, kioskName: ki
       .finally(() => setLoading(false));
   }, [kioskName, runId, sectionId]);
 
-  const closeFullscreenAndCornerstone = useCallback(() => {
+  const closeFullscreenAndViewer = useCallback(() => {
     setFullscreenGallery(null);
-    setCornerstoneImage(null);
+    setViewerImage(null);
   }, []);
 
   useEffect(() => {
     const onKeyDown = (e) => {
       if (e.key === 'Escape') {
-        closeFullscreenAndCornerstone();
+        closeFullscreenAndViewer();
         return;
       }
       if (!fullscreenGallery) return;
@@ -75,7 +75,7 @@ export default function RunBasedCalibrationImagesPage({ sectionId, kioskName: ki
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [closeFullscreenAndCornerstone, fullscreenGallery]);
+  }, [closeFullscreenAndViewer, fullscreenGallery]);
 
   if (!kioskName) {
     return (
@@ -198,9 +198,9 @@ export default function RunBasedCalibrationImagesPage({ sectionId, kioskName: ki
                     <button
                       type="button"
                       className="rounded border border-border px-3 py-1.5 text-sm"
-                      onClick={() => setCornerstoneImage(img)}
+                      onClick={() => setViewerImage(img)}
                     >
-                      Open with Cornerstone
+                      Measure and view
                     </button>
                   </div>
                 </div>
@@ -261,18 +261,18 @@ export default function RunBasedCalibrationImagesPage({ sectionId, kioskName: ki
           );
         })()}
 
-      <Dialog open={!!cornerstoneImage} onOpenChange={(open) => !open && setCornerstoneImage(null)}>
+      <Dialog open={!!viewerImage} onOpenChange={(open) => !open && setViewerImage(null)}>
         <DialogContent
           className="fixed inset-0 z-50 h-screen w-screen max-h-none max-w-none translate-x-0 translate-y-0 rounded-none border-0 p-4 overflow-auto"
-          onClose={closeFullscreenAndCornerstone}
+          onClose={closeFullscreenAndViewer}
         >
           <DialogTitle className="sr-only">Image measurement (Esc to close)</DialogTitle>
           <DialogDescription className="sr-only">
-            Measure and view the image with Cornerstone tools. Press Escape to close.
+            Measure and view the image. Press Escape to close.
           </DialogDescription>
-          {cornerstoneImage && (
+          {viewerImage && (
             <div className="h-full w-full min-h-0 flex flex-col">
-              <CornerstoneViewer imageUrl={cornerstoneImage.url} pixelSpacing={1} />
+              <ImageViewer imageUrl={viewerImage.url} pixelSpacing={1} />
             </div>
           )}
         </DialogContent>

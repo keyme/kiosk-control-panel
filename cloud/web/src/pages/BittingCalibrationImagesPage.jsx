@@ -2,7 +2,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import CornerstoneViewer from '@/components/CornerstoneViewer';
+import ImageViewer from '@/components/ImageViewer';
 import { apiUrl } from '@/lib/apiUrl';
 
 function formatDateDisplay(dateStr) {
@@ -24,7 +24,7 @@ export default function BittingCalibrationImagesPage({ kioskName: kioskNameProp 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [fullscreenGallery, setFullscreenGallery] = useState(null);
-  const [cornerstoneImage, setCornerstoneImage] = useState(null);
+  const [viewerImage, setViewerImage] = useState(null);
 
   useEffect(() => {
     if (!kioskName || !date) {
@@ -48,15 +48,15 @@ export default function BittingCalibrationImagesPage({ kioskName: kioskNameProp 
       .finally(() => setLoading(false));
   }, [kioskName, date]);
 
-  const closeFullscreenAndCornerstone = useCallback(() => {
+  const closeFullscreenAndViewer = useCallback(() => {
     setFullscreenGallery(null);
-    setCornerstoneImage(null);
+    setViewerImage(null);
   }, []);
 
   useEffect(() => {
     const onKeyDown = (e) => {
       if (e.key === 'Escape') {
-        closeFullscreenAndCornerstone();
+        closeFullscreenAndViewer();
         return;
       }
       if (!fullscreenGallery) return;
@@ -77,7 +77,7 @@ export default function BittingCalibrationImagesPage({ kioskName: kioskNameProp 
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [closeFullscreenAndCornerstone, fullscreenGallery]);
+  }, [closeFullscreenAndViewer, fullscreenGallery]);
 
   if (!kioskName) {
     return (
@@ -194,9 +194,9 @@ export default function BittingCalibrationImagesPage({ kioskName: kioskNameProp 
                     <button
                       type="button"
                       className="rounded border border-border px-3 py-1.5 text-sm"
-                      onClick={() => setCornerstoneImage(img)}
+                      onClick={() => setViewerImage(img)}
                     >
-                      Open with Cornerstone
+                      Measure and view
                     </button>
                   </div>
                 </div>
@@ -257,18 +257,18 @@ export default function BittingCalibrationImagesPage({ kioskName: kioskNameProp 
           );
         })()}
 
-      <Dialog open={!!cornerstoneImage} onOpenChange={(open) => !open && setCornerstoneImage(null)}>
-        <DialogContent
-          className="fixed inset-0 z-50 h-screen w-screen max-h-none max-w-none translate-x-0 translate-y-0 rounded-none border-0 p-4 overflow-auto"
-          onClose={closeFullscreenAndCornerstone}
-        >
-          <DialogTitle className="sr-only">Image measurement (Esc to close)</DialogTitle>
-          <DialogDescription className="sr-only">
-            Measure and view the image with Cornerstone tools. Press Escape to close.
-          </DialogDescription>
-          {cornerstoneImage && (
-            <div className="h-full w-full min-h-0 flex flex-col">
-              <CornerstoneViewer imageUrl={cornerstoneImage.url} pixelSpacing={1} />
+<Dialog open={!!viewerImage} onOpenChange={(open) => !open && setViewerImage(null)}>
+      <DialogContent
+        className="fixed inset-0 z-50 h-screen w-screen max-h-none max-w-none translate-x-0 translate-y-0 rounded-none border-0 p-4 overflow-auto"
+        onClose={closeFullscreenAndViewer}
+      >
+        <DialogTitle className="sr-only">Image measurement (Esc to close)</DialogTitle>
+        <DialogDescription className="sr-only">
+          Measure and view the image. Press Escape to close.
+        </DialogDescription>
+        {viewerImage && (
+          <div className="h-full w-full min-h-0 flex flex-col">
+            <ImageViewer imageUrl={viewerImage.url} pixelSpacing={1} />
             </div>
           )}
         </DialogContent>

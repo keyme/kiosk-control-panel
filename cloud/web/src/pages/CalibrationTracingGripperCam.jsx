@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/compone
 import { CheckCircle, XCircle, ChevronDown, ChevronRight, ChevronLeft, ZoomIn, ZoomOut, Image as ImageIcon, Ruler } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { apiUrl } from '@/lib/apiUrl';
-import CornerstoneViewer from '@/components/CornerstoneViewer';
+import ImageViewer from '@/components/ImageViewer';
 
 const DEWARP_CACHE_MAX = 50;
 /** In-memory cache for dewarp results. Key is stable (runId + step + artifact path + homography) so it works when presigned URLs change. */
@@ -79,7 +79,7 @@ function formatStartedAt(iso) {
   }
 }
 
-function ArtifactImage({ artifact, onClick, isSelected, onOpenCornerstone }) {
+function ArtifactImage({ artifact, onClick, isSelected, onOpenViewer }) {
   const url = artifact?.url;
   const label = artifact?.label ?? '';
   const path = artifact?.path ?? '';
@@ -112,14 +112,14 @@ function ArtifactImage({ artifact, onClick, isSelected, onOpenCornerstone }) {
         {label}
         {isSelected && <span className="ml-1 text-primary text-xs">(selected)</span>}
       </span>
-      {onOpenCornerstone && (
+      {onOpenViewer && (
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); onOpenCornerstone(artifact); }}
+          onClick={(e) => { e.stopPropagation(); onOpenViewer(artifact); }}
           className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground focus:ring-2 focus:ring-ring rounded"
         >
           <Ruler className="size-3.5" aria-hidden />
-          Open with Cornerstone
+          Measure and view
         </button>
       )}
     </div>
@@ -139,7 +139,7 @@ function StepRow({ step, defaultOpen, runId }) {
   const [dewarpLoading, setDewarpLoading] = useState(false);
   const [dewarpError, setDewarpError] = useState(null);
   const [showReferenceLines, setShowReferenceLines] = useState(false);
-  const [cornerstoneImage, setCornerstoneImage] = useState(null);
+  const [viewerImage, setViewerImage] = useState(null);
   const openFullscreen = useCallback((artifact, artifacts, index, selectedLabel, stepName, stepHomography) => {
     setFullscreen({
       artifacts: artifacts ?? [artifact],
@@ -309,7 +309,7 @@ function StepRow({ step, defaultOpen, runId }) {
                       artifact={a}
                       onClick={() => openFullscreen(a, step.artifacts, i, selectedLabel, step.name, step.homography)}
                       isSelected={selectedLabel != null && a.label === selectedLabel}
-                      onOpenCornerstone={(art) => art?.url && setCornerstoneImage({ url: art.url, label: art?.label ?? art?.path ?? '' })}
+                      onOpenViewer={(art) => art?.url && setViewerImage({ url: art.url, label: art?.label ?? art?.path ?? '' })}
                     />
                   );
                 })}
@@ -474,11 +474,11 @@ function StepRow({ step, defaultOpen, runId }) {
                 {displayUrl && (
                   <button
                     type="button"
-                    onClick={() => setCornerstoneImage({ url: displayUrl, label: `${current?.label ?? ''}${dewarpedUrl ? ' (dewarped)' : ''}`.trim() })}
+                    onClick={() => setViewerImage({ url: displayUrl, label: `${current?.label ?? ''}${dewarpedUrl ? ' (dewarped)' : ''}`.trim() })}
                     className="flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-1.5 text-sm font-medium hover:bg-muted focus:ring-2 focus:ring-ring"
                   >
                     <Ruler className="size-4" aria-hidden />
-                    Open with Cornerstone
+                    Measure and view
                   </button>
                 )}
                 {canApplyHomography && (
@@ -521,17 +521,17 @@ function StepRow({ step, defaultOpen, runId }) {
           </Dialog>
         );
       })()}
-      <Dialog open={!!cornerstoneImage} onOpenChange={(open) => !open && setCornerstoneImage(null)}>
+      <Dialog open={!!viewerImage} onOpenChange={(open) => !open && setViewerImage(null)}>
         <DialogContent
           className="fixed inset-0 z-50 h-screen w-screen max-h-none max-w-none translate-x-0 translate-y-0 rounded-none border-0 p-4 overflow-auto"
         >
           <DialogTitle className="sr-only">Image measurement (Esc to close)</DialogTitle>
           <DialogDescription className="sr-only">
-            Measure and view the image with Cornerstone tools. Press Escape to close.
+            Measure and view the image. Press Escape to close.
           </DialogDescription>
-          {cornerstoneImage?.url && (
+          {viewerImage?.url && (
             <div className="h-full w-full min-h-0 flex flex-col">
-              <CornerstoneViewer imageUrl={cornerstoneImage.url} pixelSpacing={1} />
+              <ImageViewer imageUrl={viewerImage.url} pixelSpacing={1} />
             </div>
           )}
         </DialogContent>
