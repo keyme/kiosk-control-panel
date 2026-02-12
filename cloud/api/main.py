@@ -22,7 +22,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from starlette.staticfiles import StaticFiles
 
-from control_panel.cloud.api import create_router
+from control_panel.cloud.api import create_auth_router, create_router
+from control_panel.cloud.api.auth import ANF_BASE_URL, API_ENV
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +36,12 @@ _assets_dir = os.path.join(_STATIC_ROOT, "assets")
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    log.info("Control panel cloud API app loaded static_root=%s", _STATIC_ROOT)
+    log.info(
+        "Control panel cloud API app loaded static_root=%s API_ENV=%s ANF_BASE_URL=%s",
+        _STATIC_ROOT,
+        API_ENV,
+        ANF_BASE_URL,
+    )
     yield
 
 
@@ -48,7 +54,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(create_router(), prefix="/api")
+app.include_router(create_auth_router(), prefix="/api")  # login/logout — no auth required
+app.include_router(create_router(), prefix="/api")       # all other routes — auth required
 
 if os.path.isdir(_assets_dir):
     app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")

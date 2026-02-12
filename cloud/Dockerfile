@@ -33,7 +33,9 @@ RUN uv pip install --system \
     "uvicorn[standard]" \
     boto3 \
     numpy \
-    opencv-python-headless
+    opencv-python-headless \
+    httpx \
+    cachetools
 
 # Stage 3: Runtime
 FROM 821954540415.dkr.ecr.us-east-1.amazonaws.com/python:3.13-slim

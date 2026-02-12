@@ -1,7 +1,7 @@
 import { useParams, useSearchParams, Navigate, Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
-import { apiUrl } from '@/lib/apiUrl';
+import { apiFetch } from '@/lib/apiFetch';
 import { Loader2 } from 'lucide-react';
 
 export default function CalibrationTracingLatestRedirect({ kioskName: kioskNameProp }) {
@@ -23,9 +23,9 @@ export default function CalibrationTracingLatestRedirect({ kioskName: kioskNameP
     setLoading(true);
     setError(null);
 
-    const url = apiUrl(`/api/calibration/trace/gripper_cam/runs?kiosk=${encodeURIComponent(kioskName)}`);
+    const url = `/api/calibration/trace/gripper_cam/runs?kiosk=${encodeURIComponent(kioskName)}`;
     const base = kioskName ? `/${kioskName}/calibration/tracing/gripper-cam` : '/calibration/tracing/gripper-cam';
-    fetch(url)
+    apiFetch(url)
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => {
         const runs = Array.isArray(data) ? data : [];

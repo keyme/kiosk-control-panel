@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import { BrowserRouter, Routes, Route, useParams, useNavigate, useLocation, Outlet } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate, useLocation, Outlet } from 'react-router-dom';
 import io from 'socket.io-client';
 import {
   Gauge,
@@ -10,6 +10,7 @@ import {
   CheckCircle,
   Link as LinkIcon,
   Terminal,
+  LogOut,
 } from 'lucide-react';
 import { lazy, Suspense } from 'react';
 import Status from '@/pages/Status';
@@ -30,6 +31,9 @@ import { AppSidebar } from '@/components/AppSidebar';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import { buildBaseUrl, getInitialDeviceHost } from '@/lib/socketUrl';
+import { AuthProvider, useAuth } from '@/lib/AuthContext';
+import { getToken } from '@/lib/apiFetch';
+import LoginPage from '@/pages/LoginPage';
 
 const DeviceHostContext = createContext({ deviceHost: '', setDeviceHost: () => {} });
 
@@ -90,6 +94,7 @@ function TitleItem({ icon: Icon, label, children, className, title, ...rest }) {
 
 function Layout({ kioskName, connected, lastError, connectionRejected, disconnectedDueToInactivity, panelInfo, terminals, children }) {
   const { deviceHost, setDeviceHost } = useContext(DeviceHostContext);
+  const { logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [editValue, setEditValue] = useState(deviceHost);
@@ -224,6 +229,16 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
               )}
             </span>
           </TitleItem>
+          <Separator orientation="vertical" className="hidden h-4 md:block" />
+          <button
+            type="button"
+            onClick={logout}
+            className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+            title="Sign out"
+          >
+            <LogOut className="size-4" />
+            <span className="hidden md:inline">Sign out</span>
+          </button>
         </div>
       </header>
 
@@ -332,6 +347,16 @@ const FRONTEND_CONNECTION_LIMIT = 15; // If count > this, show message and disco
 /** True when route is Status (root or :kiosk index). */
 function isStatusPage(pathname) {
   return pathname === '/' || /^\/[^/]+$/.test(pathname);
+}
+
+/** Redirect to /login if not authenticated. */
+function RequireAuth({ children }) {
+  const location = useLocation();
+  const token = getToken();
+  if (!token) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+  return children;
 }
 
 function AppContent() {
@@ -511,7 +536,12 @@ function AppContent() {
 export default function App() {
   return (
     <BrowserRouter>
-      <AppContent />
+      <AuthProvider>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/*" element={<RequireAuth><AppContent /></RequireAuth>} />
+        </Routes>
+      </AuthProvider>
     </BrowserRouter>
   );
 }

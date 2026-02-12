@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import ImageViewer from '@/components/ImageViewer';
-import { apiUrl } from '@/lib/apiUrl';
+import { apiFetch } from '@/lib/apiFetch';
 
 export default function TestcutsImagesPage({ kioskName: kioskNameProp }) {
   const { id } = useParams();
@@ -25,7 +25,7 @@ export default function TestcutsImagesPage({ kioskName: kioskNameProp }) {
     }
     setLoading(true);
     setError(null);
-    fetch(apiUrl(`/api/calibration/testcuts/images?kiosk=${encodeURIComponent(kioskName)}&id=${encodeURIComponent(id)}`))
+    apiFetch(`/api/calibration/testcuts/images?kiosk=${encodeURIComponent(kioskName)}&id=${encodeURIComponent(id)}`)
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText || 'Failed to load images');
         return res.json();

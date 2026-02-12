@@ -1,7 +1,7 @@
 import { useParams, useSearchParams, Navigate, Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
-import { apiUrl } from '@/lib/apiUrl';
+import { apiFetch } from '@/lib/apiFetch';
 import { formatSectionLabel } from '@/pages/calibrationReportSections';
 import { Loader2 } from 'lucide-react';
 
@@ -30,13 +30,13 @@ export default function CalibrationLatestRedirect({ sectionId, kioskName: kioskN
     let url;
     let getFirst;
     if (sectionId === 'testcuts') {
-      url = apiUrl(`/api/calibration/testcuts/ids?kiosk=${encodeURIComponent(kioskName)}`);
+      url = `/api/calibration/testcuts/ids?kiosk=${encodeURIComponent(kioskName)}`;
       getFirst = (data) => (Array.isArray(data) && data.length > 0 ? String(data[0]) : null);
     } else if (sectionId === 'bitting_calibration') {
-      url = apiUrl(`/api/calibration/bitting_calibration/dates?kiosk=${encodeURIComponent(kioskName)}`);
+      url = `/api/calibration/bitting_calibration/dates?kiosk=${encodeURIComponent(kioskName)}`;
       getFirst = (data) => (Array.isArray(data) && data.length > 0 ? data[0] : null);
     } else {
-      url = apiUrl(`/api/calibration/${sectionId}/runs?kiosk=${encodeURIComponent(kioskName)}`);
+      url = `/api/calibration/${sectionId}/runs?kiosk=${encodeURIComponent(kioskName)}`;
       getFirst = (data) => {
         if (!Array.isArray(data) || data.length === 0) return null;
         const first = data[0];
@@ -44,7 +44,7 @@ export default function CalibrationLatestRedirect({ sectionId, kioskName: kioskN
       };
     }
 
-    fetch(url)
+    apiFetch(url)
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText || 'Failed to load');
         return res.json();

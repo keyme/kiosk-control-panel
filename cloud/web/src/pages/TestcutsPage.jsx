@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { apiUrl } from '@/lib/apiUrl';
+import { apiFetch } from '@/lib/apiFetch';
 
 export default function TestcutsPage({ kioskName }) {
   const navigate = useNavigate();
@@ -17,7 +17,7 @@ export default function TestcutsPage({ kioskName }) {
     }
     setLoading(true);
     setError(null);
-    fetch(apiUrl(`/api/calibration/testcuts/ids?kiosk=${encodeURIComponent(kioskName)}`))
+    apiFetch(`/api/calibration/testcuts/ids?kiosk=${encodeURIComponent(kioskName)}`)
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText || 'Failed to load IDs');
         return res.json();

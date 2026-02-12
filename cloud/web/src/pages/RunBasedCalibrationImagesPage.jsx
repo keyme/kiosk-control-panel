@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import ImageViewer from '@/components/ImageViewer';
-import { apiUrl } from '@/lib/apiUrl';
+import { apiFetch } from '@/lib/apiFetch';
 import { formatSectionLabel, formatRunSpan, formatRunIdForDisplay } from '@/pages/calibrationReportSections';
 
 function sectionTitle(filename) {
@@ -32,10 +32,8 @@ export default function RunBasedCalibrationImagesPage({ sectionId, kioskName: ki
     }
     setLoading(true);
     setError(null);
-    fetch(
-      apiUrl(
-        `/api/calibration/${sectionId}/images?kiosk=${encodeURIComponent(kioskName)}&run_id=${encodeURIComponent(runId)}`
-      )
+    apiFetch(
+      `/api/calibration/${sectionId}/images?kiosk=${encodeURIComponent(kioskName)}&run_id=${encodeURIComponent(runId)}`
     )
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText || 'Failed to load images');

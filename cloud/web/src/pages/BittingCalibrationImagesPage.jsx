@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import ImageViewer from '@/components/ImageViewer';
-import { apiUrl } from '@/lib/apiUrl';
+import { apiFetch } from '@/lib/apiFetch';
 
 function formatDateDisplay(dateStr) {
   if (!dateStr || dateStr.length !== 8) return dateStr;
@@ -34,10 +34,8 @@ export default function BittingCalibrationImagesPage({ kioskName: kioskNameProp 
     }
     setLoading(true);
     setError(null);
-    fetch(
-      apiUrl(
-        `/api/calibration/bitting_calibration/images?kiosk=${encodeURIComponent(kioskName)}&date=${encodeURIComponent(date)}`
-      )
+    apiFetch(
+      `/api/calibration/bitting_calibration/images?kiosk=${encodeURIComponent(kioskName)}&date=${encodeURIComponent(date)}`
     )
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText || 'Failed to load images');

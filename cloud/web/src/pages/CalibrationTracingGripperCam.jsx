@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CheckCircle, XCircle, ChevronDown, ChevronRight, ChevronLeft, ZoomIn, ZoomOut, Image as ImageIcon, Ruler } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { apiUrl } from '@/lib/apiUrl';
+import { apiFetch } from '@/lib/apiFetch';
 import ImageViewer from '@/components/ImageViewer';
 
 const DEWARP_CACHE_MAX = 50;
@@ -341,7 +341,7 @@ function StepRow({ step, defaultOpen, runId }) {
           }
           setDewarpLoading(true);
           setDewarpError(null);
-          fetch(apiUrl('/api/calibration/trace/gripper_cam/dewarp'), {
+          apiFetch('/api/calibration/trace/gripper_cam/dewarp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ image_url: current.url, homography }),
@@ -561,7 +561,7 @@ export default function CalibrationTracingGripperCam({ kioskName: kioskNameProp 
       return;
     }
     setRunsLoading(true);
-    fetch(apiUrl(`/api/calibration/trace/gripper_cam/runs?kiosk=${encodeURIComponent(kioskName)}`))
+    apiFetch(`/api/calibration/trace/gripper_cam/runs?kiosk=${encodeURIComponent(kioskName)}`)
       .then((res) => res.ok ? res.json() : [])
       .then(setRuns)
       .catch(() => setRuns([]))
@@ -576,7 +576,7 @@ export default function CalibrationTracingGripperCam({ kioskName: kioskNameProp 
     }
     setTraceLoading(true);
     setTraceError(null);
-    fetch(apiUrl(`/api/calibration/trace/gripper_cam?kiosk=${encodeURIComponent(kioskName)}&run_id=${encodeURIComponent(runId)}`))
+    apiFetch(`/api/calibration/trace/gripper_cam?kiosk=${encodeURIComponent(kioskName)}&run_id=${encodeURIComponent(runId)}`)
       .then((res) => {
         if (!res.ok) {
           if (res.status === 404) throw new Error('Trace not found');

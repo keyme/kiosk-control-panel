@@ -87,10 +87,20 @@ def _mock_aws_session():
         yield
 
 
+_FAKE_USER = {"granted": True, "permission": "admin_access"}
+
+
 @pytest.fixture(scope="session")
 def client(_mock_aws_session):
-    """FastAPI TestClient with mocked S3 underneath."""
+    """FastAPI TestClient with mocked S3 underneath.
+
+    Auth is bypassed: ``get_current_user`` always returns a fake user so
+    existing tests don't need a real KeyMe/ANF token.
+    """
+    from control_panel.cloud.api.auth import get_current_user
     from control_panel.cloud.api.main import app
 
+    app.dependency_overrides[get_current_user] = lambda: _FAKE_USER
     with TestClient(app) as c:
         yield c
+    app.dependency_overrides.pop(get_current_user, None)

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { apiUrl } from '@/lib/apiUrl';
+import { apiFetch } from '@/lib/apiFetch';
 import { formatSectionLabel, formatRunSpan } from '@/pages/calibrationReportSections';
 
 export default function RunBasedCalibrationPage({ sectionId, kioskName }) {
@@ -19,10 +19,8 @@ export default function RunBasedCalibrationPage({ sectionId, kioskName }) {
     }
     setLoading(true);
     setError(null);
-    fetch(
-      apiUrl(
-        `/api/calibration/${sectionId}/runs?kiosk=${encodeURIComponent(kioskName)}`
-      )
+    apiFetch(
+      `/api/calibration/${sectionId}/runs?kiosk=${encodeURIComponent(kioskName)}`
     )
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText || 'Failed to load runs');

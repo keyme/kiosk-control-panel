@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { apiUrl } from '@/lib/apiUrl';
+import { apiFetch } from '@/lib/apiFetch';
 
 function formatDateDisplay(dateStr) {
   if (!dateStr || dateStr.length !== 8) return dateStr;
@@ -22,7 +22,7 @@ export default function BittingCalibrationPage({ kioskName }) {
     }
     setLoading(true);
     setError(null);
-    fetch(apiUrl(`/api/calibration/bitting_calibration/dates?kiosk=${encodeURIComponent(kioskName)}`))
+    apiFetch(`/api/calibration/bitting_calibration/dates?kiosk=${encodeURIComponent(kioskName)}`)
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText || 'Failed to load dates');
         return res.json();
