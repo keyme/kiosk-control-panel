@@ -105,6 +105,17 @@ docker run -p 8080:8080 \
 
 - **IAM roles:** On ECS (task role), EKS (pod IRSA), or EC2 (instance profile), boto3 uses the role automatically; no env or mount needed.
 
+## Testing (cloud API)
+
+The cloud API has a pytest suite under `cloud/api/tests/`. Tests use [moto](https://github.com/getmoto/moto) to mock S3 so no AWS credentials are needed.
+
+Install test dependencies and run from the **repo root**:
+
+```bash
+uv sync --project control_panel/cloud --extra test
+uv run --project control_panel/cloud pytest control_panel/cloud/api/tests/ -v
+```
+
 ## Config
 
 - **`config/ports.json`:** `python` — Flask/Socket.IO server port (2026). (Vite dev server uses port 8081, set in `cloud/web/vite.config.js`.)

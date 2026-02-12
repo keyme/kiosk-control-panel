@@ -10,3 +10,13 @@ dependencies = [
     "numpy",
     "opencv-python-headless",
 ]
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "httpx",
+    "moto[s3]",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["api/tests"]
