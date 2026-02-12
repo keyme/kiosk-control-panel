@@ -5,6 +5,7 @@ control-panel-iptables:
   cmd.run:
     - name: |
         iptables -D INPUT -p tcp --dport 2026 -j CONTROL_PANEL 2>/dev/null || true
+        iptables -D INPUT -p udp --dport 2026 -j CONTROL_PANEL 2>/dev/null || true
         iptables -F CONTROL_PANEL 2>/dev/null || true
         iptables -X CONTROL_PANEL 2>/dev/null || true
         iptables -N CONTROL_PANEL
@@ -14,6 +15,7 @@ control-panel-iptables:
         iptables -A CONTROL_PANEL -s 127.0.0.1 -j ACCEPT
         iptables -A CONTROL_PANEL -j DROP
         iptables -I INPUT -p tcp --dport 2026 -j CONTROL_PANEL
+        iptables -I INPUT -p udp --dport 2026 -j CONTROL_PANEL
 
 control-panel-iptables-save:
   cmd.run:
