@@ -43,7 +43,7 @@ export default function LoginPage() {
         <CardHeader>
           <CardTitle className="text-xl">Control Panel Login</CardTitle>
           <CardDescription>
-            Sign in with your KeyMe credentials.
+            Sign in with your KeyMe/Admin credentials.
           </CardDescription>
         </CardHeader>
 
@@ -86,7 +86,7 @@ export default function LoginPage() {
             </label>
           </CardContent>
 
-          <CardFooter>
+          <CardFooter className="pt-2">
             <button
               type="submit"
               disabled={loading}
