@@ -594,48 +594,56 @@ def on_disconnect():
 @socket.on('get_kiosk_name')
 def get_kiosk_name():
     """Client requests kiosk name; return via ack. Use when hello was missed (e.g. fast connect)."""
+    keyme.log.info("socket.io: requesting get_kiosk_name")
     return {'kiosk_name': getattr(keyme.config, 'KIOSK_NAME', None) or ''}
 
 
 @socket.on('get_panel_info')
 def get_panel_info():
     """Title bar + store info. Polled with status snapshot (e.g. every 10s)."""
+    keyme.log.info("socket.io: requesting get_panel_info")
     return _cached('panel_info', _CACHE_TTL_FAST_SEC, _panel_info)
 
 
 @socket.on('get_activity')
 def get_activity():
     """Activity only. Poll every 5s for live updates."""
+    keyme.log.info("socket.io: requesting get_activity")
     return {'activity': _activity()}
 
 
 @socket.on('get_computer_stats')
 def get_computer_stats():
     """Computer Stats (CPU, memory, uptime, CPU temp, OS version). Poll every 5s."""
+    keyme.log.info("socket.io: requesting get_computer_stats")
     return _cached('computer_stats', _CACHE_TTL_FAST_SEC, _computer_stats)
 
 
 @socket.on('get_terminals')
 def get_terminals():
     """Remote (SSH) and local terminal counts; SSH usernames from keyme_logins.csv + who. Poll with activity."""
+    keyme.log.info("socket.io: requesting get_terminals")
     return _cached('terminals', _CACHE_TTL_FAST_SEC, _terminals)
 
 
 @socket.on('get_wtf_why_degraded')
 def get_wtf_why_degraded():
     """wtf and why-degraded command outputs (stdout+stderr). Poll with Kiosk Stats."""
+    keyme.log.info("socket.io: requesting get_wtf_why_degraded")
     return _cached('wtf_why_degraded', _CACHE_TTL_SLOW_SEC, _wtf_why_degraded)
 
 
 @socket.on('get_status_sections')
 def get_status_sections():
     """Trimmed status for Attention Needed, Cameras, Devices, Motion. One IPC GET_STATUS."""
+    keyme.log.info("socket.io: requesting get_status_sections")
     return _cached('status_sections', _CACHE_TTL_SLOW_SEC, _status_sections)
 
 
 @socket.on('get_connection_count')
 def get_connection_count():
     """Current number of Socket.IO connections to this control panel. Not cached."""
+    keyme.log.info("socket.io: requesting get_connection_count")
     with _connection_lock:
         return {'count': len(_connected_sids)}
 
@@ -656,6 +664,7 @@ _STATUS_SNAPSHOT_TTL_SEC = 6
 @socket.on('get_status_snapshot')
 def get_status_snapshot():
     """Single response with computer_stats, terminals, wtf_why_degraded, status_sections (cached), and connection_count (fresh)."""
+    keyme.log.info("socket.io: requesting get_status_snapshot")
     data = _cached('status_snapshot', _STATUS_SNAPSHOT_TTL_SEC, _build_status_snapshot_core)
     with _connection_lock:
         data = dict(data, connection_count=len(_connected_sids))
@@ -690,6 +699,7 @@ def _discover_process_configs():
 def get_all_configs():
     """Load all process configs on demand: discover (process, filename), cascade_load each;
     also include top-level hardware config (config/hardware.json). Return nested payload."""
+    keyme.log.info("socket.io: requesting get_all_configs")
     specs = _discover_process_configs()
     configs = {}
     for process, filename in specs:
@@ -840,6 +850,7 @@ def get_wellness_check():
 @socket.on('get_data_usage')
 def get_data_usage():
     """Return all data usage JSON files from system_monitor archives and running totals."""
+    keyme.log.info("socket.io: requesting get_data_usage")
     _kiosk = getattr(keyme.config, 'PATH', None) or '/kiosk'
     try:
         sm_cfg_path = os.path.join(_kiosk, "system_monitor", "config", "system_monitor.json")
