@@ -63,6 +63,17 @@ _cfg_path = os.path.join(keyme.config.PATH, "control_panel", "config", "control_
 _connected_sids = set()
 _connection_lock = threading.Lock()
 
+# State file for system_monitor: attribute python3 network traffic to CONTROL_PANEL
+# only when clients are actively connected.
+_CONNECTION_COUNT_STATE = 'state/control_panel/connection_count.json'
+
+def _write_connection_count(count):
+    """Write current connection count to state file for system_monitor."""
+    try:
+        keyme.config.save(_CONNECTION_COUNT_STATE, {'connection_count': count})
+    except Exception:
+        pass
+
 # Flask-SocketIO server.
 socket = SocketIO(app, async_mode='threading', logger=False, engineio_logger=False)
 socket.init_app(app, cors_allowed_origins='*')
@@ -574,6 +585,7 @@ def on_connect():
     with _connection_lock:
         _connected_sids.add(sid)
         total = len(_connected_sids)
+    _write_connection_count(total)
     keyme.log.info(f"Control panel client connected sid={sid} total_connections={total}")
     socket.emit('hello', {
         'connected': True,
@@ -588,6 +600,7 @@ def on_disconnect():
     with _connection_lock:
         _connected_sids.discard(sid)
         total = len(_connected_sids)
+    _write_connection_count(total)
     keyme.log.info(f"Control panel client disconnected sid={sid} total_connections={total}")
 
 
@@ -912,6 +925,7 @@ def emit_async_request(request_obj):
 def run():
     port = PORTS['python']
     host = '0.0.0.0'
+    _write_connection_count(0)
     keyme.log.info(f"Control panel Socket.IO server starting host={host} port={port}")
     socket.run(app, port=port, host=host)
 
