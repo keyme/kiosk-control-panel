@@ -3,9 +3,9 @@
 
 import boto3
 
+from control_panel.cloud.api.s3_url_cache import get_presigned_url
 from control_panel.cloud.api.testcuts import (
     BUCKET,
-    PRESIGNED_EXPIRES,
     kiosk_to_hostname,
 )
 
@@ -64,11 +64,7 @@ def list_bitting_images(s3_client, bucket: str, kiosk: str, date: str) -> dict[s
         items = by_section[section]
         out = []
         for item in items:
-            url = s3_client.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": bucket, "Key": item["key"]},
-                ExpiresIn=PRESIGNED_EXPIRES,
-            )
+            url = get_presigned_url(s3_client, bucket, item["key"])
             out.append(
                 {
                     "key": item["key"],

@@ -9,7 +9,8 @@ import cv2
 import numpy as np
 
 from control_panel.cloud.api.run_based_calibration import _kiosk_to_short_name
-from control_panel.cloud.api.testcuts import BUCKET, PRESIGNED_EXPIRES
+from control_panel.cloud.api.s3_url_cache import get_presigned_url
+from control_panel.cloud.api.testcuts import BUCKET
 
 PREFIX = "gripper_cam_calibration"
 TRACE_FILENAME = "trace.json"
@@ -79,12 +80,7 @@ def get_trace(s3_client, bucket: str, kiosk: str, run_id: str) -> dict[str, Any]
             path = a.get("path") or ""
             key = _artifact_key(bucket, run_prefix, path)
             try:
-                url = s3_client.generate_presigned_url(
-                    "get_object",
-                    Params={"Bucket": bucket, "Key": key},
-                    ExpiresIn=PRESIGNED_EXPIRES,
-                )
-                a["url"] = url
+                a["url"] = get_presigned_url(s3_client, bucket, key)
             except Exception:
                 a["url"] = None
 

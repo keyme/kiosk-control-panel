@@ -5,7 +5,8 @@ import boto3
 
 from control_panel.cloud.api.run_based_calibration import _kiosk_to_short_name
 from control_panel.cloud.api.run_grouping import group_by_max_gap_minutes
-from control_panel.cloud.api.testcuts import BUCKET, PRESIGNED_EXPIRES
+from control_panel.cloud.api.s3_url_cache import get_presigned_url
+from control_panel.cloud.api.testcuts import BUCKET
 
 PREFIX = "overhead_cam_calibration"
 
@@ -81,11 +82,7 @@ def list_overhead_cam_images(
     for section in sorted(by_section.keys()):
         out = []
         for item in by_section[section]:
-            url = s3_client.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": bucket, "Key": item["key"]},
-                ExpiresIn=PRESIGNED_EXPIRES,
-            )
+            url = get_presigned_url(s3_client, bucket, item["key"])
             out.append({"key": item["key"], "filename": item["filename"], "url": url})
         result[section] = out
     result["run_start_ts"] = run_id

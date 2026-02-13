@@ -4,8 +4,9 @@ import re
 
 import boto3
 
+from control_panel.cloud.api.s3_url_cache import get_presigned_url
+
 BUCKET = "keyme-calibration"
-PRESIGNED_EXPIRES = 3600  # 1 hour
 
 
 def kiosk_to_hostname(kiosk: str) -> str:
@@ -87,11 +88,7 @@ def list_testcut_images(s3_client, bucket: str, kiosk_hostname: str, id_int: int
         items = sorted(by_section[section], key=lambda x: x["key"])
         out = []
         for item in items:
-            url = s3_client.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": bucket, "Key": item["key"]},
-                ExpiresIn=PRESIGNED_EXPIRES,
-            )
+            url = get_presigned_url(s3_client, bucket, item["key"])
             out.append(
                 {
                     "key": item["key"],
