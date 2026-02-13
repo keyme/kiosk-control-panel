@@ -10,21 +10,28 @@ React UI with a Python backend: **Socket.IO runs on the device** (kiosk control 
 
 ```mermaid
 flowchart LR
-  subgraph device [Device]
-    PyMain[python/main.py]
-    Server[python/server.py]
-    PyMain --> Server
-    Server -->|Socket.IO only| UI[React UI elsewhere]
-    Server -->|ZeroMQ| Stack[Kiosk stack]
+  subgraph clients [Clients / Users]
+    Browser[Browser]
+    ReactUI[React UI]
+    Browser --- ReactUI
   end
   subgraph cloud [Cloud]
     CloudMain[cloud/main.py]
-    CloudMain -->|REST plus static| UI
+    CloudMain -->|REST API + static| Browser
   end
+  subgraph kiosk [Kiosk]
+    PyMain[python/main.py]
+    Server[python/server.py]
+    PyMain --> Server
+    Server -->|ZeroMQ| Stack[Kiosk stack]
+  end
+  ReactUI -->|Socket.IO| Server
+  ReactUI -->|REST| CloudMain
 ```
 
-- **Device:** `python/main.py` starts `python/server.py` — Socket.IO only; no REST API, no static/JS serving. Bridges to the kiosk stack via ZeroMQ.
-- **Cloud:** `cloud/main.py` — FastAPI app with REST API router and serves the React build (`cloud/web/dist`); no Socket.IO. Only the cloud subtree is a uv project; device (`python/`) is unchanged.
+- **Clients / Users:** The React single-page app runs in the user's browser. It is served (as static files) by the cloud and then communicates with both the cloud (REST) and the kiosk (Socket.IO) at runtime.
+- **Kiosk:** `python/main.py` starts `python/server.py` — Socket.IO only; no REST API, no static/JS serving. Bridges to the kiosk hardware stack via ZeroMQ.
+- **Cloud:** `cloud/main.py` — FastAPI app with REST API router and serves the React build (`cloud/web/dist`); no Socket.IO. Only the cloud subtree is a uv project; the kiosk side (`python/`) is unchanged.
 
 **Components:**
 

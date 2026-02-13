@@ -485,7 +485,7 @@ export default function DataUsage({ socket }) {
       <PageTitle icon={BarChart3}>Data Usage</PageTitle>
 
       <p className="text-sm text-muted-foreground leading-relaxed -mt-4 mb-2">
-        Network data usage per process, monitored by <strong>SYSTEM_MONITOR</strong> using{' '}
+        Network data usage per process, monitored by SYSTEM_MONITOR using{' '}
         <span className="font-mono text-xs">libnethogs</span>. Traffic is captured at the OS level and
         aggregated by process name every 10 seconds. These numbers may not exactly match what Cradlepoint
         or cellular provider reports, as the measurement points differ. Use this data to identify
