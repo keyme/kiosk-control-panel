@@ -902,7 +902,7 @@ def get_data_usage():
         "daily": sm_cfg.get("daily_usage_conf", "config/system_monitor/daily_usage_running_total.json"),
         "monthly": sm_cfg.get("monthly_usage_conf", "config/system_monitor/monthly_usage_running_total.json"),
         "last_1h": sm_cfg.get("last_1h_data_conf", "config/system_monitor/last_1h_system_monitor.json"),
-        "all_time": sm_cfg.get("run_total_data_conf", "config/system_monitor/running_total_system_monitor.json"),
+        "currently_tracked": sm_cfg.get("run_total_data_conf", "config/system_monitor/running_total_system_monitor.json"),
     }
     for key, rel_path in running_total_keys.items():
         fpath = os.path.join(_kiosk, rel_path)

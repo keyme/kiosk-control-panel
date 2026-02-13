@@ -268,7 +268,7 @@ const RUNNING_TOTAL_KEYS = [
   { id: 'daily', label: 'Today (running)' },
   { id: 'monthly', label: 'This Month (running)' },
   { id: 'last_1h', label: 'Last 1 Hour' },
-  { id: 'all_time', label: 'All Time' },
+  { id: 'currently_tracked', label: 'Currently tracked' },
 ];
 
 // ── Download helpers ─────────────────────────────────────────────────────────
@@ -477,6 +477,15 @@ export default function DataUsage({ socket }) {
   const procData = useMemo(() => processUsage(currentNetData, excludeAutocal), [currentNetData, excludeAutocal]);
   const totals = useMemo(() => totalsFromNetData(currentNetData), [currentNetData]);
 
+  const runningTotalMeta = useMemo(() => {
+    if (tab !== 'running' || !rawData?.running_totals?.[runningKey]) return null;
+    const rt = rawData.running_totals[runningKey];
+    const first = rt?.first_update ?? null;
+    const last = rt?.last_update ?? null;
+    if (!first && !last) return null;
+    return { first_update: first, last_update: last };
+  }, [tab, rawData, runningKey]);
+
   const hasFetched = rawData !== null;
   const btnLabel = loading ? 'Fetching…' : hasFetched ? 'Refresh' : 'Fetch Data';
 
@@ -611,6 +620,12 @@ export default function DataUsage({ socket }) {
               </div>
             </CardContent>
           </Card>
+
+          {runningTotalMeta && (
+            <p className="text-xs text-muted-foreground">
+              Tracking period: {runningTotalMeta.first_update ?? '—'} → {runningTotalMeta.last_update ?? '—'}
+            </p>
+          )}
 
           {/* Summary */}
           <SummaryCards recv={totals.recv} sent={totals.sent} />
