@@ -1,8 +1,8 @@
-import { useState, useMemo, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useState, useMemo, useCallback, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle, CardAction } from '@/components/ui/card';
 import { PageTitle } from '@/components/PageTitle';
 import { cn } from '@/lib/utils';
-import { BarChart3, Loader2, RefreshCw, ArrowUpDown, Search, Info, Download } from 'lucide-react';
+import { BarChart3, Loader2, RefreshCw, ArrowUpDown, Search, Info, Download, Maximize2, X } from 'lucide-react';
 import {
   PieChart, Pie, Cell, Tooltip as RTooltip, Legend, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as BarTooltip,
@@ -90,9 +90,9 @@ function UsagePieChart({ data }) {
   if (otherTotal > 0) slices.push({ process: 'Other', total: otherTotal });
 
   return (
-    <ResponsiveContainer width="100%" height={300}>
+    <ResponsiveContainer width="100%" height="100%" minHeight={300}>
       <PieChart>
-        <Pie data={slices} dataKey="total" nameKey="process" cx="50%" cy="50%" outerRadius={100}
+        <Pie data={slices} dataKey="total" nameKey="process" cx="50%" cy="50%" outerRadius="70%"
           label={({ process, percent }) => `${process} ${(percent * 100).toFixed(1)}%`}
           labelLine={true} fontSize={11}
         >
@@ -110,7 +110,7 @@ function UsagePieChart({ data }) {
 function UsageBarChart({ barData }) {
   if (!barData.length) return <p className="text-sm text-muted-foreground text-center py-8">No data</p>;
   return (
-    <ResponsiveContainer width="100%" height={300}>
+    <ResponsiveContainer width="100%" height="100%" minHeight={300}>
       <BarChart data={barData}>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
         <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" />
@@ -122,6 +122,59 @@ function UsageBarChart({ barData }) {
         <Legend wrapperStyle={{ fontSize: 11 }} />
       </BarChart>
     </ResponsiveContainer>
+  );
+}
+
+function useFullscreen() {
+  const [fs, setFs] = useState(false);
+
+  useEffect(() => {
+    if (!fs) return;
+    const onKey = (e) => { if (e.key === 'Escape') setFs(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fs]);
+
+  useEffect(() => {
+    if (fs) document.body.style.overflow = 'hidden';
+    else document.body.style.overflow = '';
+    return () => { document.body.style.overflow = ''; };
+  }, [fs]);
+
+  return [fs, setFs];
+}
+
+function FullscreenButton({ onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="Fullscreen"
+      className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+    >
+      <Maximize2 className="size-3.5" />
+    </button>
+  );
+}
+
+function FullscreenOverlay({ title, onClose, children }) {
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-background/95 backdrop-blur-sm">
+      <div className="flex items-center justify-between px-6 py-4 border-b">
+        <h2 className="text-sm font-semibold">{title}</h2>
+        <button
+          type="button"
+          onClick={onClose}
+          className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium border border-input hover:bg-accent hover:text-accent-foreground transition-colors"
+        >
+          <X className="size-4" />
+          Close
+        </button>
+      </div>
+      <div className="flex-1 p-6 min-h-0">
+        {children}
+      </div>
+    </div>
   );
 }
 
@@ -299,6 +352,49 @@ function DownloadButton({ rawData }) {
   );
 }
 
+function ChartCards({ tab, procData, barData }) {
+  const [pieFs, setPieFs] = useFullscreen();
+  const [barFs, setBarFs] = useFullscreen();
+  const barTitle = `${tab === 'daily' ? 'Daily' : 'Monthly'} Usage Over Time`;
+
+  return (
+    <>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Usage by Process</CardTitle>
+            <CardAction><FullscreenButton onClick={() => setPieFs(true)} /></CardAction>
+          </CardHeader>
+          <CardContent className="h-[300px]">
+            <UsagePieChart data={procData} />
+          </CardContent>
+        </Card>
+        {tab !== 'running' && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">{barTitle}</CardTitle>
+              <CardAction><FullscreenButton onClick={() => setBarFs(true)} /></CardAction>
+            </CardHeader>
+            <CardContent className="h-[300px]">
+              <UsageBarChart barData={barData} />
+            </CardContent>
+          </Card>
+        )}
+      </div>
+      {pieFs && (
+        <FullscreenOverlay title="Usage by Process" onClose={() => setPieFs(false)}>
+          <UsagePieChart data={procData} />
+        </FullscreenOverlay>
+      )}
+      {barFs && (
+        <FullscreenOverlay title={barTitle} onClose={() => setBarFs(false)}>
+          <UsageBarChart barData={barData} />
+        </FullscreenOverlay>
+      )}
+    </>
+  );
+}
+
 // ── Main component ───────────────────────────────────────────────────────────
 
 export default function DataUsage({ socket }) {
@@ -387,6 +483,14 @@ export default function DataUsage({ socket }) {
   return (
     <div className="space-y-6">
       <PageTitle icon={BarChart3}>Data Usage</PageTitle>
+
+      <p className="text-sm text-muted-foreground leading-relaxed -mt-4 mb-2">
+        Network data usage per process, monitored by <strong>SYSTEM_MONITOR</strong> using{' '}
+        <span className="font-mono text-xs">libnethogs</span>. Traffic is captured at the OS level and
+        aggregated by process name every 10 seconds. These numbers may not exactly match what Cradlepoint
+        or cellular provider reports, as the measurement points differ. Use this data to identify
+        which processes are consuming the most bandwidth and to guide optimization of data-heavy services.
+      </p>
 
       {/* Fetch button */}
       <Card>
@@ -512,28 +616,7 @@ export default function DataUsage({ socket }) {
           <SummaryCards recv={totals.recv} sent={totals.sent} />
 
           {/* Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">Usage by Process</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <UsagePieChart data={procData} />
-              </CardContent>
-            </Card>
-            {tab !== 'running' && (
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">
-                    {tab === 'daily' ? 'Daily' : 'Monthly'} Usage Over Time
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <UsageBarChart barData={barData} />
-                </CardContent>
-              </Card>
-            )}
-          </div>
+          <ChartCards tab={tab} procData={procData} barData={barData} />
 
           {/* Process table */}
           <Card>
