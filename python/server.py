@@ -837,6 +837,61 @@ def get_wellness_check():
         return {'error': '{}: {}'.format(type(e).__name__, e)}
 
 
+@socket.on('get_data_usage')
+def get_data_usage():
+    """Return all data usage JSON files from system_monitor archives and running totals."""
+    _kiosk = getattr(keyme.config, 'PATH', None) or '/kiosk'
+    try:
+        sm_cfg_path = os.path.join(_kiosk, "system_monitor", "config", "system_monitor.json")
+        with open(sm_cfg_path) as f:
+            sm_cfg = _json.load(f)
+    except Exception as e:
+        keyme.log.error("Failed to load system_monitor config: %s", e)
+        return WebsocketError("Failed to load system_monitor config: {}".format(e)).to_json()
+
+    result = {"daily": {}, "monthly": {}, "running_totals": {}}
+
+    # Read daily archive files.
+    daily_dir = os.path.join(_kiosk, sm_cfg.get("daily_archive_dir", "state/system_monitor/daily_data_usage/"))
+    if os.path.isdir(daily_dir):
+        for fname in sorted(os.listdir(daily_dir)):
+            if fname.endswith(".json"):
+                try:
+                    with open(os.path.join(daily_dir, fname)) as f:
+                        result["daily"][fname.replace(".json", "")] = _json.load(f)
+                except Exception as e:
+                    keyme.log.error("Failed to read daily file %s: %s", fname, e)
+
+    # Read monthly archive files.
+    monthly_dir = os.path.join(_kiosk, sm_cfg.get("monthly_archive_dir", "state/system_monitor/monthly_data_usage/"))
+    if os.path.isdir(monthly_dir):
+        for fname in sorted(os.listdir(monthly_dir)):
+            if fname.endswith(".json"):
+                try:
+                    with open(os.path.join(monthly_dir, fname)) as f:
+                        result["monthly"][fname.replace(".json", "")] = _json.load(f)
+                except Exception as e:
+                    keyme.log.error("Failed to read monthly file %s: %s", fname, e)
+
+    # Read running totals.
+    running_total_keys = {
+        "daily": sm_cfg.get("daily_usage_conf", "config/system_monitor/daily_usage_running_total.json"),
+        "monthly": sm_cfg.get("monthly_usage_conf", "config/system_monitor/monthly_usage_running_total.json"),
+        "last_1h": sm_cfg.get("last_1h_data_conf", "config/system_monitor/last_1h_system_monitor.json"),
+        "all_time": sm_cfg.get("run_total_data_conf", "config/system_monitor/running_total_system_monitor.json"),
+    }
+    for key, rel_path in running_total_keys.items():
+        fpath = os.path.join(_kiosk, rel_path)
+        if os.path.isfile(fpath):
+            try:
+                with open(fpath) as f:
+                    result["running_totals"][key] = _json.load(f)
+            except Exception as e:
+                keyme.log.error("Failed to read running total %s: %s", key, e)
+
+    return WebsocketSuccess(result).to_json()
+
+
 def emit_async_request(request_obj):
     """Emit an async IPC to connected clients. Used by ControlPanelParser."""
     event = 'async.{}'.format(request_obj['action'])

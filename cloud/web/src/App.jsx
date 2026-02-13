@@ -23,6 +23,7 @@ import CalibrationTracingLatestRedirect from '@/pages/CalibrationTracingLatestRe
 import CameraImagesPage from '@/pages/CameraImagesPage';
 import ConfigPage from '@/pages/ConfigPage';
 import WellnessCheck from '@/pages/WellnessCheck';
+import DataUsage from '@/pages/DataUsage';
 
 const TestcutsImagesPage = lazy(() => import('@/pages/TestcutsImagesPage'));
 const BittingCalibrationImagesPage = lazy(() => import('@/pages/BittingCalibrationImagesPage'));
@@ -525,6 +526,7 @@ function AppContent() {
               </Route>
               <Route path="cameras" element={<CameraImagesPage socket={socket} />} />
               <Route path="config" element={<ConfigPage socket={socket} />} />
+              <Route path="data-usage" element={<DataUsage socket={socket} />} />
               <Route path="wellness" element={<WellnessCheck socket={socket} />} />
             </Route>
           </Routes>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, NavLink, useNavigate } from 'react-router-dom';
-import { Activity, Camera, Flag, Heart, MapPin, Wrench, ChevronDown, ChevronRight, FileText, Video, Search } from 'lucide-react';
+import { Activity, Camera, Flag, Heart, MapPin, Wrench, ChevronDown, ChevronRight, FileText, Video, Search, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { CALIBRATION_REPORT_SECTIONS, formatSectionLabel } from '@/pages/calibrationReportSections';
 
@@ -13,6 +13,7 @@ const QUICK_OPEN_PAGES = [
   ...CALIBRATION_REPORT_SECTIONS.map((id) => ({ path: `/calibration/report/${id}`, label: formatSectionLabel(id) })),
   { path: '/calibration/tracing/gripper-cam', label: 'Gripper Cam Calibration' },
   { path: '/wellness', label: 'Wellness Check' },
+  { path: '/data-usage', label: 'Data Usage' },
 ];
 
 function StoreInfo({ store }) {
@@ -335,6 +336,11 @@ export function AppSidebar({ panelInfo }) {
         <NavLink to={prefix ? `${prefix}/config` : '/config'} className={linkClass}>
           <FileText className="size-4 shrink-0" aria-hidden />
           Config
+        </NavLink>
+
+        <NavLink to={prefix ? `${prefix}/data-usage` : '/data-usage'} className={linkClass}>
+          <BarChart3 className="size-4 shrink-0" aria-hidden />
+          Data Usage
         </NavLink>
 
         <NavLink to={prefix ? `${prefix}/wellness` : '/wellness'} className={linkClass}>
