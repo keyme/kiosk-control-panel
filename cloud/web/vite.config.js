@@ -24,13 +24,13 @@ export default defineConfig({
   server: {
     port: 8081,
     // Must match control_panel/config/ports.json "python" (2026).
-    // Same-origin proxy avoids cross-site cookie rejection (io cookie, SameSite).
+    // WebSocket proxy for device control panel (path /ws).
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:2026',
         changeOrigin: true,
       },
-      '/socket.io': {
+      '/ws': {
         target: 'http://127.0.0.1:2026',
         changeOrigin: true,
         ws: true,

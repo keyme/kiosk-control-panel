@@ -1,6 +1,5 @@
 # System imports.
 import base64
-import logging
 import os
 import platform
 import random
@@ -12,15 +11,10 @@ import json as _json
 from datetime import datetime
 from functools import partial, wraps
 
-from flask import Flask, request
-from flask_cors import CORS
-from flask_socketio import SocketIO, emit
-
 import pylib as keyme
 
 from control_panel.python.putil import SocketErrors, WebsocketError, WebsocketSuccess
 from control_panel.python.shared import PORTS
-from control_panel.python import wellness
 
 # Cameras supported for take_image (same set as setup/scripts/putil/image.py).
 TAKE_IMAGE_CAMERAS = [
@@ -36,47 +30,7 @@ TAKE_IMAGE_CAMERAS = [
     'bitting_video_right_roi_box',
 ]
 
-# Match gui5/python's protection against Engine.IO decode packet bursts.
-if sys.version_info[0] == 3 and sys.version_info[1] >= 6:
-    try:
-        from engineio.payload import Payload
-        default_packet_size = 16
-        cfg_path = os.path.join(keyme.config.PATH, "control_panel", "config", "control_panel.json")
-        if os.path.isfile(cfg_path):
-            cfg = _json.load(open(cfg_path))
-            Payload.max_decode_packets = cfg.get("max_decode_packets", default_packet_size)
-        else:
-            Payload.max_decode_packets = default_packet_size
-    except Exception as e:
-        # Fail open: do not block server startup if engineio internals change.
-        keyme.log.error(f"Engine.IO payload config skipped: {e}")
-
-
-# Setup the flask server. Device: Socket.IO only; no REST, no static/JS.
-app = Flask(__name__)
-CORS(app)
-app.config['CORS_HEADERS'] = 'Content-Type'
-
 _cfg_path = os.path.join(keyme.config.PATH, "control_panel", "config", "control_panel.json")
-
-# Track connected SIDs for get_connection_count. Connection limit is enforced by the frontend only.
-_connected_sids = set()
-_connection_lock = threading.Lock()
-
-# State file for system_monitor: attribute python3 network traffic to CONTROL_PANEL
-# only when clients are actively connected.
-_CONNECTION_COUNT_STATE = 'state/control_panel/connection_count.json'
-
-def _write_connection_count(count):
-    """Write current connection count to state file for system_monitor."""
-    try:
-        keyme.config.save(_CONNECTION_COUNT_STATE, {'connection_count': count})
-    except Exception:
-        pass
-
-# Flask-SocketIO server.
-socket = SocketIO(app, async_mode='threading', logger=False, engineio_logger=False)
-socket.init_app(app, cors_allowed_origins='*')
 
 # TTL cache for polled handlers: key -> (timestamp, value). Reduces duplicate work when multiple clients poll.
 _CACHE_TTL_FAST_SEC = 4
@@ -103,15 +57,6 @@ def _cached(key, ttl_sec, compute_fn):
         val = compute_fn()
         _cache[key] = (now, val)
         return val
-
-
-# Reduce socket.io log noise.
-class SocketIOLogFilter(logging.Filter):
-    def filter(self, record):
-        return 'socket.io' not in record.getMessage()
-
-
-logging.getLogger('werkzeug').addFilter(SocketIOLogFilter())
 
 
 def _handle_errors(handler=None, return_value=None):
@@ -572,93 +517,57 @@ def _status_sections():
 
 
 # IPC policy: Do not add generic client->ZMQ IPC (e.g. passthrough "ipc.send").
-# Any ZMQ IPC used by the control panel must be exposed via a dedicated Socket.IO
+# Any ZMQ IPC used by the control panel must be exposed via a dedicated WebSocket
 # event and implemented in this file (fixed target/action or server-side checks).
 # This keeps the client surface minimal and auditable. (For future developers/LLMs.)
 
 
-@socket.on('connect')
-def on_connect():
-    sid = getattr(request, 'sid', None)
-    if not sid:
-        return
-    with _connection_lock:
-        _connected_sids.add(sid)
-        total = len(_connected_sids)
-    _write_connection_count(total)
-    keyme.log.info(f"Control panel client connected sid={sid} total_connections={total}")
-    socket.emit('hello', {
-        'connected': True,
-        'service': 'CONTROL_PANEL',
-        'kiosk_name': getattr(keyme.config, 'KIOSK_NAME', None) or ''
-    })
-
-
-@socket.on('disconnect')
-def on_disconnect():
-    sid = getattr(request, 'sid', None)
-    with _connection_lock:
-        _connected_sids.discard(sid)
-        total = len(_connected_sids)
-    _write_connection_count(total)
-    keyme.log.info(f"Control panel client disconnected sid={sid} total_connections={total}")
-
-
-@socket.on('get_kiosk_name')
 def get_kiosk_name():
     """Client requests kiosk name; return via ack. Use when hello was missed (e.g. fast connect)."""
-    keyme.log.info("socket.io: requesting get_kiosk_name")
+    keyme.log.info("WS: requesting get_kiosk_name")
     return {'kiosk_name': getattr(keyme.config, 'KIOSK_NAME', None) or ''}
 
 
-@socket.on('get_panel_info')
 def get_panel_info():
     """Title bar + store info. Polled with status snapshot (e.g. every 10s)."""
-    keyme.log.info("socket.io: requesting get_panel_info")
+    keyme.log.info("WS: requesting get_panel_info")
     return _cached('panel_info', _CACHE_TTL_FAST_SEC, _panel_info)
 
 
-@socket.on('get_activity')
 def get_activity():
     """Activity only. Poll every 5s for live updates."""
-    keyme.log.info("socket.io: requesting get_activity")
+    keyme.log.info("WS: requesting get_activity")
     return {'activity': _activity()}
 
 
-@socket.on('get_computer_stats')
 def get_computer_stats():
     """Computer Stats (CPU, memory, uptime, CPU temp, OS version). Poll every 5s."""
-    keyme.log.info("socket.io: requesting get_computer_stats")
+    keyme.log.info("WS: requesting get_computer_stats")
     return _cached('computer_stats', _CACHE_TTL_FAST_SEC, _computer_stats)
 
 
-@socket.on('get_terminals')
 def get_terminals():
     """Remote (SSH) and local terminal counts; SSH usernames from keyme_logins.csv + who. Poll with activity."""
-    keyme.log.info("socket.io: requesting get_terminals")
+    keyme.log.info("WS: requesting get_terminals")
     return _cached('terminals', _CACHE_TTL_FAST_SEC, _terminals)
 
 
-@socket.on('get_wtf_why_degraded')
 def get_wtf_why_degraded():
     """wtf and why-degraded command outputs (stdout+stderr). Poll with Kiosk Stats."""
-    keyme.log.info("socket.io: requesting get_wtf_why_degraded")
+    keyme.log.info("WS: requesting get_wtf_why_degraded")
     return _cached('wtf_why_degraded', _CACHE_TTL_SLOW_SEC, _wtf_why_degraded)
 
 
-@socket.on('get_status_sections')
 def get_status_sections():
     """Trimmed status for Attention Needed, Cameras, Devices, Motion. One IPC GET_STATUS."""
-    keyme.log.info("socket.io: requesting get_status_sections")
+    keyme.log.info("WS: requesting get_status_sections")
     return _cached('status_sections', _CACHE_TTL_SLOW_SEC, _status_sections)
 
 
-@socket.on('get_connection_count')
-def get_connection_count():
-    """Current number of Socket.IO connections to this control panel. Not cached."""
-    keyme.log.info("socket.io: requesting get_connection_count")
-    with _connection_lock:
-        return {'count': len(_connected_sids)}
+def get_connection_count(connection_count=0):
+    """Current number of WebSocket connections to this control panel. Not cached."""
+    keyme.log.info("WS: requesting get_connection_count")
+    return {'count': connection_count}
 
 
 def _build_status_snapshot_core():
@@ -674,13 +583,11 @@ def _build_status_snapshot_core():
 _STATUS_SNAPSHOT_TTL_SEC = 6
 
 
-@socket.on('get_status_snapshot')
-def get_status_snapshot():
+def get_status_snapshot(connection_count=0):
     """Single response with computer_stats, terminals, wtf_why_degraded, status_sections (cached), and connection_count (fresh)."""
-    keyme.log.info("socket.io: requesting get_status_snapshot")
+    keyme.log.info("WS: requesting get_status_snapshot")
     data = _cached('status_snapshot', _STATUS_SNAPSHOT_TTL_SEC, _build_status_snapshot_core)
-    with _connection_lock:
-        data = dict(data, connection_count=len(_connected_sids))
+    data = dict(data, connection_count=connection_count)
     return data
 
 
@@ -708,11 +615,10 @@ def _discover_process_configs():
     return seen
 
 
-@socket.on('get_all_configs')
 def get_all_configs():
     """Load all process configs on demand: discover (process, filename), cascade_load each;
     also include top-level hardware config (config/hardware.json). Return nested payload."""
-    keyme.log.info("socket.io: requesting get_all_configs")
+    keyme.log.info("WS: requesting get_all_configs")
     specs = _discover_process_configs()
     configs = {}
     for process, filename in specs:
@@ -731,6 +637,12 @@ def get_all_configs():
     elif hardware is None:
         hardware = {}
     return WebsocketSuccess({'configs': configs, 'hardware': hardware}).to_json()
+
+
+def clear_cache():
+    """Clear TTL cache (e.g. when last client disconnects)."""
+    with _cache_lock:
+        _cache.clear()
 
 
 def _take_image_on_device(camera, resize_factor=0.5):
@@ -820,10 +732,9 @@ def _take_image_on_device(camera, resize_factor=0.5):
             pass
 
 
-@socket.on('take_image')
-def take_image(message):
-    """Take a camera image on the device; return { camera, imageBase64 } or { error } via ack."""
-    data = message if isinstance(message, dict) else {}
+def take_image(data):
+    """Take a camera image on the device; return { camera, imageBase64 } or { error }."""
+    data = data if isinstance(data, dict) else {}
     camera = (data.get('camera') or '').strip()
     if not camera:
         return {'error': 'Missing camera'}
@@ -835,35 +746,33 @@ def take_image(message):
     return {'camera': camera, 'imageBase64': image_b64}
 
 
-@socket.on('get_wellness_check')
-def get_wellness_check():
+def get_wellness_check(client_id=None, send_progress=None):
     """Wellness check: stream progress per step, then return { summary, detailed } or { error }."""
+    from control_panel.python import wellness
     keyme.log.info("Control panel get_wellness_check started")
     try:
         summary_list = []
         detailed = {}
-        sid = getattr(request, 'sid', None)
         for step, items, dk, dv in wellness.run_wellness_check_stream():
             summary_list.extend(items)
             if dk:
                 detailed[dk] = dv
-            if sid:
-                emit('wellness_progress', {
+            if send_progress:
+                send_progress({
                     'step': step,
                     'summary_items': items,
                     'detailed_key': dk,
                     'detailed_value': dv,
-                }, room=sid)
+                })
         return {'summary': summary_list, 'detailed': detailed}
     except (TypeError, ValueError, OSError, IOError, KeyError, AttributeError) as e:
-        keyme.log.error(f"Wellness check failed: {e}")
+        keyme.log.error("Wellness check failed: %s", e)
         return {'error': '{}: {}'.format(type(e).__name__, e)}
 
 
-@socket.on('get_data_usage')
 def get_data_usage():
     """Return all data usage JSON files from system_monitor archives and running totals."""
-    keyme.log.info("socket.io: requesting get_data_usage")
+    keyme.log.info("WS: requesting get_data_usage")
     _kiosk = getattr(keyme.config, 'PATH', None) or '/kiosk'
     try:
         sm_cfg_path = os.path.join(_kiosk, "system_monitor", "config", "system_monitor.json")
@@ -914,18 +823,4 @@ def get_data_usage():
                 keyme.log.error("Failed to read running total %s: %s", key, e)
 
     return WebsocketSuccess(result).to_json()
-
-
-def emit_async_request(request_obj):
-    """Emit an async IPC to connected clients. Used by ControlPanelParser."""
-    event = 'async.{}'.format(request_obj['action'])
-    socket.emit(event, {'data': request_obj.get('data'), 'from': request_obj.get('from', 'CONTROL_PANEL')})
-
-
-def run():
-    port = PORTS['python']
-    host = '0.0.0.0'
-    _write_connection_count(0)
-    keyme.log.info(f"Control panel Socket.IO server starting host={host} port={port}")
-    socket.run(app, port=port, host=host)
 

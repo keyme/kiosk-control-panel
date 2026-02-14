@@ -1,10 +1,10 @@
 # Control Panel
 
-React UI with a Python backend: **Socket.IO runs on the device** (kiosk control and status, ZeroMQ IPC to the rest of the stack); **REST API runs on the cloud**.
+React UI with a Python backend: **WebSocket runs on the device** (kiosk control and status, ZeroMQ IPC to the rest of the stack); **REST API runs on the cloud**.
 
 ## Architecture
 
-**Split:** The UI is served from the cloud. It calls the **cloud** for REST (config, reports, calibration data) and the **device** for real-time control and status over Socket.IO. The device server does not run REST or serve JS; the cloud does not run Socket.IO.
+**Split:** The UI is served from the cloud. It calls the **cloud** for REST (config, reports, calibration data) and the **device** for real-time control and status over WebSocket. The device server does not run REST or serve JS; the cloud does not run WebSocket.
 
 **Target architecture:**
 
@@ -25,26 +25,26 @@ flowchart LR
     PyMain --> Server
     Server -->|ZeroMQ| Stack[Kiosk stack]
   end
-  ReactUI -->|Socket.IO| Server
+  ReactUI -->|WebSocket| Server
   ReactUI -->|REST| CloudMain
 ```
 
-- **Clients / Users:** The React single-page app runs in the user's browser. It is served (as static files) by the cloud and then communicates with both the cloud (REST) and the kiosk (Socket.IO) at runtime.
-- **Kiosk:** `python/main.py` starts `python/server.py` — Socket.IO only; no REST API, no static/JS serving. Bridges to the kiosk hardware stack via ZeroMQ.
-- **Cloud:** `cloud/main.py` — FastAPI app with REST API router and serves the React build (`cloud/web/dist`); no Socket.IO. Only the cloud subtree is a uv project; the kiosk side (`python/`) is unchanged.
+- **Clients / Users:** The React single-page app runs in the user's browser. It is served (as static files) by the cloud and then communicates with both the cloud (REST) and the kiosk (WebSocket) at runtime.
+- **Kiosk:** `python/main.py` starts the WebSocket server (`python/ws_server.py`) and IPC — no REST API, no static/JS serving. Bridges to the kiosk hardware stack via ZeroMQ.
+- **Cloud:** `cloud/main.py` — FastAPI app with REST API router and serves the React build (`cloud/web/dist`); no WebSocket. Only the cloud subtree is a uv project; the kiosk side (`python/`) is unchanged.
 
 **Components:**
 
 | Layer | Location | Role |
 |-------|----------|------|
-| **React UI** | `cloud/web/` | Single-page app; built and served by cloud. Uses REST for data, Socket.IO (to device) for live status and control. |
+| **React UI** | `cloud/web/` | Single-page app; built and served by cloud. Uses REST for data, WebSocket (to device) for live status and control. |
 | **REST API + static** | `cloud/` — entrypoint `cloud/main.py` | FastAPI app; uv project in `cloud/` only. API routes for calibration, testcuts, reports, etc.; serves `cloud/web/dist`. Stateless; cloud-only. |
-| **Socket.IO server** | `python/` — entrypoint `python/main.py` (device) | Flask + Socket.IO only. Real-time events, panel status, terminals, IPC. Proxies commands to kiosk via ZeroMQ. No REST, no JS. |
+| **WebSocket server** | `python/` — entrypoint `python/main.py` (device) | Pure WebSocket (path `/ws`). Real-time events, panel status, terminals, IPC. Proxies commands to kiosk via ZeroMQ. No REST, no JS. |
 | **Kiosk stack** | (other services) | Hardware and services on device; communicate with control panel over ZeroMQ. |
 
 ## Running (device)
 
-The device runs the Socket.IO server. Started by the manager as `control_panel/python/main.py`. Listens on the port in `config/ports.json` (`python`, default 2026). Build the web app first (see **Running (cloud)** for where the build is used).
+The device runs the WebSocket server. Started by the manager as `control_panel/python/main.py`. Listens on the port in `config/ports.json` (`python`, default 2026), path `/ws`. Build the web app first (see **Running (cloud)** for where the build is used).
 
 **Web dev:** From repo root or `control_panel/cloud/web`:
 
@@ -52,7 +52,7 @@ The device runs the Socket.IO server. Started by the manager as `control_panel/p
 cd control_panel/cloud/web && npm run dev
 ```
 
-Vite runs on port 8081 and proxies `/socket.io` to the Python port (2026). Run the Python server separately (`control_panel/python/main.py`) so the socket connects.
+Vite runs on port 8081 and proxies `/ws` to the Python port (2026). Run the Python server separately (`control_panel/python/main.py`) so the WebSocket connects.
 
 ## Running (cloud)
 
@@ -125,9 +125,9 @@ uv run --project control_panel/cloud pytest control_panel/cloud/api/tests/ -v
 
 ## Config
 
-- **`config/ports.json`:** `python` — Flask/Socket.IO server port (2026). (Vite dev server uses port 8081, set in `cloud/web/vite.config.js`.)
-- **`config/control_panel.json`:** Optional, e.g. `max_decode_packets` for Engine.IO.
+- **`config/ports.json`:** `python` — WebSocket server port (2026). (Vite dev server uses port 8081, set in `cloud/web/vite.config.js`.)
+- **`config/control_panel.json`:** Optional, e.g. `cache_ttl_fast_sec`, `cache_ttl_slow_sec` for status cache TTLs.
 
 ## REST API and cloud
 
-REST API and JS serving run on the cloud via `control_panel/cloud/main.py` (FastAPI app; routes in `cloud/api/`). The device server (`python/main.py`) is unchanged and provides Socket.IO only. Cloud dependencies are managed with uv (`control_panel/cloud/pyproject.toml`). See **Running (cloud)** for how to start and configure the cloud server.
+REST API and JS serving run on the cloud via `control_panel/cloud/main.py` (FastAPI app; routes in `cloud/api/`). The device server (`python/main.py`) provides WebSocket only (path `/ws`). Cloud dependencies are managed with uv (`control_panel/cloud/pyproject.toml`). See **Running (cloud)** for how to start and configure the cloud server.

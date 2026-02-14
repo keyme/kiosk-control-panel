@@ -1,6 +1,5 @@
 import { createContext, useContext, useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate, useLocation, Outlet } from 'react-router-dom';
-import io from 'socket.io-client';
 import {
   Gauge,
   Activity,
@@ -31,7 +30,8 @@ const RunBasedCalibrationImagesPage = lazy(() => import('@/pages/RunBasedCalibra
 import { AppSidebar } from '@/components/AppSidebar';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
-import { buildBaseUrl, getInitialDeviceHost } from '@/lib/socketUrl';
+import { buildWsUrl, createDeviceSocket } from '@/lib/deviceSocket';
+import { getInitialDeviceHost } from '@/lib/socketUrl';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import { getToken } from '@/lib/apiFetch';
 import LoginPage from '@/pages/LoginPage';
@@ -270,75 +270,81 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
 }
 
 function requestKioskName(sock, setKioskName) {
-  sock.emit('get_kiosk_name', (res) => {
-    const name = res?.kiosk_name;
-    setKioskName(typeof name === 'string' ? name : null);
-  });
+  sock.request('get_kiosk_name').then((res) => {
+    if (res.success && res.data) {
+      const name = res.data.kiosk_name;
+      setKioskName(typeof name === 'string' ? name : null);
+    }
+  }).catch(() => {});
 }
 
 function requestPanelInfo(sock, setPanelInfo) {
-  sock.emit('get_panel_info', (res) => {
-    if (res && typeof res === 'object') setPanelInfo(res);
-  });
+  sock.request('get_panel_info').then((res) => {
+    if (res.success && res.data && typeof res.data === 'object') setPanelInfo(res.data);
+  }).catch(() => {});
 }
 
 function requestActivity(sock, setPanelInfo) {
-  sock.emit('get_activity', (res) => {
-    const a = res?.activity;
-    if (a === undefined) return;
-    setPanelInfo((prev) => (prev ? { ...prev, activity: a } : null));
-  });
+  sock.request('get_activity').then((res) => {
+    if (res.success && res.data) {
+      const a = res.data.activity;
+      if (a !== undefined) setPanelInfo((prev) => (prev ? { ...prev, activity: a } : null));
+    }
+  }).catch(() => {});
 }
 
 function requestComputerStats(sock, setComputerStats) {
-  sock.emit('get_computer_stats', (res) => {
-    if (res && typeof res === 'object') setComputerStats(res);
-  });
+  sock.request('get_computer_stats').then((res) => {
+    if (res.success && res.data && typeof res.data === 'object') setComputerStats(res.data);
+  }).catch(() => {});
 }
 
 function requestTerminals(sock, setTerminals) {
-  sock.emit('get_terminals', (res) => {
-    if (res && typeof res === 'object') setTerminals(res);
-  });
+  sock.request('get_terminals').then((res) => {
+    if (res.success && res.data && typeof res.data === 'object') setTerminals(res.data);
+  }).catch(() => {});
 }
 
 function requestWtfWhyDegraded(sock, setWtfWhyDegraded) {
-  sock.emit('get_wtf_why_degraded', (res) => {
-    if (res && typeof res === 'object') setWtfWhyDegraded(res);
-  });
+  sock.request('get_wtf_why_degraded').then((res) => {
+    if (res.success && res.data && typeof res.data === 'object') setWtfWhyDegraded(res.data);
+  }).catch(() => {});
 }
 
 function requestStatusSections(sock, setStatusSections) {
-  sock.emit('get_status_sections', (res) => {
-    if (res && typeof res === 'object') setStatusSections(res);
-  });
+  sock.request('get_status_sections').then((res) => {
+    if (res.success && res.data && typeof res.data === 'object') setStatusSections(res.data);
+  }).catch(() => {});
 }
 
 function requestConnectionCount(sock, setConnectionCount) {
-  sock.emit('get_connection_count', (res) => {
-    const n = res?.count;
-    setConnectionCount(typeof n === 'number' ? n : null);
-  });
+  sock.request('get_connection_count').then((res) => {
+    if (res.success && res.data != null) {
+      const n = res.data.count;
+      setConnectionCount(typeof n === 'number' ? n : null);
+    }
+  }).catch(() => {});
 }
 
 /** Request connection count and call callback(count). Used to gate connect setup by frontend limit. */
 function requestConnectionCountWithCallback(sock, callback) {
-  sock.emit('get_connection_count', (res) => {
-    const n = res?.count;
+  sock.request('get_connection_count').then((res) => {
+    const n = res.success && res.data != null ? res.data.count : null;
     callback(typeof n === 'number' ? n : null);
-  });
+  }).catch(() => callback(null));
 }
 
 /** Single request for all Status page data. Callback receives { computer_stats, terminals, connection_count, wtf_why_degraded, status_sections }. */
 function requestStatusSnapshot(sock, setComputerStats, setTerminals, setConnectionCount, setWtfWhyDegraded, setStatusSections) {
-  sock.emit('get_status_snapshot', (res) => {
-    if (!res || typeof res !== 'object') return;
-    setComputerStats(res.computer_stats ?? null);
-    setTerminals(res.terminals ?? null);
-    setConnectionCount(typeof res.connection_count === 'number' ? res.connection_count : null);
-    setWtfWhyDegraded(res.wtf_why_degraded ?? null);
-    setStatusSections(res.status_sections ?? null);
-  });
+  sock.request('get_status_snapshot').then((res) => {
+    if (!res.success || !res.data || typeof res.data !== 'object') return;
+    const d = res.data;
+    setComputerStats(d.computer_stats ?? null);
+    setTerminals(d.terminals ?? null);
+    setConnectionCount(typeof d.connection_count === 'number' ? d.connection_count : null);
+    setWtfWhyDegraded(d.wtf_why_degraded ?? null);
+    setStatusSections(d.status_sections ?? null);
+  }).catch(() => {});
 }
 
 const STATUS_POLL_MS = 10000;
@@ -366,7 +372,6 @@ function AppContent() {
   pathnameRef.current = location.pathname;
 
   const [deviceHost, setDeviceHost] = useState(() => getInitialDeviceHost());
-  const baseUrl = useMemo(() => buildBaseUrl(deviceHost), [deviceHost]);
   const [socket, setSocket] = useState(null);
   const [connected, setConnected] = useState(false);
   const [kioskName, setKioskName] = useState(null);
@@ -382,12 +387,11 @@ function AppContent() {
   const inactivityTimerRef = useRef(null);
 
   useEffect(() => {
-    const sock = io(baseUrl, { path: '/socket.io' });
+    const wsUrl = buildWsUrl(deviceHost);
+    const sock = createDeviceSocket(wsUrl);
     setSocket(sock);
-    return () => {
-      sock.disconnect();
-    };
-  }, [baseUrl]);
+    return () => sock.disconnect();
+  }, [deviceHost]);
 
   useEffect(() => {
     if (!socket) return;
@@ -429,28 +433,12 @@ function AppContent() {
       setConnectionCount(null);
       if (pollInterval) clearInterval(pollInterval);
     };
-    const onConnectError = (err) => setLastError(err?.message || String(err));
 
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
-    socket.on('connect_error', onConnectError);
-
-    if (socket.connected) {
-      requestConnectionCountWithCallback(socket, (count) => {
-        setConnectionCount(count);
-        if (count != null && count > FRONTEND_CONNECTION_LIMIT) {
-          setConnectionRejected(`Too many viewers connected (limit ${FRONTEND_CONNECTION_LIMIT}). Try again later.`);
-          socket.disconnect();
-          return;
-        }
-        finishConnectionSetup();
-      });
-    }
+    socket.onConnect(onConnect);
+    socket.onDisconnect(onDisconnect);
+    if (socket.connected) onConnect();
 
     return () => {
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
-      socket.off('connect_error', onConnectError);
       if (pollInterval) clearInterval(pollInterval);
     };
   }, [socket]);

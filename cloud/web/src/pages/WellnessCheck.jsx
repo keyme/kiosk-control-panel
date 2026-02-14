@@ -64,12 +64,18 @@ export default function WellnessCheck({ socket }) {
     };
 
     socket.on('wellness_progress', onProgress);
-    const off = () => socket.off('wellness_progress', onProgress);
 
-    socket.emit('get_wellness_check', (res) => {
-      off();
+    socket.request('get_wellness_check').then((res) => {
+      socket.off('wellness_progress', onProgress);
       setLoading(false);
-      if (res && typeof res === 'object') setResult(res);
+      if (res && res.success && res.data && typeof res.data === 'object') {
+        setResult(res.data);
+      } else if (res && !res.success) {
+        setResult({ error: res.errors?.join(', ') || 'Request failed' });
+      }
+    }).catch(() => {
+      socket.off('wellness_progress', onProgress);
+      setLoading(false);
     });
   }, [socket, loading]);
 

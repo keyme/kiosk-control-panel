@@ -23,7 +23,7 @@ export default function ConfigPage({ socket }) {
     if (!socket || loading) return;
     setLoading(true);
     setError(null);
-    socket.emit('get_all_configs', (res) => {
+    socket.request('get_all_configs').then((res) => {
       setLoading(false);
       if (res?.success && res?.data != null) {
         setConfigs(res.data.configs ?? {});
@@ -41,7 +41,7 @@ export default function ConfigPage({ socket }) {
           : res?.errors ?? 'Failed to load configs';
         setError(errMsg);
       }
-    });
+    }).catch(() => setLoading(false));
   }, [socket, loading]);
 
   const processes = [

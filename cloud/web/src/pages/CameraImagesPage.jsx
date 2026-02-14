@@ -84,22 +84,25 @@ export default function CameraImagesPage({ socket }) {
       if (!socket?.connected || loadingCamera) return;
       setLoadingCamera(camera);
       setError(null);
-      socket.emit('take_image', { camera, resize_factor: scaleFactor }, (res) => {
+      socket.request('take_image', { camera, resize_factor: scaleFactor }).then((res) => {
         setLoadingCamera(null);
-        if (res && typeof res === 'object') {
-          if (res.error) {
-            setError(res.error);
-          } else if (res.imageBase64) {
+        const data = res?.success ? res.data : null;
+        if (data && typeof data === 'object') {
+          if (data.error) {
+            setError(data.error);
+          } else if (data.imageBase64) {
             setResults((prev) => [
-              { camera: res.camera, imageBase64: res.imageBase64, id: Date.now() },
+              { camera: data.camera, imageBase64: data.imageBase64, id: Date.now() },
               ...prev,
             ]);
             setError(null);
           }
+        } else if (res && !res.success) {
+          setError(res.errors?.join(', ') || 'Request failed');
         } else {
           setError('No response from device');
         }
-      });
+      }).catch(() => setLoadingCamera(null));
     },
     [socket, loadingCamera, scaleFactor]
   );

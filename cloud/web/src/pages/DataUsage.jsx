@@ -415,7 +415,7 @@ export default function DataUsage({ socket }) {
     if (!socket || loading) return;
     setLoading(true);
     setError(null);
-    socket.emit('get_data_usage', (res) => {
+    socket.request('get_data_usage').then((res) => {
       setLoading(false);
       if (!res) {
         setError('No response from device');
@@ -432,7 +432,7 @@ export default function DataUsage({ socket }) {
         const keys = Object.keys(data.daily).sort();
         if (keys.length) setSelectedDate((prev) => prev || keys[keys.length - 1]);
       }
-    });
+    }).catch(() => setLoading(false));
   }, [socket, loading]);
 
   const onSort = useCallback((col) => {
