@@ -201,9 +201,17 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
             title="Whether the kiosk is Inactive (no customer), Active (customer using it), or in Service Mode."
           >
             <StatusDot
-              variant={act === 'inactive' ? 'muted' : act === 'service' ? 'warn' : 'ok'}
+              variant={act === 'inactive' ? 'ok' : act === 'service' ? 'warn' : 'error'}
             />
-            <span>{ACTIVITY_LABELS[act] ?? act}</span>
+            <span
+              className={cn(
+                act === 'inactive' && valueOk,
+                act === 'active' && valueError,
+                act === 'service' && valueWarn
+              )}
+            >
+              {ACTIVITY_LABELS[act] ?? act}
+            </span>
           </TitleItem>
           <TitleItem icon={Tag} label="Tag:">
             <span>{p.git_tag || '—'}</span>
