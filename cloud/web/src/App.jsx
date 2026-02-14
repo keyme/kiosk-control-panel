@@ -334,13 +334,12 @@ function requestConnectionCountWithCallback(sock, callback) {
   }).catch(() => callback(null));
 }
 
-/** Single request for all Status page data. Callback receives { computer_stats, terminals, connection_count, wtf_why_degraded, status_sections }. */
-function requestStatusSnapshot(sock, setComputerStats, setTerminals, setConnectionCount, setWtfWhyDegraded, setStatusSections) {
+/** Single request for all Status page data. Callback receives { computer_stats, connection_count, wtf_why_degraded, status_sections }. Terminals are requested separately so the header updates on all pages. */
+function requestStatusSnapshot(sock, setComputerStats, setConnectionCount, setWtfWhyDegraded, setStatusSections) {
   sock.request('get_status_snapshot').then((res) => {
     if (!res.success || !res.data || typeof res.data !== 'object') return;
     const d = res.data;
     setComputerStats(d.computer_stats ?? null);
-    setTerminals(d.terminals ?? null);
     setConnectionCount(typeof d.connection_count === 'number' ? d.connection_count : null);
     setWtfWhyDegraded(d.wtf_why_degraded ?? null);
     setStatusSections(d.status_sections ?? null);
@@ -398,8 +397,9 @@ function AppContent() {
     let pollInterval = null;
     const tick = () => {
       requestPanelInfo(socket, setPanelInfo);
+      requestTerminals(socket, setTerminals);
       if (isStatusPage(pathnameRef.current)) {
-        requestStatusSnapshot(socket, setComputerStats, setTerminals, setConnectionCount, setWtfWhyDegraded, setStatusSections);
+        requestStatusSnapshot(socket, setComputerStats, setConnectionCount, setWtfWhyDegraded, setStatusSections);
       }
     };
     const finishConnectionSetup = () => {
@@ -408,6 +408,7 @@ function AppContent() {
       setConnected(true);
       requestKioskName(socket, setKioskName);
       requestPanelInfo(socket, setPanelInfo);
+      requestTerminals(socket, setTerminals);
       tick();
       pollInterval = setInterval(tick, STATUS_POLL_MS);
     };

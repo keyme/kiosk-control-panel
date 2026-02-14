@@ -4,8 +4,6 @@
  * server push: { event, data?, from? } (no id).
  */
 
-import { getToken } from './apiFetch';
-
 const WS_PORT = 2026;
 const WS_PATH = '/ws';
 const REQUEST_TIMEOUT_MS = 60000;
@@ -13,23 +11,17 @@ const REQUEST_TIMEOUT_MS = 60000;
 /**
  * Build WebSocket URL for device. Same-origin /ws (cloud proxy or Vite dev proxy).
  * When deviceHost is set, add ?device=... so the cloud proxy can connect to that device.
- * When a KeyMe token is present (cloud auth), add &token=... so the cloud validates before proxying.
+ * Token is sent via the keyme_token cookie (set on login); do not put token in the URL.
  */
 export function buildWsUrl(deviceHost) {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const base = `${proto}//${window.location.host}${WS_PATH}`;
   const host = (deviceHost || '').trim();
-  const params = new URLSearchParams();
-  if (host) {
-    const hostOnly = host.replace(/^(https?:\/\/)?([^/]+).*$/i, '$2');
-    params.set('device', hostOnly);
+  if (!host) {
+    return base;
   }
-  const token = getToken();
-  if (token) {
-    params.set('token', token);
-  }
-  const qs = params.toString();
-  return qs ? `${base}?${qs}` : base;
+  const hostOnly = host.replace(/^(https?:\/\/)?([^/]+).*$/i, '$2');
+  return `${base}?device=${encodeURIComponent(hostOnly)}`;
 }
 
 /**

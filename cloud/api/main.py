@@ -81,8 +81,8 @@ def _device_ws_url(device_host: str) -> str:
 
 @app.websocket("/ws")
 async def ws_proxy(websocket: WebSocket):
-    """Proxy WebSocket to device. Query params: 'device' (required), 'token' (required, KeyMe)."""
-    token = (websocket.query_params.get("token") or "").strip()
+    """Proxy WebSocket to device. Query param 'device' (required). Token from keyme_token cookie (set on login)."""
+    token = (websocket.cookies.get("keyme_token") or "").strip()
     if not token:
         await websocket.close(code=4401, reason="missing token")
         return

@@ -50,7 +50,7 @@ def create_auth_router() -> APIRouter:
 
     @router.post("/login")
     def login(body: dict = Body(...)):
-        """Proxy login to ANF. Returns keyme_token on success."""
+        """Proxy login to ANF. Returns keyme_token on success and sets keyme_token cookie for WebSocket auth."""
         _log.info(f"login attempt email={body.get('email')}")
         try:
             resp = httpx.post(
@@ -61,11 +61,21 @@ def create_auth_router() -> APIRouter:
         except httpx.HTTPError as exc:
             _log.warning(f"ANF login request failed: {exc}")
             return JSONResponse({"error": "Login service unavailable"}, status_code=502)
-        return JSONResponse(resp.json(), status_code=resp.status_code)
+        data = resp.json()
+        response = JSONResponse(data, status_code=resp.status_code)
+        if resp.status_code == 200 and isinstance(data, dict) and data.get("keyme_token"):
+            response.set_cookie(
+                key="keyme_token",
+                value=data["keyme_token"],
+                path="/",
+                samesite="lax",
+                max_age=60 * 60 * 24 * 7,  # 7 days
+            )
+        return response
 
     @router.post("/logout")
     def logout(body: dict = Body(...)):
-        """Proxy logout to ANF and evict the token from the local cache."""
+        """Proxy logout to ANF and evict the token from the local cache. Clears keyme_token cookie."""
         session_token = body.get("session_token", "")
         _log.info("logout request")
         # Evict from local cache so the token is no longer trusted locally.
@@ -78,8 +88,12 @@ def create_auth_router() -> APIRouter:
             )
         except httpx.HTTPError as exc:
             _log.warning(f"ANF logout request failed: {exc}")
-            return JSONResponse({"error": "Logout service unavailable"}, status_code=502)
-        return JSONResponse(resp.json(), status_code=resp.status_code)
+            response = JSONResponse({"error": "Logout service unavailable"}, status_code=502)
+            response.delete_cookie("keyme_token", path="/")
+            return response
+        response = JSONResponse(resp.json(), status_code=resp.status_code)
+        response.delete_cookie("keyme_token", path="/")
+        return response
 
     return router
 

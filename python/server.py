@@ -571,10 +571,9 @@ def get_connection_count(connection_count=0):
 
 
 def _build_status_snapshot_core():
-    """Build the cacheable part of the status snapshot (no connection_count)."""
+    """Build the cacheable part of the status snapshot (no connection_count, no terminals). Terminals are requested separately via get_terminals so the header can update on all pages."""
     return {
         'computer_stats': _computer_stats(),
-        'terminals': _terminals(),
         'wtf_why_degraded': _wtf_why_degraded(),
         'status_sections': _status_sections(),
     }
@@ -584,7 +583,7 @@ _STATUS_SNAPSHOT_TTL_SEC = 6
 
 
 def get_status_snapshot(connection_count=0):
-    """Single response with computer_stats, terminals, wtf_why_degraded, status_sections (cached), and connection_count (fresh)."""
+    """Single response with computer_stats, wtf_why_degraded, status_sections (cached), and connection_count (fresh). Terminals are not included; use get_terminals for that."""
     keyme.log.info("WS: requesting get_status_snapshot")
     data = _cached('status_snapshot', _STATUS_SNAPSHOT_TTL_SEC, _build_status_snapshot_core)
     data = dict(data, connection_count=connection_count)

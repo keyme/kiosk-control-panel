@@ -56,7 +56,7 @@ Vite runs on port 8081 and proxies `/ws` to the Python port (2026). Run the Pyth
 
 ## Running (cloud)
 
-The cloud is a FastAPI app managed with uv. It runs the REST API and serves the React build via `control_panel/cloud/main.py`. It also proxies WebSocket to the device: when the user selects a device in the UI, the browser connects to the cloud at `/ws?device=...` and the cloud forwards to that device. The cloud requires the same KeyMe token as the REST API, passed as the `token` query parameter; unauthenticated connections are closed. The web app lives under `cloud/web/`.
+The cloud is a FastAPI app managed with uv. It runs the REST API and serves the React build via `control_panel/cloud/main.py`. It also proxies WebSocket to the device: when the user selects a device in the UI, the browser connects to the cloud at `/ws?device=...` and the cloud forwards to that device. The cloud requires the same KeyMe token as the REST API, sent via the `keyme_token` cookie (set on login); unauthenticated connections are closed. The web app lives under `cloud/web/`.
 
 1. Build the web app: `cd control_panel/cloud/web && npm run build`
 2. From **repo root**, run the cloud app with uv (only `control_panel/cloud` is a uv project):
