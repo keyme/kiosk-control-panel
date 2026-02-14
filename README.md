@@ -31,7 +31,7 @@ flowchart LR
 
 - **Clients / Users:** The React single-page app runs in the user's browser. It is served (as static files) by the cloud and then communicates with both the cloud (REST) and the kiosk (WebSocket) at runtime.
 - **Kiosk:** `python/main.py` starts the WebSocket server (`python/ws_server.py`) and IPC — no REST API, no static/JS serving. Bridges to the kiosk hardware stack via ZeroMQ.
-- **Cloud:** `cloud/main.py` — FastAPI app with REST API router and serves the React build (`cloud/web/dist`); no WebSocket. Only the cloud subtree is a uv project; the kiosk side (`python/`) is unchanged.
+- **Cloud:** `cloud/main.py` — FastAPI app with REST API router, serves the React build (`cloud/web/dist`), and proxies WebSocket to the device (path `/ws`, query `device=` from UI). Only the cloud subtree is a uv project; the kiosk side (`python/`) is unchanged.
 
 **Components:**
 
@@ -56,7 +56,7 @@ Vite runs on port 8081 and proxies `/ws` to the Python port (2026). Run the Pyth
 
 ## Running (cloud)
 
-The cloud is a FastAPI app managed with uv. It runs the REST API and serves the React build via `control_panel/cloud/main.py`. WebSocket runs on the device only. The web app lives under `cloud/web/`.
+The cloud is a FastAPI app managed with uv. It runs the REST API and serves the React build via `control_panel/cloud/main.py`. It also proxies WebSocket to the device: when the user selects a device in the UI, the browser connects to the cloud at `/ws?device=...` and the cloud forwards to that device. The web app lives under `cloud/web/`.
 
 1. Build the web app: `cd control_panel/cloud/web && npm run build`
 2. From **repo root**, run the cloud app with uv (only `control_panel/cloud` is a uv project):

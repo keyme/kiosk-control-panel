@@ -9,17 +9,18 @@ const WS_PATH = '/ws';
 const REQUEST_TIMEOUT_MS = 60000;
 
 /**
- * Build WebSocket URL for device. In dev with proxy, use same-origin /ws; otherwise ws://host:port/ws.
+ * Build WebSocket URL for device. Same-origin /ws (cloud proxy or Vite dev proxy).
+ * When deviceHost is set, add ?device=... so the cloud proxy can connect to that device.
  */
 export function buildWsUrl(deviceHost) {
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const base = `${proto}//${window.location.host}${WS_PATH}`;
   const host = (deviceHost || '').trim();
   if (!host) {
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${window.location.host}${WS_PATH}`;
+    return base;
   }
   const hostOnly = host.replace(/^(https?:\/\/)?([^/]+).*$/i, '$2');
-  const withDomain = hostOnly.includes('.') ? hostOnly : `${hostOnly}.keymekiosk.com`;
-  return `ws://${withDomain}:${WS_PORT}${WS_PATH}`;
+  return `${base}?device=${encodeURIComponent(hostOnly)}`;
 }
 
 /**
