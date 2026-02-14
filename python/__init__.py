@@ -1,1 +1,1 @@
-# Control panel Python backend: Flask + Socket.IO server and IPC parser.
+# Control panel Python backend: WebSocket server and IPC parser.

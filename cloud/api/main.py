@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cloud API: FastAPI app, REST router, static JS serving. No Socket.IO.
+Cloud API: FastAPI app, REST router, static JS serving. WebSocket runs on the device only.
 Run with static root and port via env (see README). Entrypoint for uvicorn is control_panel.cloud.main:app.
 """
 import logging

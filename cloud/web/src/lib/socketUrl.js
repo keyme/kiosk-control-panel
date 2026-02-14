@@ -1,7 +1,7 @@
 const DEFAULT_PORT = 2026;
 
 /**
- * Build base URL for Socket.IO and API from a device host string.
+ * Build base URL for WebSocket (device) and API from a device host string.
  * - Falsy deviceHost: return window.location.origin.
  * - No dot in value: treat as short name, use http://{value}.keymekiosk.com:{port}.
  * - Otherwise: strip any scheme and use http://{host}:{port}.
@@ -40,7 +40,7 @@ export function getInitialDeviceHost() {
 
 /**
  * @deprecated Use getInitialDeviceHost() + buildBaseUrl() and title bar device field instead.
- * Resolves the Socket.IO server base URL from URL params (legacy).
+ * Resolves the WebSocket server base URL from URL params (legacy).
  */
 export function getSocketBaseUrl() {
   const params = new URLSearchParams(window.location.search);

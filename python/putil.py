@@ -1,4 +1,4 @@
-"""Utilities for the Flask Socket.IO server."""
+"""Utilities for the WebSocket server."""
 import enum
 
 

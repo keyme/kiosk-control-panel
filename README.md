@@ -56,7 +56,7 @@ Vite runs on port 8081 and proxies `/ws` to the Python port (2026). Run the Pyth
 
 ## Running (cloud)
 
-The cloud is a FastAPI app managed with uv. It runs the REST API and serves the React build via `control_panel/cloud/main.py`. No Socket.IO. The web app lives under `cloud/web/`.
+The cloud is a FastAPI app managed with uv. It runs the REST API and serves the React build via `control_panel/cloud/main.py`. WebSocket runs on the device only. The web app lives under `cloud/web/`.
 
 1. Build the web app: `cd control_panel/cloud/web && npm run build`
 2. From **repo root**, run the cloud app with uv (only `control_panel/cloud` is a uv project):
@@ -70,6 +70,7 @@ Port can be overridden with the `PORT` env var (e.g. `PORT=9000` before the comm
 **Env (optional):**
 
 - **`PORT`** — Server port (default 8080).
+- **`API_ENV`** — Environment: `stg` or `prod`. Set when running in Docker or when you need the app to target staging vs production APIs.
 - **`CONTROL_PANEL_STATIC_ROOT`** — Path to the React build (default: `cloud/web/dist` next to `main.py`). Set this if you deploy the static files elsewhere.
 
 **Docker (build from control_panel dir):**
@@ -81,11 +82,13 @@ cd control_panel
 docker build -f cloud/Dockerfile -t control-panel-cloud .
 ```
 
-Run (port 8080):
+Run (port 8080). Set `API_ENV` to `stg` or `prod`:
 
 ```bash
-docker run -p 8080:8080 control-panel-cloud
+docker run -p 8080:8080 -e API_ENV=stg control-panel-cloud
 ```
+
+For production: `-e API_ENV=prod`.
 
 The app uses boto3 to access S3 (calibration data). Pass AWS credentials in one of these ways:
 
@@ -93,6 +96,7 @@ The app uses boto3 to access S3 (calibration data). Pass AWS credentials in one 
 
 ```bash
 docker run -p 8080:8080 \
+  -e API_ENV=stg \
   -e AWS_ACCESS_KEY_ID=... \
   -e AWS_SECRET_ACCESS_KEY=... \
   -e AWS_DEFAULT_REGION=us-east-1 \
@@ -103,6 +107,7 @@ docker run -p 8080:8080 \
 
 ```bash
 docker run -p 8080:8080 \
+  -e API_ENV=stg \
   -v ~/.aws:/home/appuser/.aws:ro \
   -e HOME=/home/appuser \
   control-panel-cloud

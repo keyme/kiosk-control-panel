@@ -475,7 +475,7 @@ export default function Status({ computerStats, wtfWhyDegraded, status: statusPr
             <StatItem icon={Thermometer} label="CPU temp" value={s.cpu_temp || '—'} />
             <StatItem icon={Gauge} label="Load average" value={s.load_average || '—'} />
             <StatItem icon={Monitor} label="OS version" value={s.os_version || '—'} />
-            <StatItem icon={Link2} label="Socket.IO connections" value={connectionCount != null ? String(connectionCount) : '—'} />
+            <StatItem icon={Link2} label="WebSocket connections" value={connectionCount != null ? String(connectionCount) : '—'} />
           </div>
           <TerminalsBlock terminals={terminals} />
           <TimeUpdatedFooter timeUpdated={s.time_updated || null} />

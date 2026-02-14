@@ -1,1 +1,1 @@
-# Control panel service: React UI + Python Socket.IO backend with ZeroMQ IPC.
+# Control panel service: React UI + Python WebSocket backend with ZeroMQ IPC.
