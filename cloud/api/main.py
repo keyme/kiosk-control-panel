@@ -20,13 +20,13 @@ logging.basicConfig(
 from contextlib import asynccontextmanager
 
 import websockets
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from starlette.staticfiles import StaticFiles
 
 from control_panel.cloud.api import create_auth_router, create_router
-from control_panel.cloud.api.auth import ANF_BASE_URL, API_ENV
+from control_panel.cloud.api.auth import ANF_BASE_URL, API_ENV, validate_token
 
 log = logging.getLogger(__name__)
 
@@ -81,7 +81,19 @@ def _device_ws_url(device_host: str) -> str:
 
 @app.websocket("/ws")
 async def ws_proxy(websocket: WebSocket):
-    """Proxy WebSocket to device. Query param 'device' (required) selects the device."""
+    """Proxy WebSocket to device. Query params: 'device' (required), 'token' (required, KeyMe)."""
+    token = (websocket.query_params.get("token") or "").strip()
+    if not token:
+        await websocket.close(code=4401, reason="missing token")
+        return
+    try:
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda t=token: validate_token(t)
+        )
+    except HTTPException:
+        log.info("ws proxy token validation failed")
+        await websocket.close(code=4401, reason="invalid token")
+        return
     device = websocket.query_params.get("device") or ""
     device = device.strip()
     if not device:

@@ -52,18 +52,15 @@ _token_cache: TTLCache = TTLCache(maxsize=1000, ttl=300)
 keyme_token_header = APIKeyHeader(name="KEYME-TOKEN", auto_error=False)
 
 # ---------------------------------------------------------------------------
-# Dependency
+# Token validation (sync, callable from REST and WebSocket)
 # ---------------------------------------------------------------------------
 
 
-def get_current_user(token: str | None = Depends(keyme_token_header)) -> dict:
+def validate_token(token: str | None) -> dict:
     """Validate the opaque KeyMe token via ANF and return permission info.
 
-    Usage::
-
-        @router.get("/protected")
-        def protected(user=Depends(get_current_user)):
-            ...
+    Raises HTTPException(401) on failure. Uses the same cache as REST.
+    Safe to call from WebSocket handler (run in executor if async).
     """
     if not token:
         raise HTTPException(status_code=401, detail="Missing KEYME-TOKEN header")
@@ -98,3 +95,20 @@ def get_current_user(token: str | None = Depends(keyme_token_header)) -> dict:
     # Cache successful validation ---------------------------------------------
     _token_cache[token] = data
     return data
+
+
+# ---------------------------------------------------------------------------
+# Dependency
+# ---------------------------------------------------------------------------
+
+
+def get_current_user(token: str | None = Depends(keyme_token_header)) -> dict:
+    """Validate the opaque KeyMe token via ANF and return permission info.
+
+    Usage::
+
+        @router.get("/protected")
+        def protected(user=Depends(get_current_user)):
+            ...
+    """
+    return validate_token(token)
