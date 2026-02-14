@@ -23,6 +23,7 @@ import websockets
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.staticfiles import StaticFiles
 
 from control_panel.cloud.api import create_auth_router, create_router
@@ -37,6 +38,26 @@ _index_html = os.path.join(_STATIC_ROOT, "index.html")
 _assets_dir = os.path.join(_STATIC_ROOT, "assets")
 
 
+def _request_line_safe(path: str, query: str) -> str:
+    """Path + query with token= redacted for access log."""
+    if not query:
+        return path
+    safe = re.sub(r"token=[^&\s]+", "token=REDACTED", query, flags=re.IGNORECASE)
+    return f"{path}?{safe}"
+
+
+class _AccessLogMiddleware(BaseHTTPMiddleware):
+    """Log every HTTP request (and WebSocket upgrade). Token is never logged."""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        client = request.client or ("?", "?")
+        client_addr = f"{client[0]}:{client[1]}"
+        path_safe = _request_line_safe(request.url.path, request.url.query)
+        log.info('%s - "%s %s" %s', client_addr, request.method, path_safe, response.status_code)
+        return response
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     log.info(
@@ -49,6 +70,7 @@ async def _lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Control Panel Cloud", lifespan=_lifespan)
+app.add_middleware(_AccessLogMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -81,8 +103,8 @@ def _device_ws_url(device_host: str) -> str:
 
 @app.websocket("/ws")
 async def ws_proxy(websocket: WebSocket):
-    """Proxy WebSocket to device. Query param 'device' (required). Token from keyme_token cookie (set on login)."""
-    token = (websocket.cookies.get("keyme_token") or "").strip()
+    """Proxy WebSocket to device. Query params: 'device' (required), 'token' (required, KeyMe)."""
+    token = (websocket.query_params.get("token") or "").strip()
     if not token:
         await websocket.close(code=4401, reason="missing token")
         return
@@ -185,4 +207,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port,
         reload=False,
+        access_log=False,
     )
