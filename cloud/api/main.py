@@ -46,6 +46,17 @@ def _request_line_safe(path: str, query: str) -> str:
     return f"{path}?{safe}"
 
 
+class _RestApiLogMiddleware(BaseHTTPMiddleware):
+    """Info-log every REST API request for debuggability. Token never logged."""
+
+    async def dispatch(self, request, call_next):
+        if request.url.path.startswith("/api"):
+            path_safe = _request_line_safe(request.url.path, request.url.query)
+            log.info(f"REST API {request.method} {path_safe}")
+        response = await call_next(request)
+        return response
+
+
 class _AccessLogMiddleware(BaseHTTPMiddleware):
     """Log every HTTP request (and WebSocket upgrade). Token is never logged."""
 
@@ -54,7 +65,7 @@ class _AccessLogMiddleware(BaseHTTPMiddleware):
         client = request.client or ("?", "?")
         client_addr = f"{client[0]}:{client[1]}"
         path_safe = _request_line_safe(request.url.path, request.url.query)
-        log.info('%s - "%s %s" %s', client_addr, request.method, path_safe, response.status_code)
+        log.info(f'{client_addr} - "{request.method} {path_safe}" {response.status_code}')
         return response
 
 
@@ -70,6 +81,7 @@ async def _lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Control Panel Cloud", lifespan=_lifespan)
+app.add_middleware(_RestApiLogMiddleware)
 app.add_middleware(_AccessLogMiddleware)
 app.add_middleware(
     CORSMiddleware,
