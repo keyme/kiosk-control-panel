@@ -168,8 +168,24 @@ async def ws_proxy(websocket: WebSocket):
                     await t
                 except asyncio.CancelledError:
                     pass
+    except TimeoutError as e:
+        log.error(
+            "ws proxy connect timed out: url=%s port=%s error=%s",
+            backend_url,
+            _WS_PORT,
+            e,
+        )
+        try:
+            await websocket.close(code=1011, reason=str(e)[:123])
+        except Exception:
+            pass
     except Exception as e:
-        log.exception("ws proxy connect to device failed device=%s", device)
+        log.exception(
+            "ws proxy connect to device failed device=%s url=%s port=%s",
+            device,
+            backend_url,
+            _WS_PORT,
+        )
         try:
             await websocket.close(code=1011, reason=str(e)[:123])
         except Exception:
