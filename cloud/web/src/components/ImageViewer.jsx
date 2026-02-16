@@ -117,6 +117,7 @@ export default function ImageViewer({ imageUrl, pixelSpacing, pixelsPerMm }) {
 
   const spaceDownRef = useRef(false);
   const isPanningRef = useRef(false);
+  const [isPanning, setIsPanning] = useState(false);
   const panLastRef = useRef(null);
   const pointerIdRef = useRef(null);
 
@@ -199,6 +200,7 @@ export default function ImageViewer({ imageUrl, pixelSpacing, pixelsPerMm }) {
       const isSpacePan = spaceDownRef.current || activeTool === 'Pan';
       if (isSpacePan) {
         isPanningRef.current = true;
+        setIsPanning(true);
         panLastRef.current = { x: pointer.x, y: pointer.y };
         pointerIdRef.current = evt.pointerId ?? null;
         return;
@@ -259,6 +261,7 @@ export default function ImageViewer({ imageUrl, pixelSpacing, pixelsPerMm }) {
     (e) => {
       if (isPanningRef.current) {
         isPanningRef.current = false;
+        setIsPanning(false);
         panLastRef.current = null;
         pointerIdRef.current = null;
         return;
@@ -352,6 +355,9 @@ export default function ImageViewer({ imageUrl, pixelSpacing, pixelsPerMm }) {
     setPixelsPerMmInput(e.target.value);
   };
 
+  const stageCursor =
+    isPanning ? 'grabbing' : activeTool === 'Pan' ? 'grab' : activeTool === 'Length' || activeTool === 'Angle' ? 'crosshair' : 'default';
+
   if (error || imageStatus === 'failed') {
     return (
       <div className="flex h-64 items-center justify-center rounded border border-border bg-muted/30 text-destructive text-sm">
@@ -403,7 +409,7 @@ export default function ImageViewer({ imageUrl, pixelSpacing, pixelsPerMm }) {
         id={VIEWER_ID}
         ref={containerRef}
         className="min-h-[400px] w-full rounded border border-border bg-black"
-        style={{ width: '100%', height: '70vh', minHeight: 400 }}
+        style={{ width: '100%', height: '70vh', minHeight: 400, cursor: stageCursor }}
       >
         {stageWidth > 0 && stageHeight > 0 && (
           <Stage
