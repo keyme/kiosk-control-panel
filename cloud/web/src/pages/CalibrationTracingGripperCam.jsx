@@ -568,6 +568,14 @@ export default function CalibrationTracingGripperCam({ kioskName: kioskNameProp 
       .finally(() => setRunsLoading(false));
   }, [kioskName]);
 
+  // When opening tracing/gripper-cam with no runId, redirect to latest run if available
+  useEffect(() => {
+    if (!kioskName || runId || runsLoading || runs.length === 0) return;
+    const base = kioskName ? `/${kioskName}/calibration/tracing/gripper-cam` : '/calibration/tracing/gripper-cam';
+    const firstRunId = runs[0]?.run_id ?? runs[0];
+    if (firstRunId) navigate(`${base}/${encodeURIComponent(firstRunId)}`, { replace: true });
+  }, [kioskName, runId, runsLoading, runs, navigate]);
+
   useEffect(() => {
     if (!kioskName || !runId) {
       setTrace(null);
