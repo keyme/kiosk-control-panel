@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Ruler, CornerDownRight, Hand, Crop, RotateCw, Eraser } from 'lucide-react';
+import { Ruler, CornerDownRight, Hand, Crop, RotateCw, Eraser, Maximize2 } from 'lucide-react';
 import { Stage, Layer, Group, Image, Line, Rect, Text } from 'react-konva';
 import useImage from 'use-image';
 
@@ -11,6 +11,7 @@ const TOOLS = [
   { name: 'Pan', label: 'Pan', Icon: Hand, shortcut: 'A' },
   { name: 'RectangleRoi', label: 'Crop', Icon: Crop, shortcut: 'C' },
   { name: 'Rotate', label: 'Rotate', Icon: RotateCw, shortcut: 'R' },
+  { name: 'Fit', label: 'Fit', Icon: Maximize2, shortcut: 'F' },
   { name: 'Reset', label: 'Reset', Icon: Eraser, shortcut: 'X' },
 ];
 
@@ -66,6 +67,34 @@ function angleDeg(points) {
   return Math.abs((rad * 180) / Math.PI);
 }
 
+function rotatePoint({ x, y }, deg) {
+  const rad = (deg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return { x: x * cos - y * sin, y: x * sin + y * cos };
+}
+
+/** Stage coords -> image pixel coords (origin top-left). Uses view + image center. */
+function stageToImage(stagePt, view, imgWidth, imgHeight) {
+  const cx = imgWidth / 2;
+  const cy = imgHeight / 2;
+  const translated = { x: stagePt.x - view.pos.x, y: stagePt.y - view.pos.y };
+  const unRotated = rotatePoint(translated, -view.rotationDeg);
+  return {
+    x: unRotated.x / view.scale + cx,
+    y: unRotated.y / view.scale + cy,
+  };
+}
+
+/** Image pixel coords (origin top-left) -> stage coords. */
+function imageToStage(imgPt, view, imgWidth, imgHeight) {
+  const cx = imgWidth / 2;
+  const cy = imgHeight / 2;
+  const local = { x: (imgPt.x - cx) * view.scale, y: (imgPt.y - cy) * view.scale };
+  const rotated = rotatePoint(local, view.rotationDeg);
+  return { x: view.pos.x + rotated.x, y: view.pos.y + rotated.y };
+}
+
 export default function ImageViewer({ imageUrl, pixelSpacing, pixelsPerMm }) {
   const containerRef = useRef(null);
   const groupRef = useRef(null);
@@ -80,13 +109,16 @@ export default function ImageViewer({ imageUrl, pixelSpacing, pixelsPerMm }) {
   const [pixelsPerMmInput, setPixelsPerMmInput] = useState(initialPixelsPerMm);
   const mmPerPixel = 1 / (Number(pixelsPerMmInput) || defaultPixelsPerMm);
 
-  const [groupPos, setGroupPos] = useState({ x: 0, y: 0 });
-  const [groupScale, setGroupScale] = useState(1);
-  const [rotation, setRotation] = useState(0);
+  const [view, setView] = useState({ pos: { x: 0, y: 0 }, scale: 1, rotationDeg: 0 });
   const [annotations, setAnnotations] = useState([]);
   const [drawing, setDrawing] = useState(null);
   const [angleStep, setAngleStep] = useState(0);
   const [cropRect, setCropRect] = useState(null);
+
+  const spaceDownRef = useRef(false);
+  const isPanningRef = useRef(false);
+  const panLastRef = useRef(null);
+  const pointerIdRef = useRef(null);
 
   const stageWidth = size.width;
   const stageHeight = size.height;
@@ -98,8 +130,6 @@ export default function ImageViewer({ imageUrl, pixelSpacing, pixelsPerMm }) {
     else if (imageStatus === 'loaded') setError(null);
   }, [imageStatus]);
 
-  // Fit to window only when image first loads (or imageUrl changes). Store dimensions used
-  // so Reset can reuse them and avoid drift from ResizeObserver firing with different values.
   const fittedForImageRef = useRef(null);
   const fitStageSizeRef = useRef({ width: 0, height: 0 });
   useEffect(() => {
@@ -109,55 +139,71 @@ export default function ImageViewer({ imageUrl, pixelSpacing, pixelsPerMm }) {
     fitStageSizeRef.current = { width: stageWidth, height: stageHeight };
     setCropRect(null);
     const scale = Math.min(stageWidth / imgWidth, stageHeight / imgHeight);
-    setGroupPos({ x: stageWidth / 2, y: stageHeight / 2 });
-    setGroupScale(scale);
+    setView({ pos: { x: stageWidth / 2, y: stageHeight / 2 }, scale, rotationDeg: 0 });
   }, [imageUrl, imgWidth, imgHeight, stageWidth, stageHeight]);
 
   useEffect(() => {
     setPixelsPerMmInput(initialPixelsPerMm);
   }, [imageUrl, initialPixelsPerMm]);
 
-  function getImagePoint() {
-    if (!groupRef.current) return null;
-    const stage = groupRef.current.getStage();
-    if (!stage) return null;
-    const pointer = stage.getPointerPosition();
-    if (!pointer) return null;
-    const transform = groupRef.current.getAbsoluteTransform().copy();
-    transform.invert();
-    return transform.point(pointer);
-  }
+  const getImagePointFromStage = useCallback(
+    (stageX, stageY) => stageToImage({ x: stageX, y: stageY }, view, imgWidth, imgHeight),
+    [view, imgWidth, imgHeight]
+  );
+
+  const fitView = useCallback(() => {
+    if (!imgWidth || !imgHeight || !stageWidth || !stageHeight) return;
+    const { width: w, height: h } = fitStageSizeRef.current;
+    const sw = w > 0 ? w : stageWidth;
+    const sh = h > 0 ? h : stageHeight;
+    if (sw > 0 && sh > 0) {
+      const scale = Math.min(sw / imgWidth, sh / imgHeight);
+      setView((v) => ({ ...v, pos: { x: sw / 2, y: sh / 2 }, scale }));
+    }
+  }, [imgWidth, imgHeight, stageWidth, stageHeight]);
 
   const handleStageWheel = useCallback(
     (e) => {
       e.evt.preventDefault();
       const stage = e.target.getStage();
-      const oldScale = groupScale;
       const pointer = stage.getPointerPosition();
       if (!pointer) return;
-      const scaleBy = 1.1;
-      const newScale = e.evt.deltaY > 0 ? oldScale / scaleBy : oldScale * scaleBy;
-      const clamped = Math.max(0.1, Math.min(20, newScale));
-      const mousePointTo = {
-        x: (pointer.x - groupPos.x) / oldScale,
-        y: (pointer.y - groupPos.y) / oldScale,
-      };
-      const newPos = {
-        x: pointer.x - mousePointTo.x * clamped,
-        y: pointer.y - mousePointTo.y * clamped,
-      };
-      setGroupScale(clamped);
-      setGroupPos(newPos);
+      setView((v) => {
+        const scaleBy = 1.1;
+        const newScale = e.evt.deltaY > 0 ? v.scale / scaleBy : v.scale * scaleBy;
+        const clamped = Math.max(0.1, Math.min(20, newScale));
+        const imgPt = stageToImage(pointer, v, imgWidth, imgHeight);
+        const staged = imageToStage(imgPt, { pos: { x: 0, y: 0 }, scale: clamped, rotationDeg: v.rotationDeg }, imgWidth, imgHeight);
+        return { ...v, scale: clamped, pos: { x: pointer.x - staged.x, y: pointer.y - staged.y } };
+      });
     },
-    [groupScale, groupPos]
+    [imgWidth, imgHeight]
   );
 
-  const handleStageMouseDown = useCallback(
-    (e) => {
-      if (e.target !== e.target.getStage()) return;
-      const pt = getImagePoint();
-      if (!pt) return;
+  const handleRotate = useCallback(() => {
+    setView((v) => {
+      const stageCenter = { x: stageWidth / 2, y: stageHeight / 2 };
+      const imgPt = stageToImage(stageCenter, v, imgWidth, imgHeight);
+      const newRot = (v.rotationDeg + 90) % 360;
+      const staged = imageToStage(imgPt, { pos: { x: 0, y: 0 }, scale: v.scale, rotationDeg: newRot }, imgWidth, imgHeight);
+      return { ...v, rotationDeg: newRot, pos: { x: stageCenter.x - staged.x, y: stageCenter.y - staged.y } };
+    });
+  }, [imgWidth, imgHeight, stageWidth, stageHeight]);
 
+  const handlePointerDown = useCallback(
+    (e) => {
+      const stage = e.target.getStage();
+      const evt = e.evt;
+      const pointer = stage.getPointerPosition();
+      if (!pointer) return;
+      const isSpacePan = spaceDownRef.current || activeTool === 'Pan';
+      if (isSpacePan) {
+        isPanningRef.current = true;
+        panLastRef.current = { x: pointer.x, y: pointer.y };
+        pointerIdRef.current = evt.pointerId ?? null;
+        return;
+      }
+      const pt = getImagePointFromStage(pointer.x, pointer.y);
       if (activeTool === 'Length') {
         setDrawing({ type: 'length', points: [pt.x, pt.y, pt.x, pt.y] });
       } else if (activeTool === 'Angle') {
@@ -180,31 +226,43 @@ export default function ImageViewer({ imageUrl, pixelSpacing, pixelsPerMm }) {
         setDrawing({ type: 'RectangleRoi', x: pt.x, y: pt.y, width: 0, height: 0 });
       }
     },
-    [activeTool, angleStep]
+    [activeTool, angleStep, getImagePointFromStage]
   );
 
-  const handleStageMouseMove = useCallback(
+  const handlePointerMove = useCallback(
     (e) => {
+      const stage = e.target.getStage();
+      const pointer = stage.getPointerPosition();
+      if (!pointer) return;
+      if (isPanningRef.current) {
+        const last = panLastRef.current;
+        if (last) {
+          const dx = pointer.x - last.x;
+          const dy = pointer.y - last.y;
+          panLastRef.current = { x: pointer.x, y: pointer.y };
+          setView((v) => ({ ...v, pos: { x: v.pos.x + dx, y: v.pos.y + dy } }));
+        }
+        return;
+      }
       if (!drawing) return;
-      const pt = getImagePoint();
-      if (!pt) return;
-
+      const pt = getImagePointFromStage(pointer.x, pointer.y);
       if (drawing.type === 'length' && drawing.points.length >= 4) {
         setDrawing((d) => ({ ...d, points: [d.points[0], d.points[1], pt.x, pt.y] }));
       } else if (drawing.type === 'RectangleRoi') {
-        setDrawing((d) => ({
-          ...d,
-          width: pt.x - d.x,
-          height: pt.y - d.y,
-        }));
+        setDrawing((d) => ({ ...d, width: pt.x - d.x, height: pt.y - d.y }));
       }
     },
-    [drawing]
+    [drawing, getImagePointFromStage]
   );
 
-  const handleStageMouseUp = useCallback(
+  const handlePointerUp = useCallback(
     (e) => {
-      if (e.target !== e.target.getStage()) return;
+      if (isPanningRef.current) {
+        isPanningRef.current = false;
+        panLastRef.current = null;
+        pointerIdRef.current = null;
+        return;
+      }
       if (drawing?.type === 'length') {
         setAnnotations((a) => [...a, { type: 'length', points: [...drawing.points] }]);
         setDrawing(null);
@@ -221,29 +279,26 @@ export default function ImageViewer({ imageUrl, pixelSpacing, pixelsPerMm }) {
     [drawing]
   );
 
-  const handleRotate = useCallback(() => {
-    setRotation((r) => (r + 90) % 360);
-  }, []);
-
   const applyTool = useCallback(
     (toolName) => {
+      if (toolName === 'Fit') {
+        fitView();
+        return;
+      }
       if (toolName === 'Reset') {
         setAnnotations([]);
         setDrawing(null);
         setAngleStep(0);
         setCropRect(null);
-        setRotation(0);
+        setView((v) => ({ ...v, rotationDeg: 0 }));
         setActiveTool('Length');
         setPixelsPerMmInput(initialPixelsPerMm);
-        if (imgWidth && imgHeight) {
+        if (imgWidth && imgHeight && stageWidth && stageHeight) {
           const { width: w, height: h } = fitStageSizeRef.current;
           const sw = w > 0 ? w : stageWidth;
           const sh = h > 0 ? h : stageHeight;
-          if (sw > 0 && sh > 0) {
-            const scale = Math.min(sw / imgWidth, sh / imgHeight);
-            setGroupPos({ x: sw / 2, y: sh / 2 });
-            setGroupScale(scale);
-          }
+          const scale = Math.min(sw / imgWidth, sh / imgHeight);
+          setView({ pos: { x: sw / 2, y: sh / 2 }, scale, rotationDeg: 0 });
         }
         return;
       }
@@ -253,21 +308,25 @@ export default function ImageViewer({ imageUrl, pixelSpacing, pixelsPerMm }) {
       }
       setActiveTool(toolName);
     },
-    [handleRotate, initialPixelsPerMm, imgWidth, imgHeight, stageWidth, stageHeight]
+    [fitView, handleRotate, initialPixelsPerMm, imgWidth, imgHeight, stageWidth, stageHeight]
   );
 
-  const handleToolClick = useCallback(
-    (toolName) => {
-      applyTool(toolName);
-    },
-    [applyTool]
-  );
+  const handleToolClick = useCallback((toolName) => applyTool(toolName), [applyTool]);
 
   useEffect(() => {
     const onKeyDown = (e) => {
+      if (e.key === ' ') {
+        spaceDownRef.current = true;
+        return;
+      }
       if (e.key === 'Escape') {
         setDrawing(null);
         setAngleStep(0);
+        return;
+      }
+      if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        fitView();
         return;
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -278,37 +337,20 @@ export default function ImageViewer({ imageUrl, pixelSpacing, pixelsPerMm }) {
         applyTool(toolName);
       }
     };
+    const onKeyUp = (e) => {
+      if (e.key === ' ') spaceDownRef.current = false;
+    };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [applyTool]);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, [applyTool, fitView]);
 
   const handlePixelsPerMmChange = (e) => {
     setPixelsPerMmInput(e.target.value);
   };
-
-  const isPan = activeTool === 'Pan';
-  const groupDraggable = isPan && stageWidth > 0 && stageHeight > 0;
-  const dragBoundFunc = useCallback(
-    (pos) => {
-      if (!imgWidth || !imgHeight) return pos;
-      // Account for rotation: at 90°/270° visual width/height swap
-      const isRotated90 = rotation % 180 !== 0;
-      const visW = isRotated90 ? imgHeight : imgWidth;
-      const visH = isRotated90 ? imgWidth : imgHeight;
-      const halfW = (visW * groupScale) / 2;
-      const halfH = (visH * groupScale) / 2;
-      // Use min/max so bounds work when image is both smaller AND larger than stage
-      const minX = Math.min(halfW, stageWidth - halfW);
-      const maxX = Math.max(halfW, stageWidth - halfW);
-      const minY = Math.min(halfH, stageHeight - halfH);
-      const maxY = Math.max(halfH, stageHeight - halfH);
-      return {
-        x: Math.max(minX, Math.min(maxX, pos.x)),
-        y: Math.max(minY, Math.min(maxY, pos.y)),
-      };
-    },
-    [stageWidth, stageHeight, imgWidth, imgHeight, groupScale, rotation]
-  );
 
   if (error || imageStatus === 'failed') {
     return (
@@ -344,7 +386,7 @@ export default function ImageViewer({ imageUrl, pixelSpacing, pixelsPerMm }) {
             onClick={() => handleToolClick(name)}
             title={`${label} (${shortcut})`}
             className={
-              activeTool === name
+              activeTool === name && name !== 'Fit'
                 ? 'flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground'
                 : 'flex items-center gap-1.5 rounded border border-border bg-background px-3 py-1.5 text-sm hover:bg-muted'
             }
@@ -368,25 +410,22 @@ export default function ImageViewer({ imageUrl, pixelSpacing, pixelsPerMm }) {
             width={stageWidth}
             height={stageHeight}
             onWheel={handleStageWheel}
-            onMouseDown={handleStageMouseDown}
-            onMouseMove={handleStageMouseMove}
-            onMouseUp={handleStageMouseUp}
-            onMouseLeave={handleStageMouseUp}
+            onMouseDown={handlePointerDown}
+            onMouseMove={handlePointerMove}
+            onMouseUp={handlePointerUp}
+            onMouseLeave={handlePointerUp}
           >
             <Layer>
               <Group
                 ref={groupRef}
-                x={groupPos.x}
-                y={groupPos.y}
-                scaleX={groupScale}
-                scaleY={groupScale}
-                rotation={rotation}
+                x={view.pos.x}
+                y={view.pos.y}
+                scaleX={view.scale}
+                scaleY={view.scale}
+                rotation={view.rotationDeg}
                 offsetX={imgWidth / 2}
                 offsetY={imgHeight / 2}
-                draggable={groupDraggable}
-                onDragMove={(e) => setGroupPos({ x: e.target.x(), y: e.target.y() })}
-                onDragEnd={(e) => setGroupPos({ x: e.target.x(), y: e.target.y() })}
-                dragBoundFunc={dragBoundFunc}
+                draggable={false}
                 clipFunc={cropRect ? (ctx) => { ctx.beginPath(); ctx.rect(cropRect.x, cropRect.y, cropRect.width, cropRect.height); } : undefined}
               >
                 {image && (
@@ -395,7 +434,7 @@ export default function ImageViewer({ imageUrl, pixelSpacing, pixelsPerMm }) {
                     image={image}
                     width={imgWidth}
                     height={imgHeight}
-                    listening={activeTool === 'Pan'}
+                    listening={false}
                   />
                 )}
                 {annotations.map((ann, i) => {
