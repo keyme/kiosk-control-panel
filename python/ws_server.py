@@ -33,7 +33,7 @@ _wellness_client_id = None
 _wellness_client_lock = threading.Lock()
 
 # S3: bucket and key for device public cert (uploaded via IPC to UPLOADER). keyme/wss_certs/{KIOSK_NAME}/{filename}
-_DEVICE_CERTS_BUCKET = "keyme"
+_DEVICE_CERTS_BUCKET = "keyme-calibration"
 
 
 def _ensure_device_certs(cert_dir, kiosk_name, fqdn):
