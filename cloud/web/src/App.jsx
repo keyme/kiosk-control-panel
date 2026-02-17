@@ -263,7 +263,7 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
       )}
       {!connected && deviceHost.trim() && !connectionRejected && !disconnectedDueToInactivity && (
         <div className="shrink-0 bg-amber-500/15 px-4 py-2 text-center text-sm text-amber-800 dark:text-amber-200" role="alert">
-          No connection to the kiosk, check your VPN; only limited functionality would be available.
+          No connection to the kiosk, only limited functionality would be available.
         </div>
       )}
 
@@ -452,6 +452,12 @@ function AppContent() {
     };
   }, [socket]);
 
+  // When navigating to Status page (or when connection establishes on Status), pull updates immediately once.
+  useEffect(() => {
+    if (!socket || !connected || !isStatusPage(location.pathname)) return;
+    requestStatusSnapshot(socket, setComputerStats, setConnectionCount, setWtfWhyDegraded, setStatusSections);
+  }, [location.pathname, connected, socket]);
+
   // Inactivity timeout: disconnect after 15 min with no user activity (only when connected).
   useEffect(() => {
     if (!socket || !connected) {
@@ -493,9 +499,9 @@ function AppContent() {
           terminals={terminals}
         >
           <Routes>
-            <Route path="/" element={<Status computerStats={computerStats} wtfWhyDegraded={wtfWhyDegraded} status={statusSections} terminals={terminals} connectionCount={connectionCount} />} />
+            <Route path="/" element={<Status connected={connected} computerStats={computerStats} wtfWhyDegraded={wtfWhyDegraded} status={statusSections} terminals={terminals} connectionCount={connectionCount} />} />
             <Route path=":kiosk" element={<KioskSync />}>
-              <Route index element={<Status computerStats={computerStats} wtfWhyDegraded={wtfWhyDegraded} status={statusSections} terminals={terminals} connectionCount={connectionCount} />} />
+              <Route index element={<Status connected={connected} computerStats={computerStats} wtfWhyDegraded={wtfWhyDegraded} status={statusSections} terminals={terminals} connectionCount={connectionCount} />} />
               <Route path="calibration" element={<Calibration />}>
                 <Route index element={<CalibrationIndexRedirect />} />
                 <Route path="report" element={<CalibrationReport />} />

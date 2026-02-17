@@ -441,11 +441,12 @@ function formatCpuMem(v) {
   return v != null && typeof v === 'number' ? `${v}%` : '—';
 }
 
-export default function Status({ computerStats, wtfWhyDegraded, status: statusProp, terminals, connectionCount }) {
+export default function Status({ connected, computerStats, wtfWhyDegraded, status: statusProp, terminals, connectionCount }) {
   const s = computerStats ?? PC_STATS_DUMMY;
   const k = KIOSK_STATS_DUMMY;
   const w = wtfWhyDegraded;
   const status = statusProp ?? STATUS_DUMMY;
+  const isDummyData = !connected;
   const [processExpanded, setProcessExpanded] = useState(false);
   const [processSearch, setProcessSearch] = useState('');
 
@@ -461,6 +462,12 @@ export default function Status({ computerStats, wtfWhyDegraded, status: statusPr
   return (
     <div className="space-y-6">
       <PageTitle icon={Activity}>Status</PageTitle>
+
+      {isDummyData && (
+        <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200" role="alert">
+          <strong>No connection to the kiosk.</strong> The data below is placeholder/dummy data and does not reflect the real kiosk.
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
       <Card>
