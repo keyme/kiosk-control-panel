@@ -302,7 +302,7 @@ async def health() -> dict[str, Any]:
 
 _WS_PORT = 2026
 _WS_PATH = "/ws"
-_DEVICE_CERTS_BUCKET = "keyme-kiosk-iot-keys"
+_DEVICE_CERTS_BUCKET = "keyme"
 
 # In-memory cache: fqdn -> PEM string (device public cert from S3).
 _device_cert_cache: dict[str, str] = {}
@@ -310,7 +310,7 @@ _device_cert_cache: dict[str, str] = {}
 
 def _get_device_cert_from_s3(host_fqdn: str, kiosk_name_upper: str) -> Optional[str]:
     """Fetch device public cert from S3. Returns PEM string or None on 404/error."""
-    key = f"{kiosk_name_upper}/{host_fqdn}.crt"
+    key = f"wss_certs/{kiosk_name_upper}/{host_fqdn}.crt"
     try:
         s3 = boto3.client("s3")
         resp = s3.get_object(Bucket=_DEVICE_CERTS_BUCKET, Key=key)

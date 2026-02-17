@@ -32,8 +32,8 @@ _clients_lock = threading.Lock()
 _wellness_client_id = None
 _wellness_client_lock = threading.Lock()
 
-# S3: bucket and key prefix for device public cert (uploaded via IPC to UPLOADER).
-_DEVICE_CERTS_BUCKET = "keyme-kiosk-iot-keys"
+# S3: bucket and key for device public cert (uploaded via IPC to UPLOADER). keyme/wss_certs/{KIOSK_NAME}/{filename}
+_DEVICE_CERTS_BUCKET = "keyme"
 
 
 def _ensure_device_certs(cert_dir, kiosk_name, fqdn):
@@ -65,7 +65,7 @@ def _ensure_device_certs(cert_dir, kiosk_name, fqdn):
 
 def _upload_device_cert_to_s3(local_cert_path, kiosk_name, fqdn):
     """Send IPC to UPLOADER to upload the public cert to S3 (async)."""
-    s3key = f"{kiosk_name.upper()}/{fqdn}.crt"
+    s3key = f"wss_certs/{kiosk_name.upper()}/{fqdn}.crt"
     keyme.ipc.send(
         "UPLOADER",
         "UPLOAD_FILE",
