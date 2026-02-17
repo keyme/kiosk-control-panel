@@ -73,7 +73,7 @@ The app logs HTTP and WebSocket access itself (tokens are never logged). Use `--
 - **`API_ENV`** — Environment: `stg` or `prod`. Set when running in Docker or when you need the app to target staging vs production APIs.
 - **`CONTROL_PANEL_STATIC_ROOT`** — Path to the React build (default: `cloud/web/dist` next to `main.py`). Set this if you deploy the static files elsewhere.
 
-**Device certs (S3):** The cloud proxy connects to devices over **wss://** and verifies TLS using the device's public cert. Device certs are stored in S3 at **`s3://keyme/wss_certs/{KIOSK_NAME}/{filename}`** (e.g. `s3://keyme/wss_certs/NS1044/ns1044.keymekiosk.com.crt`). The device uploads its cert via IPC to UPLOADER; the cloud fetches from S3, caches in memory, and on connection failure refetches and retries once (e.g. after device replacement). UPLOADER must have PutObject permission for the bucket; the cloud needs GetObject.
+**Device certs (S3):** The cloud proxy connects to devices over **wss://** and verifies TLS using the device's public cert. Device certs are stored in S3 under the bucket and prefix defined in **`control_panel/shared.py`** (e.g. `s3://{bucket}/{WSS_CERTS_S3_PREFIX}/{KIOSK_NAME}/{filename}.crt`). The device uploads its cert via IPC to UPLOADER; the cloud fetches from S3, caches in memory, and on connection failure refetches and retries once (e.g. after device replacement). UPLOADER must have PutObject permission for the bucket; the cloud needs GetObject. WSS API key and related constants are also in `control_panel/shared.py` (single source of truth for device and cloud).
 
 **Docker (build from control_panel dir):**
 

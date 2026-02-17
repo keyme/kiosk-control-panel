@@ -4,9 +4,11 @@
 import asyncio
 import json
 import os
+import random
 import ssl
 import subprocess
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
@@ -14,15 +16,27 @@ import websockets
 
 import pylib as keyme
 
+try:
+    import boto3
+    from botocore.exceptions import ClientError
+except ImportError:
+    boto3 = None  # no boto on device in some envs
+    ClientError = Exception
+
 from control_panel.python.shared import PORTS
 from control_panel.python import ws_protocol
+from control_panel.shared import (
+    DEVICE_CERTS_BUCKET,
+    WSS_SECRET_ID,
+    WSS_API_KEY_FIELD,
+    WSS_CERTS_S3_PREFIX,
+    WS_PATH,
+)
 
 # Set after server module is loaded.
 _server_handlers = None
 _async_loop = None
 _executor = None
-
-WS_PATH = '/ws'
 
 _CONNECTION_COUNT_STATE = 'state/control_panel/connection_count.json'
 
@@ -32,8 +46,51 @@ _clients_lock = threading.Lock()
 _wellness_client_id = None
 _wellness_client_lock = threading.Lock()
 
-# S3: bucket and key for device public cert (uploaded via IPC to UPLOADER). keyme/wss_certs/{KIOSK_NAME}/{filename}
-_DEVICE_CERTS_BUCKET = "keyme-calibration"
+# WSS API key (device-only): keyring service/username for caching the secret.
+_WSS_KEYRING_SERVICE = "CONTROL_PANEL_WSS"
+_WSS_KEYRING_USERNAME = "kiosk"
+_wss_api_key = None
+
+
+def _load_wss_api_key():
+    """Load WSS API key from keyring or AWS Secrets Manager; cache in keyring and _wss_api_key."""
+    global _wss_api_key
+    api_key = keyme.keyring_utils.safe_get_password(_WSS_KEYRING_SERVICE, _WSS_KEYRING_USERNAME)
+    if api_key:
+        keyme.log.info("WSS API key found in keyring")
+        _wss_api_key = api_key
+        return
+    keyme.log.warning("WSS API key not in keyring, fetching from AWS Secrets Manager")
+    if boto3 is None:
+        keyme.log.error("boto3 not available, cannot fetch WSS API key")
+        return
+    time.sleep(random.uniform(0, 1.5))
+    max_retries = 5
+    base_delay = 2
+    client = boto3.client("secretsmanager", region_name="us-east-1")
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = client.get_secret_value(SecretId=WSS_SECRET_ID)
+            secret_str = (response.get("SecretString") or "").strip()
+            if not secret_str:
+                raise ValueError("SecretString is empty in AWS secret")
+            try:
+                secret = json.loads(secret_str)
+                api_key = secret.get(WSS_API_KEY_FIELD) or secret.get("api_key")
+            except (ValueError, TypeError):
+                api_key = secret_str
+            if not api_key or not isinstance(api_key, str):
+                raise ValueError(f"WSS secret has no {WSS_API_KEY_FIELD} or api_key")
+            keyme.keyring_utils.safe_set_password(_WSS_KEYRING_SERVICE, _WSS_KEYRING_USERNAME, api_key)
+            _wss_api_key = api_key
+            return
+        except ClientError as e:
+            keyme.log.warning(f"WSS API key attempt {attempt} failed with ClientError: {e}")
+        except Exception as e:
+            keyme.log.warning(f"WSS API key attempt {attempt} failed: {e}")
+        if attempt < max_retries:
+            time.sleep(base_delay * (2 ** (attempt - 1)) + random.uniform(0, 2))
+    keyme.log.error("Failed to retrieve WSS API key after multiple attempts")
 
 
 def _ensure_device_certs(cert_dir, kiosk_name, fqdn):
@@ -65,18 +122,18 @@ def _ensure_device_certs(cert_dir, kiosk_name, fqdn):
 
 def _upload_device_cert_to_s3(local_cert_path, kiosk_name, fqdn):
     """Send IPC to UPLOADER to upload the public cert to S3 (async)."""
-    s3key = f"wss_certs/{kiosk_name.upper()}/{fqdn}.crt"
+    s3key = f"{WSS_CERTS_S3_PREFIX}/{kiosk_name.upper()}/{fqdn}.crt"
     keyme.ipc.send(
         "UPLOADER",
         "UPLOAD_FILE",
         {
-            "bucket": _DEVICE_CERTS_BUCKET,
+            "bucket": DEVICE_CERTS_BUCKET,
             "file_name": local_cert_path,
             "s3key": s3key,
             "remove": False,
         },
     )
-    keyme.log.info(f"Control panel device cert upload requested s3://{_DEVICE_CERTS_BUCKET}/{s3key}")
+    keyme.log.info(f"Control panel device cert upload requested s3://{DEVICE_CERTS_BUCKET}/{s3key}")
 
 
 def _write_connection_count(count):
@@ -198,6 +255,14 @@ async def _handler(ws, path):
     if path != WS_PATH:
         await ws.close()
         return
+    if _wss_api_key is None:
+        await ws.close(code=4401, reason="auth not ready")
+        return
+    auth_header = (ws.request.headers.get("Authorization") or "").strip()
+    expected = "Bearer " + _wss_api_key
+    if auth_header != expected:
+        await ws.close(code=4401, reason="missing or invalid API key")
+        return
     client_id = str(uuid.uuid4())
     kiosk_name = getattr(keyme.config, 'KIOSK_NAME', None) or ''
     hello_msg = json.dumps({
@@ -277,6 +342,7 @@ def run():
     ctx.load_cert_chain(certfile=cert_path, keyfile=key_path)
     _write_connection_count(0)
     keyme.log.info(f"Control panel WebSocket server starting host={host} port={port} path={WS_PATH} (WSS)")
+    threading.Thread(target=_load_wss_api_key, daemon=True).start()
     _executor = ThreadPoolExecutor(max_workers=4)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

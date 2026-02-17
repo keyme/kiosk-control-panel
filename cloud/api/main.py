@@ -4,6 +4,7 @@ Cloud API: FastAPI app, REST router, static JS serving. WebSocket proxy to devic
 Run with static root and port via env (see README). Entrypoint for uvicorn is control_panel.cloud.main:app.
 """
 import asyncio
+import json
 import logging
 import os
 import re
@@ -37,6 +38,14 @@ from starlette.staticfiles import StaticFiles
 
 from control_panel.cloud.api import create_auth_router, create_router
 from control_panel.cloud.api.auth import ANF_BASE_URL, API_ENV, validate_token
+from control_panel.shared import (
+    DEVICE_CERTS_BUCKET,
+    WSS_SECRET_ID,
+    WSS_API_KEY_FIELD,
+    WSS_CERTS_S3_PREFIX,
+    WS_PORT,
+    WS_PATH,
+)
 
 log = logging.getLogger(__name__)
 
@@ -300,25 +309,51 @@ async def health() -> dict[str, Any]:
         "warnings": warnings,
     }
 
-_WS_PORT = 2026
-_WS_PATH = "/ws"
-_DEVICE_CERTS_BUCKET = "keyme-calibration"
-
 # In-memory cache: fqdn -> PEM string (device public cert from S3).
 _device_cert_cache: dict[str, str] = {}
+
+# In-memory cache for WSS API key (cloud-to-device auth). Fetched from AWS Secrets Manager.
+_wss_api_key: Optional[str] = None
+
+
+def _get_wss_api_key() -> Optional[str]:
+    """Return WSS API key from in-memory cache or AWS Secrets Manager. On error returns None."""
+    global _wss_api_key
+    if _wss_api_key is not None:
+        return _wss_api_key
+    try:
+        client = boto3.client("secretsmanager", region_name="us-east-1")
+        response = client.get_secret_value(SecretId=WSS_SECRET_ID)
+        secret_str = (response.get("SecretString") or "").strip()
+        if not secret_str:
+            log.warning("WSS secret SecretString is empty")
+            return None
+        try:
+            secret = json.loads(secret_str)
+            key = secret.get(WSS_API_KEY_FIELD) or secret.get("api_key")
+        except (ValueError, TypeError):
+            key = secret_str
+        if not key or not isinstance(key, str):
+            log.warning(f"WSS secret has no usable API key (plain string or JSON with {WSS_API_KEY_FIELD}/api_key)")
+            return None
+        _wss_api_key = key
+        return _wss_api_key
+    except Exception as e:
+        log.warning(f"WSS API key fetch failed: {e}")
+        return None
 
 
 def _get_device_cert_from_s3(host_fqdn: str, kiosk_name_upper: str) -> Optional[str]:
     """Fetch device public cert from S3. Returns PEM string or None on 404/error."""
-    key = f"wss_certs/{kiosk_name_upper}/{host_fqdn}.crt"
-    log.info(f"Downloading WSS cert from S3 bucket={_DEVICE_CERTS_BUCKET} key={key}")
+    key = f"{WSS_CERTS_S3_PREFIX}/{kiosk_name_upper}/{host_fqdn}.crt"
+    log.info(f"Downloading WSS cert from S3 bucket={DEVICE_CERTS_BUCKET} key={key}")
     try:
         s3 = boto3.client("s3")
-        resp = s3.get_object(Bucket=_DEVICE_CERTS_BUCKET, Key=key)
-        log.info(f"WSS cert downloaded from S3 bucket={_DEVICE_CERTS_BUCKET} key={key}")
+        resp = s3.get_object(Bucket=DEVICE_CERTS_BUCKET, Key=key)
+        log.info(f"WSS cert downloaded from S3 bucket={DEVICE_CERTS_BUCKET} key={key}")
         return resp["Body"].read().decode()
     except Exception as e:
-        log.warning(f"Device cert S3 fetch failed bucket={_DEVICE_CERTS_BUCKET} key={key} error={e}")
+        log.warning(f"Device cert S3 fetch failed bucket={DEVICE_CERTS_BUCKET} key={key} error={e}")
         return None
 
 
@@ -331,7 +366,7 @@ def _device_ws_backend(device_host: str) -> Tuple[str, str, str, Optional[ssl.SS
     with_domain = (
         f"{host_only}.keymekiosk.com" if "." not in host_only else host_only
     )
-    url = f"wss://{with_domain}:{_WS_PORT}{_WS_PATH}"
+    url = f"wss://{with_domain}:{WS_PORT}{WS_PATH}"
     kiosk_name_upper = host_only.upper()
     pem = _device_cert_cache.get(with_domain)
     if pem is None:
@@ -377,7 +412,12 @@ async def ws_proxy(websocket: WebSocket):
     await _inc_active_ws_connections()
 
     async def _run_proxy(backend_url: str, ssl_ctx: Optional[ssl.SSLContext], used_cert: bool) -> None:
+        wss_key = _get_wss_api_key()
+        if wss_key is None:
+            await websocket.close(code=4500, reason="server config")
+            return
         connect_kwargs: dict = {"ssl": ssl_ctx} if ssl_ctx is not None else {}
+        connect_kwargs["additional_headers"] = {"Authorization": "Bearer " + wss_key}
         async with websockets.connect(backend_url, **connect_kwargs) as device_ws:
             if used_cert:
                 log.info(
@@ -444,7 +484,7 @@ async def ws_proxy(websocket: WebSocket):
         raise first_error
     except TimeoutError as e:
         log.error(
-            f"ws proxy connect timed out: url={backend_url} port={_WS_PORT} error={e}"
+            f"ws proxy connect timed out: url={backend_url} port={WS_PORT} error={e}"
         )
         try:
             await websocket.close(code=1011, reason=str(e)[:123])
@@ -452,7 +492,7 @@ async def ws_proxy(websocket: WebSocket):
             pass
     except Exception as e:
         log.exception(
-            f"ws proxy connect to device failed device={device} url={backend_url} port={_WS_PORT}"
+            f"ws proxy connect to device failed device={device} url={backend_url} port={WS_PORT}"
         )
         try:
             await websocket.close(code=1011, reason=str(e)[:123])
