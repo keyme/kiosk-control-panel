@@ -87,7 +87,7 @@ def _mock_aws_session():
         yield
 
 
-_FAKE_USER = {"granted": True, "permission": "admin_access"}
+_FAKE_USER = {"granted": True, "permission": "check_kiosk_status"}
 
 
 @pytest.fixture(scope="session")

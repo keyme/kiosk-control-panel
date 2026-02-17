@@ -3,7 +3,7 @@
 Token validation flow:
 1. Extract ``KEYME-TOKEN`` header from the incoming request.
 2. Check the in-memory TTL cache for a previous successful validation.
-3. On cache miss, call ``GET {ANF_BASE_URL}/api/permission/check?permission_slug=admin_access``
+3. On cache miss, call ``GET {ANF_BASE_URL}/api/permission/check?permission_slug=check_kiosk_status``
    with the token forwarded in the ``KEYME-TOKEN`` header.
 4. If the response is non-200 **or** ``granted`` is not ``true``, reject with HTTP 401.
 5. On success, cache the result for 300 s and return it.
@@ -18,6 +18,10 @@ from fastapi import Depends, HTTPException
 from fastapi.security import APIKeyHeader
 
 log = logging.getLogger(__name__)
+
+# Permission required to access the control panel cloud API.
+REQUIRED_PERMISSION_SLUG = "check_kiosk_status"
+PERMISSIONS_ADMIN_URL = "https://admin.key.me/permissions"
 
 # ---------------------------------------------------------------------------
 # Environment / base URL
@@ -75,7 +79,7 @@ def validate_token(token: str | None) -> dict:
     try:
         resp = httpx.get(
             url,
-            params={"permission_slug": "admin_access"},
+            params={"permission_slug": REQUIRED_PERMISSION_SLUG},
             headers={"KEYME-TOKEN": token},
             timeout=10.0,
         )
@@ -89,8 +93,14 @@ def validate_token(token: str | None) -> dict:
 
     data = resp.json()
     if not data.get("granted"):
-        log.info("Permission not granted: %s", data)
-        raise HTTPException(status_code=401, detail="Insufficient permissions")
+        log.info("Permission not granted: required=%s response=%s", REQUIRED_PERMISSION_SLUG, data)
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                f'Access denied. Permission "{REQUIRED_PERMISSION_SLUG}" must be granted in '
+                f"{PERMISSIONS_ADMIN_URL}"
+            ),
+        )
 
     # Cache successful validation ---------------------------------------------
     _token_cache[token] = data

@@ -27,7 +27,7 @@ def _restore_override(app, get_current_user):
     """Re-install the fake override so other session-scoped tests still pass."""
     app.dependency_overrides[get_current_user] = lambda: {
         "granted": True,
-        "permission": "admin_access",
+        "permission": "check_kiosk_status",
     }
 
 
@@ -64,14 +64,14 @@ class TestInvalidToken:
     def test_granted_false_returns_401(self, mock_get):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"granted": False, "permission": "admin_access"}
+        mock_resp.json.return_value = {"granted": False, "permission": "check_kiosk_status"}
         mock_get.return_value = mock_resp
 
         client, app, dep, _cache = _make_raw_client()
         try:
             resp = client.get("/api/ping", headers={"KEYME-TOKEN": "no-perms-token"})
             assert resp.status_code == 401
-            assert "Insufficient permissions" in resp.json()["detail"]
+            assert "Access denied" in resp.json()["detail"]
         finally:
             _restore_override(app, dep)
 
@@ -81,7 +81,7 @@ class TestValidToken:
     def test_granted_true_allows_request(self, mock_get):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"granted": True, "permission": "admin_access"}
+        mock_resp.json.return_value = {"granted": True, "permission": "check_kiosk_status"}
         mock_get.return_value = mock_resp
 
         client, app, dep, _cache = _make_raw_client()
@@ -98,7 +98,7 @@ class TestTokenCaching:
     def test_second_call_uses_cache(self, mock_get):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"granted": True, "permission": "admin_access"}
+        mock_resp.json.return_value = {"granted": True, "permission": "check_kiosk_status"}
         mock_get.return_value = mock_resp
 
         client, app, dep, _cache = _make_raw_client()

@@ -20,6 +20,8 @@ export default function LoginPage() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
+  const reason = new URLSearchParams(location.search || '').get('reason');
+
   // Where to go after successful login (default: /)
   const from = location.state?.from?.pathname || '/';
 
@@ -49,6 +51,15 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit}>
           <CardContent className="flex flex-col gap-4">
+            {reason === 'unauthorized' && !error && (
+              <div
+                className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                role="alert"
+              >
+                Your session expired or you don’t have access. If needed, request the permission in
+                https://admin.key.me/permissions.
+              </div>
+            )}
             {error && (
               <div
                 className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"

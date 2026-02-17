@@ -41,7 +41,7 @@ export async function apiFetch(path, options = {}) {
   if (res.status === 401) {
     clearToken();
     // Navigate to login; use window.location so it works outside React Router.
-    window.location.href = '/login';
+    window.location.href = '/login?reason=unauthorized';
     throw new Error('Unauthorized');
   }
 
