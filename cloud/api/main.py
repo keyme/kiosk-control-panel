@@ -7,7 +7,8 @@ import asyncio
 import logging
 import os
 import re
-from typing import Any, Optional
+import ssl
+from typing import Any, Optional, Tuple
 
 try:
     import resource  # POSIX-only (for ulimit)
@@ -300,17 +301,23 @@ async def health() -> dict[str, Any]:
 _WS_PORT = 2026
 _WS_PATH = "/ws"
 
+# Unverified SSL context for cloud→device wss (self-signed device certs).
+_DEVICE_WSS_SSL_CTX = ssl.create_default_context()
+_DEVICE_WSS_SSL_CTX.check_hostname = False
+_DEVICE_WSS_SSL_CTX.verify_mode = ssl.CERT_NONE
 
-def _device_ws_url(device_host: str) -> str:
-    """Resolve device host to device WebSocket URL (same logic as frontend)."""
+
+def _device_ws_backend(device_host: str) -> Tuple[str, ssl.SSLContext]:
+    """Resolve device host to (wss URL, SSL context for self-signed certs)."""
     host = (device_host or "").strip()
     if not host:
-        return ""
+        return "", _DEVICE_WSS_SSL_CTX
     host_only = re.sub(r"^(https?://)?([^/]+).*", r"\2", host, flags=re.IGNORECASE)
     with_domain = (
         f"{host_only}.keymekiosk.com" if "." not in host_only else host_only
     )
-    return f"ws://{with_domain}:{_WS_PORT}{_WS_PATH}"
+    url = f"wss://{with_domain}:{_WS_PORT}{_WS_PATH}"
+    return url, _DEVICE_WSS_SSL_CTX
 
 
 @app.websocket("/ws")
@@ -333,14 +340,14 @@ async def ws_proxy(websocket: WebSocket):
     if not device:
         await websocket.close(code=4400, reason="missing device")
         return
-    backend_url = _device_ws_url(device)
+    backend_url, ssl_ctx = _device_ws_backend(device)
     if not backend_url:
         await websocket.close(code=4400, reason="invalid device")
         return
     await websocket.accept()
     await _inc_active_ws_connections()
     try:
-        async with websockets.connect(backend_url) as device_ws:
+        async with websockets.connect(backend_url, ssl=ssl_ctx) as device_ws:
 
             async def client_to_device():
                 try:

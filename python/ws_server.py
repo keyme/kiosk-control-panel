@@ -3,6 +3,8 @@
 
 import asyncio
 import json
+import os
+import ssl
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -217,13 +219,19 @@ def run():
     port = PORTS['python']
     host = '0.0.0.0'
     _write_connection_count(0)
-    keyme.log.info("Control panel WebSocket server starting host={} port={} path={}".format(host, port, WS_PATH))
+    _base_dir = os.path.dirname(os.path.abspath(__file__))
+    _tmp_crt_dir = os.path.join(_base_dir, "tmp_crt")
+    _cert_file = os.path.join(_tmp_crt_dir, "ns3512.keymekiosk.com.crt")
+    _key_file = os.path.join(_tmp_crt_dir, "ns3512.keymekiosk.com.key")
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(certfile=_cert_file, keyfile=_key_file)
+    keyme.log.info("Control panel WebSocket server starting host={} port={} path={} (WSS)".format(host, port, WS_PATH))
     _executor = ThreadPoolExecutor(max_workers=4)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     _async_loop = loop
     try:
-        start_server = websockets.serve(_handler, host, port)
+        start_server = websockets.serve(_handler, host, port, ssl=ctx)
         loop.run_until_complete(start_server)
         loop.run_forever()
     finally:
