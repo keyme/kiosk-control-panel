@@ -187,6 +187,11 @@ def _dispatch_request(client_id, request_id, event, data, connection_count):
             send_progress=lambda p: _schedule_send(client_id, {'event': ws_protocol.PUSH_WELLNESS_PROGRESS, 'data': p})
         ),
         'get_data_usage': lambda: handlers.get_data_usage(),
+        'fleet_restart_process': lambda: handlers.fleet_restart_process(data or {}),
+        'fleet_reset_device': lambda: handlers.fleet_reset_device(data or {}),
+        'fleet_switch_process_list': lambda: handlers.fleet_switch_process_list(data or {}),
+        'fleet_reboot_kiosk': lambda: handlers.fleet_reboot_kiosk(data or {}),
+        'fleet_clear_cutter_stuck': lambda: handlers.fleet_clear_cutter_stuck(data or {}),
     }
     if event not in event_handlers:
         return {'id': request_id, 'success': False, 'errors': ['Unknown event']}

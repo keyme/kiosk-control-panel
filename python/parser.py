@@ -13,6 +13,9 @@ class ControlPanelParser(keyme.ipc.Parser):
         super().__init__(options_to_subscribe_to=options_to_subscribe_to)
 
     def handle_async(self, request):
+        if request.get('action') == 'RESET_RESULT':
+            from control_panel.python import server
+            server.deliver_reset_result(request)
         super().handle_async(request)
         emit_async_request(request)
 

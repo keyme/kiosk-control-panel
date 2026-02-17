@@ -823,3 +823,13 @@ def get_data_usage():
 
     return WebsocketSuccess(result).to_json()
 
+
+# Fleet commands (state-changing) live in fleet_commands.py; re-export so ws_server and parser keep working.
+from control_panel.python import fleet_commands
+
+deliver_reset_result = fleet_commands.deliver_reset_result
+fleet_restart_process = fleet_commands.fleet_restart_process
+fleet_reset_device = fleet_commands.fleet_reset_device
+fleet_switch_process_list = fleet_commands.fleet_switch_process_list
+fleet_reboot_kiosk = fleet_commands.fleet_reboot_kiosk
+fleet_clear_cutter_stuck = fleet_commands.fleet_clear_cutter_stuck

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, NavLink, useNavigate } from 'react-router-dom';
-import { Activity, Camera, Flag, Heart, MapPin, Wrench, ChevronDown, ChevronRight, FileText, Video, Search, BarChart3 } from 'lucide-react';
+import { Activity, Camera, Flag, Heart, MapPin, Radio, Wrench, ChevronDown, ChevronRight, FileText, Video, Search, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { CALIBRATION_REPORT_SECTIONS, formatSectionLabel } from '@/pages/calibrationReportSections';
 
@@ -14,6 +14,7 @@ const QUICK_OPEN_PAGES = [
   { path: '/calibration/tracing/gripper-cam', label: 'Gripper Cam Calibration' },
   { path: '/wellness', label: 'Wellness Check' },
   { path: '/data-usage', label: 'Data Usage' },
+  { path: '/fleet', label: 'Fleet Commands' },
 ];
 
 function StoreInfo({ store }) {
@@ -346,6 +347,10 @@ export function AppSidebar({ panelInfo }) {
         <NavLink to={prefix ? `${prefix}/wellness` : '/wellness'} className={linkClass}>
           <Heart className="size-4 shrink-0" aria-hidden />
           Wellness Check
+        </NavLink>
+        <NavLink to={prefix ? `${prefix}/fleet` : '/fleet'} className={linkClass}>
+          <Radio className="size-4 shrink-0" aria-hidden />
+          Fleet Commands
         </NavLink>
       </div>
       <div className="shrink-0 border-t border-sidebar-border">

@@ -23,6 +23,7 @@ import CameraImagesPage from '@/pages/CameraImagesPage';
 import ConfigPage from '@/pages/ConfigPage';
 import WellnessCheck from '@/pages/WellnessCheck';
 import DataUsage from '@/pages/DataUsage';
+import FleetCommands from '@/pages/FleetCommands';
 
 const TestcutsImagesPage = lazy(() => import('@/pages/TestcutsImagesPage'));
 const BittingCalibrationImagesPage = lazy(() => import('@/pages/BittingCalibrationImagesPage'));
@@ -531,6 +532,7 @@ function AppContent() {
               <Route path="config" element={<ConfigPage socket={socket} />} />
               <Route path="data-usage" element={<DataUsage socket={socket} />} />
               <Route path="wellness" element={<WellnessCheck socket={socket} />} />
+              <Route path="fleet" element={<FleetCommands connected={connected} socket={socket} />} />
             </Route>
           </Routes>
         </Layout>
