@@ -7,7 +7,10 @@ import asyncio
 import logging
 import os
 import re
-from typing import Any, Optional
+import ssl
+from typing import Any, Optional, Tuple
+
+import boto3
 
 try:
     import resource  # POSIX-only (for ulimit)
@@ -299,18 +302,49 @@ async def health() -> dict[str, Any]:
 
 _WS_PORT = 2026
 _WS_PATH = "/ws"
+_DEVICE_CERTS_BUCKET = "keyme-kiosk-iot-keys"
+
+# In-memory cache: fqdn -> PEM string (device public cert from S3).
+_device_cert_cache: dict[str, str] = {}
 
 
-def _device_ws_url(device_host: str) -> str:
-    """Resolve device host to device WebSocket URL (same logic as frontend)."""
+def _get_device_cert_from_s3(host_fqdn: str, kiosk_name_upper: str) -> Optional[str]:
+    """Fetch device public cert from S3. Returns PEM string or None on 404/error."""
+    key = f"{kiosk_name_upper}/{host_fqdn}.crt"
+    try:
+        s3 = boto3.client("s3")
+        resp = s3.get_object(Bucket=_DEVICE_CERTS_BUCKET, Key=key)
+        return resp["Body"].read().decode()
+    except Exception as e:
+        log.warning(f"Device cert S3 fetch failed bucket={_DEVICE_CERTS_BUCKET} key={key} error={e}")
+        return None
+
+
+def _device_ws_backend(device_host: str) -> Tuple[str, str, str, Optional[ssl.SSLContext], bool]:
+    """Resolve device to (wss_url, host_fqdn, kiosk_name_upper, ssl_ctx, used_cert). used_cert True if cert from S3/cache."""
     host = (device_host or "").strip()
     if not host:
-        return ""
+        return "", "", "", None, False
     host_only = re.sub(r"^(https?://)?([^/]+).*", r"\2", host, flags=re.IGNORECASE)
     with_domain = (
         f"{host_only}.keymekiosk.com" if "." not in host_only else host_only
     )
-    return f"ws://{with_domain}:{_WS_PORT}{_WS_PATH}"
+    url = f"wss://{with_domain}:{_WS_PORT}{_WS_PATH}"
+    kiosk_name_upper = host_only.upper()
+    pem = _device_cert_cache.get(with_domain)
+    if pem is None:
+        pem = _get_device_cert_from_s3(with_domain, kiosk_name_upper)
+        if pem is not None:
+            _device_cert_cache[with_domain] = pem
+    if pem is not None:
+        ctx = ssl.create_default_context()
+        ctx.load_verify_locations(cadata=pem)
+        return url, with_domain, kiosk_name_upper, ctx, True
+    log.warning(f"No device cert for {with_domain}, using unverified TLS")
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return url, with_domain, kiosk_name_upper, ctx, False
 
 
 @app.websocket("/ws")
@@ -333,14 +367,22 @@ async def ws_proxy(websocket: WebSocket):
     if not device:
         await websocket.close(code=4400, reason="missing device")
         return
-    backend_url = _device_ws_url(device)
+    backend_url, host_fqdn, kiosk_name_upper, ssl_ctx, used_cert = _device_ws_backend(device)
     if not backend_url:
         await websocket.close(code=4400, reason="invalid device")
         return
     await websocket.accept()
     await _inc_active_ws_connections()
-    try:
-        async with websockets.connect(backend_url) as device_ws:
+
+    async def _run_proxy(backend_url: str, ssl_ctx: Optional[ssl.SSLContext], used_cert: bool) -> None:
+        connect_kwargs: dict = {"ssl": ssl_ctx} if ssl_ctx is not None else {}
+        async with websockets.connect(backend_url, **connect_kwargs) as device_ws:
+            if used_cert:
+                log.info(
+                    f"ws proxy connected to device device={device} url={backend_url} TLS verification successful"
+                )
+            else:
+                log.info(f"ws proxy connected to device device={device} url={backend_url}")
 
             async def client_to_device():
                 try:
@@ -350,14 +392,14 @@ async def ws_proxy(websocket: WebSocket):
                 except WebSocketDisconnect:
                     pass
                 except Exception as e:
-                    log.warning("ws proxy client_to_device: %s", e)
+                    log.warning(f"ws proxy client_to_device: {e}")
 
             async def device_to_client():
                 try:
                     async for message in device_ws:
                         await websocket.send_text(message)
                 except Exception as e:
-                    log.warning("ws proxy device_to_client: %s", e)
+                    log.warning(f"ws proxy device_to_client: {e}")
 
             done, pending = await asyncio.wait(
                 [asyncio.create_task(client_to_device()), asyncio.create_task(device_to_client())],
@@ -369,12 +411,38 @@ async def ws_proxy(websocket: WebSocket):
                     await t
                 except asyncio.CancelledError:
                     pass
+
+    try:
+        await _run_proxy(backend_url, ssl_ctx, used_cert)
+    except (TimeoutError, Exception) as first_error:
+        # On connection failure: invalidate cache, refetch from S3, retry once (handles device replacement).
+        _device_cert_cache.pop(host_fqdn, None)
+        refetch_pem = _get_device_cert_from_s3(host_fqdn, kiosk_name_upper)
+        if refetch_pem is not None:
+            _device_cert_cache[host_fqdn] = refetch_pem
+            refetch_ctx = ssl.create_default_context()
+            refetch_ctx.load_verify_locations(cadata=refetch_pem)
+            log.info(f"ws proxy refetched device cert from S3, retrying device={device}")
+            try:
+                await _run_proxy(backend_url, refetch_ctx, True)
+            except Exception as retry_error:
+                log.exception(
+                    f"ws proxy connect to device failed after retry device={device} url={backend_url}"
+                )
+                try:
+                    await websocket.close(code=1011, reason=str(retry_error)[:123])
+                except Exception:
+                    pass
+            else:
+                try:
+                    await websocket.close()
+                except Exception:
+                    pass
+            return
+        raise first_error
     except TimeoutError as e:
         log.error(
-            "ws proxy connect timed out: url=%s port=%s error=%s",
-            backend_url,
-            _WS_PORT,
-            e,
+            f"ws proxy connect timed out: url={backend_url} port={_WS_PORT} error={e}"
         )
         try:
             await websocket.close(code=1011, reason=str(e)[:123])
@@ -382,10 +450,7 @@ async def ws_proxy(websocket: WebSocket):
             pass
     except Exception as e:
         log.exception(
-            "ws proxy connect to device failed device=%s url=%s port=%s",
-            device,
-            backend_url,
-            _WS_PORT,
+            f"ws proxy connect to device failed device={device} url={backend_url} port={_WS_PORT}"
         )
         try:
             await websocket.close(code=1011, reason=str(e)[:123])

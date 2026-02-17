@@ -44,7 +44,7 @@ flowchart LR
 
 ## Running (device)
 
-The device runs the WebSocket server. Started by the manager as `control_panel/python/main.py`. Listens on the port in `config/ports.json` (`python`, default 2026), path `/ws`. Build the web app first (see **Running (cloud)** for where the build is used).
+The device runs the WebSocket server. Started by the manager as `control_panel/python/main.py`. Listens on the port in `config/ports.json` (`python`, default 2026), path `/ws`, with **WSS (TLS)**. At startup the device ensures a self-signed cert and key exist under `keyme.config.STATE_PATH/control_panel` (creates them if missing), then sends an IPC to **UPLOADER** (background_uploader) to upload the **public cert only** to S3. Build the web app first (see **Running (cloud)** for where the build is used).
 
 **Web dev:** From repo root or `control_panel/cloud/web`:
 
@@ -72,6 +72,8 @@ The app logs HTTP and WebSocket access itself (tokens are never logged). Use `--
 - **`PORT`** — Server port (default 8080).
 - **`API_ENV`** — Environment: `stg` or `prod`. Set when running in Docker or when you need the app to target staging vs production APIs.
 - **`CONTROL_PANEL_STATIC_ROOT`** — Path to the React build (default: `cloud/web/dist` next to `main.py`). Set this if you deploy the static files elsewhere.
+
+**Device certs (S3):** The cloud proxy connects to devices over **wss://** and verifies TLS using the device's public cert. Device certs are stored in S3 bucket **`keyme-kiosk-iot-keys`** with key layout **`{KIOSK_NAME_UPPER}/{fqdn}.crt`** (e.g. `NS1044/ns1044.keymekiosk.com.crt`). The device uploads its cert via IPC to UPLOADER; the cloud fetches from S3, caches in memory, and on connection failure refetches and retries once (e.g. after device replacement). UPLOADER must have PutObject permission for that bucket; the cloud needs GetObject.
 
 **Docker (build from control_panel dir):**
 

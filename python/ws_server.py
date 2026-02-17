@@ -3,6 +3,9 @@
 
 import asyncio
 import json
+import os
+import ssl
+import subprocess
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -28,6 +31,52 @@ _connected_clients = {}
 _clients_lock = threading.Lock()
 _wellness_client_id = None
 _wellness_client_lock = threading.Lock()
+
+# S3: bucket and key prefix for device public cert (uploaded via IPC to UPLOADER).
+_DEVICE_CERTS_BUCKET = "keyme-kiosk-iot-keys"
+
+
+def _ensure_device_certs(cert_dir, kiosk_name, fqdn):
+    """Ensure {fqdn}.crt and {fqdn}.key exist in cert_dir; create with openssl if missing."""
+    os.makedirs(cert_dir, exist_ok=True)
+    cert_path = os.path.join(cert_dir, fqdn + ".crt")
+    key_path = os.path.join(cert_dir, fqdn + ".key")
+    if os.path.isfile(cert_path) and os.path.isfile(key_path):
+        return cert_path, key_path
+    keyme.log.info(f"Control panel device cert missing, creating self-signed cert for {fqdn}")
+    try:
+        subprocess.check_call(
+            [
+                "openssl", "req", "-x509", "-newkey", "rsa:2048",
+                "-keyout", key_path,
+                "-out", cert_path,
+                "-days", "36500",  # ~100 years, effectively infinite
+                "-nodes",
+                "-subj", "/CN=" + fqdn,
+                "-addext", "subjectAltName=DNS:" + fqdn,
+            ],
+            cwd=cert_dir,
+        )
+    except (subprocess.CalledProcessError, OSError) as e:
+        keyme.log.exception(f"Failed to create device cert: {e}")
+        raise
+    return cert_path, key_path
+
+
+def _upload_device_cert_to_s3(local_cert_path, kiosk_name, fqdn):
+    """Send IPC to UPLOADER to upload the public cert to S3 (async)."""
+    s3key = f"{kiosk_name.upper()}/{fqdn}.crt"
+    keyme.ipc.send(
+        "UPLOADER",
+        "UPLOAD_FILE",
+        {
+            "bucket": _DEVICE_CERTS_BUCKET,
+            "file_name": local_cert_path,
+            "s3key": s3key,
+            "remove": False,
+        },
+    )
+    keyme.log.info(f"Control panel device cert upload requested s3://{_DEVICE_CERTS_BUCKET}/{s3key}")
 
 
 def _write_connection_count(count):
@@ -195,7 +244,7 @@ async def _handler(ws, path):
                 response_str = json.dumps({'id': request_id, 'success': False, 'errors': ['Serialization error']})
             await _send_text(ws, response_str)
     except (websockets.exceptions.ConnectionClosed, RuntimeError, ValueError) as e:
-        keyme.log.warning("WS client {} error: {}".format(client_id, e))
+        keyme.log.warning(f"WS client {client_id} error: {e}")
     finally:
         with _clients_lock:
             _connected_clients.pop(client_id, None)
@@ -216,14 +265,24 @@ def run():
     _set_handlers(server_handlers)
     port = PORTS['python']
     host = '0.0.0.0'
+    kiosk_name = keyme.config.KIOSK_NAME
+    fqdn = kiosk_name + '.keymekiosk.com'
+    if not fqdn:
+        keyme.log.error("Control panel WebSocket server: KIOSK_NAME not set, cannot create certs or start WSS")
+        return
+    cert_dir = os.path.join(keyme.config.STATE_PATH, 'control_panel')
+    cert_path, key_path = _ensure_device_certs(cert_dir, kiosk_name, fqdn)
+    _upload_device_cert_to_s3(cert_path, kiosk_name, fqdn)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(certfile=cert_path, keyfile=key_path)
     _write_connection_count(0)
-    keyme.log.info("Control panel WebSocket server starting host={} port={} path={}".format(host, port, WS_PATH))
+    keyme.log.info(f"Control panel WebSocket server starting host={host} port={port} path={WS_PATH} (WSS)")
     _executor = ThreadPoolExecutor(max_workers=4)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     _async_loop = loop
     try:
-        start_server = websockets.serve(_handler, host, port)
+        start_server = websockets.serve(_handler, host, port, ssl=ctx)
         loop.run_until_complete(start_server)
         loop.run_forever()
     finally:
