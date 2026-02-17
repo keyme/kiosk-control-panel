@@ -301,23 +301,36 @@ async def health() -> dict[str, Any]:
 _WS_PORT = 2026
 _WS_PATH = "/ws"
 
-# Unverified SSL context for cloud→device wss (self-signed device certs).
-_DEVICE_WSS_SSL_CTX = ssl.create_default_context()
-_DEVICE_WSS_SSL_CTX.check_hostname = False
-_DEVICE_WSS_SSL_CTX.verify_mode = ssl.CERT_NONE
+# Directory with device certs for TLS verification (one <fqdn>.crt per device).
+_CONTROL_PANEL_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_DEVICE_CERTS_DIR = os.path.join(_CONTROL_PANEL_DIR, "device_certs")
 
 
-def _device_ws_backend(device_host: str) -> Tuple[str, ssl.SSLContext]:
-    """Resolve device host to (wss URL, SSL context for self-signed certs)."""
+def _device_wss_ssl_context(host_fqdn: str) -> Tuple[ssl.SSLContext, bool]:
+    """Build client SSL context. Returns (context, True) if device cert was used for verification."""
+    cert_path = os.path.join(_DEVICE_CERTS_DIR, f"{host_fqdn}.crt")
+    if not os.path.isfile(cert_path):
+        log.warning("Device WSS cert not found, skipping verification: %s", cert_path)
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx, False
+    ctx = ssl.create_default_context(cafile=cert_path)
+    return ctx, True
+
+
+def _device_ws_backend(device_host: str) -> Tuple[str, ssl.SSLContext, bool]:
+    """Resolve device host to (wss URL, SSL context, verified_via_cert)."""
     host = (device_host or "").strip()
     if not host:
-        return "", _DEVICE_WSS_SSL_CTX
+        return "", ssl.create_default_context(), False
     host_only = re.sub(r"^(https?://)?([^/]+).*", r"\2", host, flags=re.IGNORECASE)
     with_domain = (
         f"{host_only}.keymekiosk.com" if "." not in host_only else host_only
     )
     url = f"wss://{with_domain}:{_WS_PORT}{_WS_PATH}"
-    return url, _DEVICE_WSS_SSL_CTX
+    ssl_ctx, used_cert = _device_wss_ssl_context(with_domain)
+    return url, ssl_ctx, used_cert
 
 
 @app.websocket("/ws")
@@ -340,7 +353,7 @@ async def ws_proxy(websocket: WebSocket):
     if not device:
         await websocket.close(code=4400, reason="missing device")
         return
-    backend_url, ssl_ctx = _device_ws_backend(device)
+    backend_url, ssl_ctx, used_cert = _device_ws_backend(device)
     if not backend_url:
         await websocket.close(code=4400, reason="invalid device")
         return
@@ -348,6 +361,14 @@ async def ws_proxy(websocket: WebSocket):
     await _inc_active_ws_connections()
     try:
         async with websockets.connect(backend_url, ssl=ssl_ctx) as device_ws:
+            if used_cert:
+                log.info(
+                    "ws proxy connected to device device=%s url=%s TLS verification successful",
+                    device,
+                    backend_url,
+                )
+            else:
+                log.info("ws proxy connected to device device=%s url=%s", device, backend_url)
 
             async def client_to_device():
                 try:

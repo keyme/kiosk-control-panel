@@ -219,10 +219,10 @@ def run():
     port = PORTS['python']
     host = '0.0.0.0'
     _write_connection_count(0)
-    _base_dir = os.path.dirname(os.path.abspath(__file__))
-    _tmp_crt_dir = os.path.join(_base_dir, "tmp_crt")
-    _cert_file = os.path.join(_tmp_crt_dir, "ns3512.keymekiosk.com.crt")
-    _key_file = os.path.join(_tmp_crt_dir, "ns3512.keymekiosk.com.key")
+    _control_panel_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _device_certs_dir = os.path.join(_control_panel_dir, "device_certs")
+    _cert_file = os.path.join(_device_certs_dir, "ns3512.keymekiosk.com.crt")
+    _key_file = os.path.join(_device_certs_dir, "ns3512.keymekiosk.com.key")
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(certfile=_cert_file, keyfile=_key_file)
     keyme.log.info("Control panel WebSocket server starting host={} port={} path={} (WSS)".format(host, port, WS_PATH))
