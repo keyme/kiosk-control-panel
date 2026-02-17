@@ -256,11 +256,24 @@ async def _handler(ws, path):
         await ws.close()
         return
     if _wss_api_key is None:
+        keyme.log.warning("WSS auth rejected: API key not loaded yet (auth not ready)")
         await ws.close(code=4401, reason="auth not ready")
         return
-    auth_header = (ws.request.headers.get("Authorization") or "").strip()
+    # Legacy WebSocketServerProtocol uses request_headers; older versions may use request.headers.
+    headers = getattr(ws, "request_headers", None) or (
+        getattr(ws, "request", None) and getattr(ws.request, "headers", None)
+    )
+    if headers is None:
+        keyme.log.warning("WSS auth rejected: could not read request headers")
+        await ws.close(code=4401, reason="missing or invalid API key")
+        return
+    auth_header = (headers.get("Authorization") or "").strip()
     expected = "Bearer " + _wss_api_key
     if auth_header != expected:
+        keyme.log.warning(
+            f"WSS auth rejected: Authorization header missing or mismatch "
+            f"(header present={bool(auth_header)})"
+        )
         await ws.close(code=4401, reason="missing or invalid API key")
         return
     client_id = str(uuid.uuid4())
