@@ -7,6 +7,12 @@ import asyncio
 import logging
 import os
 import re
+from typing import Any, Optional
+
+try:
+    import resource  # POSIX-only (for ulimit)
+except Exception:  # pragma: no cover
+    resource = None  # type: ignore[assignment]
 
 # So app logs (INFO) are visible when run under uvicorn (e.g. in Docker).
 # Uvicorn only sets level for its own loggers; root stays WARNING and filters our logs.
@@ -30,6 +36,135 @@ from control_panel.cloud.api import create_auth_router, create_router
 from control_panel.cloud.api.auth import ANF_BASE_URL, API_ENV, validate_token
 
 log = logging.getLogger(__name__)
+
+# WebSocket connection counter (active connections proxied through this service).
+_active_ws_connections = 0
+_active_ws_connections_lock = asyncio.Lock()
+
+
+async def _inc_active_ws_connections() -> None:
+    global _active_ws_connections
+    async with _active_ws_connections_lock:
+        _active_ws_connections += 1
+
+
+async def _dec_active_ws_connections() -> None:
+    global _active_ws_connections
+    async with _active_ws_connections_lock:
+        if _active_ws_connections > 0:
+            _active_ws_connections -= 1
+
+
+async def _get_active_ws_connections() -> int:
+    async with _active_ws_connections_lock:
+        return int(_active_ws_connections)
+
+
+def _read_int_file(path: str) -> Optional[int]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = f.read().strip()
+        if raw == "" or raw.lower() == "max":
+            return None
+        return int(raw)
+    except Exception:
+        return None
+
+
+def _ulimit_n() -> Optional[int]:
+    try:
+        if resource is None:
+            return None
+        soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)  # type: ignore[attr-defined]
+        return int(soft)
+    except Exception:
+        return None
+
+
+def _current_open_fds() -> Optional[int]:
+    try:
+        return len(os.listdir("/proc/self/fd"))
+    except Exception:
+        return None
+
+
+def _memory_limit_bytes() -> Optional[int]:
+    # cgroup v1 (as requested)
+    v1 = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
+    if os.path.exists(v1):
+        val = _read_int_file(v1)
+        return int(val) if isinstance(val, int) else None
+
+    # cgroup v2 fallback (helps when running on modern distros)
+    v2 = "/sys/fs/cgroup/memory.max"
+    if os.path.exists(v2):
+        val = _read_int_file(v2)
+        return int(val) if isinstance(val, int) else None
+
+    return None
+
+
+def _memory_usage_bytes() -> Optional[int]:
+    # Prefer /proc/self/status: VmRSS is resident set size (kB).
+    try:
+        with open("/proc/self/status", "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    parts = line.split()
+                    # Format: VmRSS: <value> kB
+                    if len(parts) >= 2:
+                        kb = int(parts[1])
+                        return kb * 1024
+                    break
+    except Exception:
+        pass
+
+    # Fallback: /proc/self/statm resident pages * page_size
+    try:
+        with open("/proc/self/statm", "r", encoding="utf-8") as f:
+            parts = f.read().strip().split()
+        if len(parts) >= 2:
+            resident_pages = int(parts[1])
+            page_size = int(os.sysconf("SC_PAGE_SIZE"))
+            return resident_pages * page_size
+    except Exception:
+        return None
+    return None
+
+
+def _make_warning(message: str, recommendation: str) -> dict[str, str]:
+    return {"message": message, "recommendation": recommendation}
+
+
+_RECOMMEND_ULIMIT = (
+    "Increase file descriptor limit.\n"
+    "For Docker:\n"
+    "  --ulimit nofile=200000:200000\n"
+    "For Kubernetes:\n"
+    "  Set container runtime ulimit or configure via node limits.\n"
+)
+
+_RECOMMEND_CONNTRACK = (
+    "Increase conntrack limit:\n"
+    "  sysctl -w net.netfilter.nf_conntrack_max=262144\n"
+    "And persist in /etc/sysctl.conf\n"
+)
+
+_RECOMMEND_MEMORY = (
+    "Increase pod memory limit in Kubernetes:\n"
+    "resources:\n"
+    "  limits:\n"
+    "    memory: 1Gi\n"
+)
+
+_RECOMMEND_ACTIVE_WS = (
+    "Reduce active WebSocket connections or increase the file descriptor limit.\n"
+    "If connections are unexpectedly high, check for leaked/idle clients and enforce timeouts.\n"
+    "For Docker:\n"
+    "  --ulimit nofile=200000:200000\n"
+    "For Kubernetes:\n"
+    "  Set container runtime ulimit or configure via node limits.\n"
+)
 
 # Static root: env CONTROL_PANEL_STATIC_ROOT or default cloud/web/dist
 _default_static = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "dist")
@@ -97,6 +232,71 @@ app.include_router(create_router(), prefix="/api")       # all other routes — 
 if os.path.isdir(_assets_dir):
     app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
 
+
+@app.get("/health")
+async def health() -> dict[str, Any]:
+    ulimit_n = _ulimit_n()
+    fs_file_max = _read_int_file("/proc/sys/fs/file-max")
+    nf_conntrack_max = _read_int_file("/proc/sys/net/netfilter/nf_conntrack_max")
+    memory_limit_bytes = _memory_limit_bytes()
+
+    active_websocket_connections = await _get_active_ws_connections()
+    current_open_fds = _current_open_fds()
+    memory_usage_bytes = _memory_usage_bytes()
+
+    warnings: list[dict[str, str]] = []
+    if isinstance(ulimit_n, int) and ulimit_n < 10_000:
+        warnings.append(
+            _make_warning(
+                message=f"ulimit_n is low ({ulimit_n}); recommended >= 10000.",
+                recommendation=_RECOMMEND_ULIMIT,
+            )
+        )
+    if isinstance(nf_conntrack_max, int) and nf_conntrack_max < 100_000:
+        warnings.append(
+            _make_warning(
+                message=f"nf_conntrack_max is low ({nf_conntrack_max}); recommended >= 100000.",
+                recommendation=_RECOMMEND_CONNTRACK,
+            )
+        )
+    if isinstance(memory_limit_bytes, int) and memory_limit_bytes < 512 * 1024 * 1024:
+        warnings.append(
+            _make_warning(
+                message=(
+                    f"memory_limit_bytes is low ({memory_limit_bytes}); recommended >= 536870912 (512MB)."
+                ),
+                recommendation=_RECOMMEND_MEMORY,
+            )
+        )
+    if isinstance(ulimit_n, int) and ulimit_n > 0:
+        if active_websocket_connections > int(0.8 * ulimit_n):
+            warnings.append(
+                _make_warning(
+                    message=(
+                        "active_websocket_connections is above 80% of ulimit_n "
+                        f"({active_websocket_connections} / {ulimit_n})."
+                    ),
+                    recommendation=_RECOMMEND_ACTIVE_WS,
+                )
+            )
+
+    status = "warning" if warnings else "ok"
+    return {
+        "status": status,
+        "limits": {
+            "ulimit_n": ulimit_n,
+            "fs_file_max": fs_file_max,
+            "nf_conntrack_max": nf_conntrack_max,
+            "memory_limit_bytes": memory_limit_bytes,
+        },
+        "usage": {
+            "current_open_fds": current_open_fds,
+            "memory_usage_bytes": memory_usage_bytes,
+            "active_websocket_connections": active_websocket_connections,
+        },
+        "warnings": warnings,
+    }
+
 _WS_PORT = 2026
 _WS_PATH = "/ws"
 
@@ -138,6 +338,7 @@ async def ws_proxy(websocket: WebSocket):
         await websocket.close(code=4400, reason="invalid device")
         return
     await websocket.accept()
+    await _inc_active_ws_connections()
     try:
         async with websockets.connect(backend_url) as device_ws:
 
@@ -195,6 +396,8 @@ async def ws_proxy(websocket: WebSocket):
             await websocket.close()
         except Exception:
             pass
+    finally:
+        await _dec_active_ws_connections()
 
 
 def _send_index_html():

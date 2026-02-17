@@ -90,7 +90,24 @@ docker run -p 8080:8080 -e API_ENV=stg control-panel-cloud
 
 For production: `-e API_ENV=prod`.
 
-The app uses boto3 to access S3 (calibration data). Pass AWS credentials in one of these ways:
+**Runtime limits (recommended):**
+This cloud service is used as a **WebSocket proxy** to devices, so it can hold many concurrent socket connections and consume file descriptors/conntrack entries and memory. It exposes `GET /health` which reports OS/container limits (ulimit, conntrack, memory) and will return warnings when they're too low.
+
+- **Increase file descriptor limit (ulimit / nofile)** (recommended; helps with many concurrent WS connections):
+
+```bash
+docker run -p 8080:8080 \
+  --ulimit nofile=200000:200000 \
+  -e API_ENV=stg \
+  control-panel-cloud
+```
+
+- **Increase conntrack limit (nf_conntrack_max)**:
+This is a **host/node sysctl**, not an image setting. On the node:
+
+```bash
+sysctl -w net.netfilter.nf_conntrack_max=262144
+```
 
 - **Environment variables** (good for CI or injected secrets):
 
