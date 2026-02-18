@@ -5,7 +5,6 @@ import asyncio
 import json
 import os
 import ssl
-import subprocess
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -14,13 +13,16 @@ import websockets
 
 import pylib as keyme
 
-from control_panel.python.shared import PORTS, WSS_KEYRING_SERVICE, WSS_KEYRING_USERNAME
-from control_panel.python import ws_protocol
-from control_panel.shared import (
-    DEVICE_CERTS_BUCKET,
-    WSS_CERTS_S3_PREFIX,
+from control_panel.python.shared import (
+    CERT_PATH,
+    CERT_MARKER_PATH,
+    KEY_PATH,
+    PORTS,
     WS_PATH,
+    WSS_KEYRING_SERVICE,
+    WSS_KEYRING_USERNAME,
 )
+from control_panel.python import ws_protocol
 
 # Set after server module is loaded.
 _server_handlers = None
@@ -54,50 +56,7 @@ def _load_wss_api_key():
     except Exception as e:
         keyme.log.warning(f"WSS API key load failed: {e}")
         _wss_api_key = None
-        raise
-
-
-def _ensure_device_certs(cert_dir, kiosk_name, fqdn):
-    """Ensure {fqdn}.crt and {fqdn}.key exist in cert_dir; create with openssl if missing."""
-    os.makedirs(cert_dir, exist_ok=True)
-    cert_path = os.path.join(cert_dir, fqdn + ".crt")
-    key_path = os.path.join(cert_dir, fqdn + ".key")
-    if os.path.isfile(cert_path) and os.path.isfile(key_path):
-        return cert_path, key_path
-    keyme.log.info(f"Control panel device cert missing, creating self-signed cert for {fqdn}")
-    try:
-        subprocess.check_call(
-            [
-                "openssl", "req", "-x509", "-newkey", "rsa:2048",
-                "-keyout", key_path,
-                "-out", cert_path,
-                "-days", "36500",  # ~100 years, effectively infinite
-                "-nodes",
-                "-subj", "/CN=" + fqdn,
-                "-addext", "subjectAltName=DNS:" + fqdn,
-            ],
-            cwd=cert_dir,
-        )
-    except (subprocess.CalledProcessError, OSError) as e:
-        keyme.log.exception(f"Failed to create device cert: {e}")
-        raise
-    return cert_path, key_path
-
-
-def _upload_device_cert_to_s3(local_cert_path, kiosk_name, fqdn):
-    """Send IPC to UPLOADER to upload the public cert to S3 (async)."""
-    s3key = f"{WSS_CERTS_S3_PREFIX}/{kiosk_name.upper()}/{fqdn}.crt"
-    keyme.ipc.send(
-        "UPLOADER",
-        "UPLOAD_FILE",
-        {
-            "bucket": DEVICE_CERTS_BUCKET,
-            "file_name": local_cert_path,
-            "s3key": s3key,
-            "remove": False,
-        },
-    )
-    keyme.log.info(f"Control panel device cert upload requested s3://{DEVICE_CERTS_BUCKET}/{s3key}")
+        return
 
 
 def _write_connection_count(count):
@@ -313,13 +272,16 @@ def run():
     port = PORTS['python']
     host = '0.0.0.0'
     kiosk_name = keyme.config.KIOSK_NAME
-    fqdn = kiosk_name + '.keymekiosk.com'
-    if not fqdn:
+    if not kiosk_name:
         keyme.log.error("Control panel WebSocket server: KIOSK_NAME not set, cannot create certs or start WSS")
         return
-    cert_dir = os.path.join(keyme.config.STATE_PATH, 'control_panel')
-    cert_path, key_path = _ensure_device_certs(cert_dir, kiosk_name, fqdn)
-    _upload_device_cert_to_s3(cert_path, kiosk_name, fqdn)
+    cert_path = CERT_PATH
+    key_path = KEY_PATH
+    if not (os.path.isfile(cert_path) and os.path.isfile(key_path) and os.path.isfile(CERT_MARKER_PATH)):
+        keyme.log.warning("Control panel device cert missing/not uploaded; generating/uploading")
+        from control_panel.python.scripts.create_wss_cert_and_upload import ensure_wss_device_certs_and_upload
+
+        cert_path, key_path = ensure_wss_device_certs_and_upload()
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(certfile=cert_path, keyfile=key_path)
     _write_connection_count(0)

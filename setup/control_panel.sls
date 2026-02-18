@@ -27,6 +27,13 @@ control-panel-iptables-save:
 # WebSocket server can authenticate immediately on startup.
 control-panel-wss-api-key-keyring:
   cmd.run:
-    - name: /kiosk/control_panel/python/scripts/load_wss_api_key.py --require --no-jitter
+    - name: PYTHONPATH=/kiosk /usr/bin/env python3 /kiosk/control_panel/python/scripts/load_wss_api_key.py --require --no-jitter
+    - runas: kiosk
+    - cwd: /kiosk
+
+# Ensure device WSS certs exist and upload public cert to S3.
+control-panel-wss-device-certs:
+  cmd.run:
+    - name: /kiosk/control_panel/python/scripts/create_wss_cert_and_upload.py
     - runas: kiosk
     - cwd: /kiosk

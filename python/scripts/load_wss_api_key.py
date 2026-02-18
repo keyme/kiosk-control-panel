@@ -1,24 +1,18 @@
 #!/usr/bin/env python3
 
+"""Load the WSS API key and cache it into keyring."""
+
 import argparse
-import os
 import random
-import sys
 import time
 import boto3
-from typing import List, Optional
 from botocore.exceptions import ClientError
+from typing import List, Optional
 
 import pylib as keyme
 from control_panel.shared import WSS_SECRET_ID
 from control_panel.python.shared import WSS_KEYRING_SERVICE, WSS_KEYRING_USERNAME
 
-def _ensure_repo_on_syspath():
-    # Allow running as a script without needing PYTHONPATH=/kiosk.
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
-    if repo_root not in sys.path:
-        sys.path.insert(0, repo_root)
-_ensure_repo_on_syspath()
 
 def load_wss_api_key(
     *,
