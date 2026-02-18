@@ -10,6 +10,9 @@ DEVICE_CERTS_BUCKET = "keyme-calibration"
 # AWS Secrets Manager secret id for WSS API key (cloud-to-device auth).
 WSS_SECRET_ID = "/prod/kiosk/ws-api-key"
 
+# JSON key for API key in the secret (when SecretString is JSON).
+WSS_API_KEY_FIELD = "WSS_API_KEY"
+
 # S3 key prefix for device WSS certs: {prefix}/{KIOSK_NAME}/{fqdn}.crt
 WSS_CERTS_S3_PREFIX = "wss_certs"
 

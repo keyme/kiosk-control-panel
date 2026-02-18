@@ -37,7 +37,17 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.staticfiles import StaticFiles
 
 from control_panel.cloud.api import create_auth_router, create_router
-from control_panel.cloud.api.auth import ANF_BASE_URL, API_ENV, validate_token
+from control_panel.cloud.api.auth import (
+    ANF_BASE_URL,
+    API_ENV,
+    PERMISSIONS_ADMIN_URL,
+    validate_token,
+    validate_permission,
+)
+from control_panel.cloud.api.ws_fleet_permissions import (
+    FLEET_EVENTS_REQUIRING_PERMISSION,
+    required_permission,
+)
 from control_panel.shared import (
     DEVICE_CERTS_BUCKET,
     WSS_SECRET_ID,
@@ -427,9 +437,44 @@ async def ws_proxy(websocket: WebSocket):
                 log.info(f"ws proxy connected to device device={device} url={backend_url}")
 
             async def client_to_device():
+                loop = asyncio.get_event_loop()
                 try:
                     while True:
                         data = await websocket.receive_text()
+                        try:
+                            msg = json.loads(data)
+                        except (json.JSONDecodeError, TypeError):
+                            await device_ws.send(data)
+                            continue
+                        event = msg.get("event") if isinstance(msg, dict) else None
+                        if event not in FLEET_EVENTS_REQUIRING_PERMISSION:
+                            await device_ws.send(data)
+                            continue
+                        slug = required_permission(event)
+                        if slug is None:
+                            await device_ws.send(data)
+                            continue
+                        granted, user_identifier = await loop.run_in_executor(
+                            None, lambda t=token, s=slug: validate_permission(t, s)
+                        )
+                        if not granted:
+                            if user_identifier:
+                                err_msg = (
+                                    f"User {user_identifier} does not have permission '{slug}'. "
+                                    f"You can add the permission at {PERMISSIONS_ADMIN_URL}"
+                                )
+                            else:
+                                err_msg = (
+                                    f"Permission denied: '{slug}' required. "
+                                    f"You can add the permission at {PERMISSIONS_ADMIN_URL}"
+                                )
+                            err_response = json.dumps({
+                                "id": msg.get("id"),
+                                "success": False,
+                                "errors": [err_msg],
+                            })
+                            await websocket.send_text(err_response)
+                            continue
                         await device_ws.send(data)
                 except WebSocketDisconnect:
                     pass

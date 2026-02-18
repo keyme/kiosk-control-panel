@@ -116,6 +116,72 @@ class TestTokenCaching:
             _restore_override(app, dep)
 
 
+class TestValidatePermission:
+    """validate_permission(token, permission_slug) for fleet commands."""
+
+    def _clear_permission_cache(self):
+        from control_panel.cloud.api.auth import _permission_cache
+        _permission_cache.clear()
+
+    @patch("control_panel.cloud.api.auth.httpx.get")
+    def test_granted_true_returns_true_and_user_id(self, mock_get):
+        self._clear_permission_cache()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"granted": True, "email": "u@example.com"}
+        mock_get.return_value = mock_resp
+
+        from control_panel.cloud.api.auth import validate_permission
+        granted, user_id = validate_permission("tok", "reboot_kiosk")
+        assert granted is True
+        assert user_id == "u@example.com"
+        assert mock_get.call_count == 1
+
+    @patch("control_panel.cloud.api.auth.httpx.get")
+    def test_granted_false_returns_false(self, mock_get):
+        self._clear_permission_cache()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"granted": False}
+        mock_get.return_value = mock_resp
+
+        from control_panel.cloud.api.auth import validate_permission
+        granted, user_id = validate_permission("tok", "reboot_kiosk")
+        assert granted is False
+        assert user_id is None
+
+    @patch("control_panel.cloud.api.auth.httpx.get")
+    def test_cache_prevents_second_anf_call(self, mock_get):
+        self._clear_permission_cache()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"granted": True}
+        mock_get.return_value = mock_resp
+
+        from control_panel.cloud.api.auth import validate_permission
+        validate_permission("cache-token", "clear_cutter_stuck")
+        validate_permission("cache-token", "clear_cutter_stuck")
+        assert mock_get.call_count == 1
+
+    def test_empty_token_returns_false_none(self):
+        from control_panel.cloud.api.auth import validate_permission
+        granted, user_id = validate_permission(None, "reboot_kiosk")
+        assert granted is False
+        assert user_id is None
+
+    @patch("control_panel.cloud.api.auth.httpx.get")
+    def test_non_200_returns_false_none(self, mock_get):
+        self._clear_permission_cache()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 403
+        mock_get.return_value = mock_resp
+
+        from control_panel.cloud.api.auth import validate_permission
+        granted, user_id = validate_permission("tok", "reboot_kiosk")
+        assert granted is False
+        assert user_id is None
+
+
 class TestApiEnvValidation:
     def test_invalid_env_raises_runtime_error(self):
         """Importing auth with an invalid API_ENV must raise RuntimeError."""

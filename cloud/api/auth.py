@@ -44,10 +44,16 @@ _ANF_BASE_URLS: dict[str, str] = {
 ANF_BASE_URL: str = _ANF_BASE_URLS[API_ENV]
 
 # ---------------------------------------------------------------------------
-# Token cache
+# Token cache (connect-time check_kiosk_status)
 # ---------------------------------------------------------------------------
 
 _token_cache: TTLCache = TTLCache(maxsize=1000, ttl=300)
+
+# ---------------------------------------------------------------------------
+# Permission cache for fleet commands: (token, permission_slug) -> ANF response
+# ---------------------------------------------------------------------------
+
+_permission_cache: TTLCache = TTLCache(maxsize=2000, ttl=300)
 
 # ---------------------------------------------------------------------------
 # FastAPI security scheme (shows "Authorize" button in /docs)
@@ -105,6 +111,48 @@ def validate_token(token: str | None) -> dict:
     # Cache successful validation ---------------------------------------------
     _token_cache[token] = data
     return data
+
+
+# ---------------------------------------------------------------------------
+# Permission check for a specific slug (e.g. fleet commands). Returns (granted, user_identifier).
+# ---------------------------------------------------------------------------
+
+def validate_permission(token: str | None, permission_slug: str) -> tuple[bool, str | None]:
+    """Check if token has the given permission via ANF. Returns (granted, user_identifier).
+
+    user_identifier is from ANF response (e.g. email) when present, for use in error messages.
+    Safe to call from WebSocket handler (run in executor if async).
+    """
+    if not token:
+        return (False, None)
+    key = (token, permission_slug)
+    cached = _permission_cache.get(key)
+    if cached is not None:
+        granted = bool(cached.get("granted"))
+        user_id = cached.get("email") or cached.get("user_id")
+        return (granted, user_id)
+
+    url = f"{ANF_BASE_URL}/api/permission/check"
+    try:
+        resp = httpx.get(
+            url,
+            params={"permission_slug": permission_slug},
+            headers={"KEYME-TOKEN": token},
+            timeout=10.0,
+        )
+    except httpx.HTTPError as exc:
+        log.warning("ANF permission check failed for %s: %s", permission_slug, exc)
+        return (False, None)
+
+    if resp.status_code != 200:
+        log.info("ANF returned %s for permission check slug=%s", resp.status_code, permission_slug)
+        return (False, None)
+
+    data = resp.json()
+    granted = bool(data.get("granted"))
+    user_id = data.get("email") or data.get("user_id")
+    _permission_cache[key] = data
+    return (granted, user_id)
 
 
 # ---------------------------------------------------------------------------
