@@ -295,10 +295,13 @@ LOGINS_CSV = '/tmp/keyme_logins.csv'
 
 
 def _live_remote_ttys():
-    """Return list of TTYs (e.g. pts/0) that currently have a remote (SSH) session."""
+    """Return list of TTYs (e.g. pts/0) that currently have a remote (SSH) session.
+    Uses same grep as util.check_users.has_logged_in_user: who | grep -P '\(\d' (IP in parens).
+    """
     try:
         r = subprocess.run(
-            ['who'],
+            "who | grep -P '\\(\\d'",
+            shell=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             universal_newlines=True,
@@ -309,7 +312,7 @@ def _live_remote_ttys():
         ttys = []
         for line in r.stdout.strip().splitlines():
             parts = line.split()
-            if len(parts) >= 2 and parts[-1].startswith('(') and parts[-1].endswith(')'):
+            if len(parts) >= 2:
                 ttys.append(parts[1])
         return ttys
     except (subprocess.TimeoutExpired, OSError, ValueError, FileNotFoundError):

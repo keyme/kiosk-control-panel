@@ -16,7 +16,7 @@ def check_fleet_command_allowed():
     """Return (allowed, errors). If not allowed, errors is a non-empty list of strings."""
     if has_logged_in_user():
         return ( False, [ ( "Remote (fab/SSH) session detected. Commands are temporarily"
-                "disabled to prevent conflicts while a developer is connected.") ])
+                " disabled to prevent conflicts while a developer is connected.") ])
     return (True, [])
 
 
