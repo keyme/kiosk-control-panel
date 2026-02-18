@@ -18,11 +18,24 @@ from control_panel.python.shared import (
     CERT_MARKER_PATH,
     KEY_PATH,
     PORTS,
-    WS_PATH,
     WSS_KEYRING_SERVICE,
     WSS_KEYRING_USERNAME,
 )
+from control_panel.shared import WS_PATH
 from control_panel.python import ws_protocol
+
+# Fleet events this server handles; must match control_panel.fleet_permissions.EVENT_TO_PERMISSION.
+FLEET_EVENT_NAMES = frozenset((
+    "fleet_reboot_kiosk",
+    "fleet_clear_cutter_stuck",
+    "fleet_restart_process",
+    "fleet_reset_device",
+    "fleet_switch_process_list",
+))
+from control_panel.fleet_permissions import EVENT_TO_PERMISSION
+assert FLEET_EVENT_NAMES == frozenset(EVENT_TO_PERMISSION.keys()), (
+    "FLEET_EVENT_NAMES in ws_server must match EVENT_TO_PERMISSION in control_panel.fleet_permissions"
+)
 
 # Set after server module is loaded.
 _server_handlers = None
