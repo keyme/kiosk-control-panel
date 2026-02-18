@@ -363,31 +363,38 @@ export default function FleetCommands({ connected, socket }) {
         </Card>
       </div>
 
-      {/* Success / error message */}
-      {result && (
-        <div
-          className={cn(
-            'flex items-start gap-2 rounded-md border px-4 py-3 text-sm',
-            result.success
-              ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
-              : 'border-destructive/50 bg-destructive/10 text-destructive'
-          )}
-          role="status"
-        >
-          {result.success ? (
-            <CheckCircle className="size-4 shrink-0 mt-0.5" aria-hidden />
-          ) : (
-            <XCircle className="size-4 shrink-0 mt-0.5" aria-hidden />
-          )}
-          <span>
-            {result.success
-              ? `Command "${result.action}" completed successfully.`
-              : (result.errors && result.errors.length
-                  ? result.errors.join(' ')
-                  : 'Request failed.')}
-          </span>
-        </div>
-      )}
+      {/* Result popup (success or error) */}
+      <Dialog open={!!result} onOpenChange={(open) => !open && setResult(null)}>
+        <DialogContent showClose={true} onClose={() => setResult(null)}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {result?.success ? (
+                <>
+                  <CheckCircle className="size-5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                  Success
+                </>
+              ) : (
+                <>
+                  <XCircle className="size-5 shrink-0 text-destructive" aria-hidden />
+                  Error
+                </>
+              )}
+            </DialogTitle>
+            <DialogDescription className={result?.success ? '' : 'text-foreground'}>
+              {result?.success
+                ? `Command "${result.action}" completed successfully.`
+                : (result?.errors && result.errors.length
+                    ? result.errors.join(' ')
+                    : 'Request failed.')}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end pt-2">
+            <button type="button" className={btnPrimary} onClick={() => setResult(null)}>
+              OK
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Confirmation dialog */}
       <Dialog open={!!confirmAction} onOpenChange={(open) => !open && setConfirmAction(null)}>
