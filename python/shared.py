@@ -7,3 +7,7 @@ PORTS = json.load(open(os.path.join(CFG_PATH, 'ports.json')))
 
 # No controller options for control panel; parser accepts empty dict.
 OPTIONS = {}
+
+# WSS API key (device-only): keyring service/username for caching the secret.
+WSS_KEYRING_SERVICE = "CONTROL_PANEL_WSS"
+WSS_KEYRING_USERNAME = "kiosk"

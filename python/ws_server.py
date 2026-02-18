@@ -4,11 +4,9 @@
 import asyncio
 import json
 import os
-import random
 import ssl
 import subprocess
 import threading
-import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
@@ -16,19 +14,10 @@ import websockets
 
 import pylib as keyme
 
-try:
-    import boto3
-    from botocore.exceptions import ClientError
-except ImportError:
-    boto3 = None  # no boto on device in some envs
-    ClientError = Exception
-
-from control_panel.python.shared import PORTS
+from control_panel.python.shared import PORTS, WSS_KEYRING_SERVICE, WSS_KEYRING_USERNAME
 from control_panel.python import ws_protocol
 from control_panel.shared import (
     DEVICE_CERTS_BUCKET,
-    WSS_SECRET_ID,
-    WSS_API_KEY_FIELD,
     WSS_CERTS_S3_PREFIX,
     WS_PATH,
 )
@@ -46,51 +35,26 @@ _clients_lock = threading.Lock()
 _wellness_client_id = None
 _wellness_client_lock = threading.Lock()
 
-# WSS API key (device-only): keyring service/username for caching the secret.
-_WSS_KEYRING_SERVICE = "CONTROL_PANEL_WSS"
-_WSS_KEYRING_USERNAME = "kiosk"
 _wss_api_key = None
 
 
 def _load_wss_api_key():
-    """Load WSS API key from keyring or AWS Secrets Manager; cache in keyring and _wss_api_key."""
+    """Load WSS API key; cache in keyring and _wss_api_key."""
     global _wss_api_key
-    api_key = keyme.keyring_utils.safe_get_password(_WSS_KEYRING_SERVICE, _WSS_KEYRING_USERNAME)
-    if api_key:
-        keyme.log.info("WSS API key found in keyring")
-        _wss_api_key = api_key
-        return
-    keyme.log.warning("WSS API key not in keyring, fetching from AWS Secrets Manager")
-    if boto3 is None:
-        keyme.log.error("boto3 not available, cannot fetch WSS API key")
-        return
-    time.sleep(random.uniform(0, 1.5))
-    max_retries = 5
-    base_delay = 2
-    client = boto3.client("secretsmanager", region_name="us-east-1")
-    for attempt in range(1, max_retries + 1):
-        try:
-            response = client.get_secret_value(SecretId=WSS_SECRET_ID)
-            secret_str = (response.get("SecretString") or "").strip()
-            if not secret_str:
-                raise ValueError("SecretString is empty in AWS secret")
-            try:
-                secret = json.loads(secret_str)
-                api_key = secret.get(WSS_API_KEY_FIELD) or secret.get("api_key")
-            except (ValueError, TypeError):
-                api_key = secret_str
-            if not api_key or not isinstance(api_key, str):
-                raise ValueError(f"WSS secret has no {WSS_API_KEY_FIELD} or api_key")
-            keyme.keyring_utils.safe_set_password(_WSS_KEYRING_SERVICE, _WSS_KEYRING_USERNAME, api_key)
+    try:
+        api_key = keyme.keyring_utils.safe_get_password(WSS_KEYRING_SERVICE, WSS_KEYRING_USERNAME)
+        if api_key:
             _wss_api_key = api_key
             return
-        except ClientError as e:
-            keyme.log.warning(f"WSS API key attempt {attempt} failed with ClientError: {e}")
-        except Exception as e:
-            keyme.log.warning(f"WSS API key attempt {attempt} failed: {e}")
-        if attempt < max_retries:
-            time.sleep(base_delay * (2 ** (attempt - 1)) + random.uniform(0, 2))
-    keyme.log.error("Failed to retrieve WSS API key after multiple attempts")
+
+        keyme.log.warning("WSS API key not in keyring; fetching from AWS Secrets Manager")
+        from control_panel.python.scripts.load_wss_api_key import load_wss_api_key
+
+        _wss_api_key = load_wss_api_key(enable_jitter=True, cache_in_keyring=True)
+    except Exception as e:
+        keyme.log.warning(f"WSS API key load failed: {e}")
+        _wss_api_key = None
+        raise
 
 
 def _ensure_device_certs(cert_dir, kiosk_name, fqdn):
@@ -343,7 +307,7 @@ async def _handler(ws, path):
 
 def run():
     """Entry point: set handlers, then run the websockets server in this thread (blocking)."""
-    global _async_loop, _executor
+    global _async_loop, _executor, _wss_api_key
     from control_panel.python import server as server_handlers
     _set_handlers(server_handlers)
     port = PORTS['python']
@@ -360,7 +324,10 @@ def run():
     ctx.load_cert_chain(certfile=cert_path, keyfile=key_path)
     _write_connection_count(0)
     keyme.log.info(f"Control panel WebSocket server starting host={host} port={port} path={WS_PATH} (WSS)")
-    threading.Thread(target=_load_wss_api_key, daemon=True).start()
+    # Fast path: load from keyring synchronously; avoid spawning a thread if already present.
+    _wss_api_key = keyme.keyring_utils.safe_get_password(WSS_KEYRING_SERVICE, WSS_KEYRING_USERNAME)
+    if not _wss_api_key:
+        threading.Thread(target=_load_wss_api_key, daemon=True).start()
     _executor = ThreadPoolExecutor(max_workers=4)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

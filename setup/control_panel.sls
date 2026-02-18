@@ -22,3 +22,11 @@ control-panel-iptables-save:
     - name: iptables-save > /etc/iptables/rules.v4 || iptables-save > /etc/iptables.rules
     - require:
       - cmd: control-panel-iptables
+
+# Preload the control panel WSS API key into the kiosk user's keyring so the
+# WebSocket server can authenticate immediately on startup.
+control-panel-wss-api-key-keyring:
+  cmd.run:
+    - name: /kiosk/control_panel/python/scripts/load_wss_api_key.py --require --no-jitter
+    - runas: kiosk
+    - cwd: /kiosk
