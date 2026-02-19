@@ -71,10 +71,13 @@ _ALL_CAMERAS_DEVICES = [
 ]
 
 
+_RESTART_ALL_SCRIPT = '/kiosk/util/restart_all.sh'
+
+
 @require_fleet_allowed
 def fleet_restart_process(data):
-    """Restart a single process or all (RELOAD_ALL). data['process'] e.g. 'gui' or 'restart_all'.
-    MANAGER responds with RESTART_REQUESTED / PROCESSES_RELOADED on success, or REJECTED with reason on failure.
+    """Restart a single process or all. data['process'] e.g. 'gui' or 'restart_all'.
+    Single process: MANAGER RESTART_PROCESS (sync). Restart all: run restart_all.sh in background (connection will be lost).
     """
     data = data if isinstance(data, dict) else {}
     process = (data.get('process') or '').strip()
@@ -82,15 +85,23 @@ def fleet_restart_process(data):
         return {'success': False, 'errors': ['Missing process']}
     try:
         if process == 'restart_all':
-            response = keyme.ipc.send_sync(
-                'MANAGER', 'RELOAD_ALL', {}, raise_on_error=keyme.ipc.ALL_BUT_TIMEOUT
+            proc = subprocess.Popen(
+                [_RESTART_ALL_SCRIPT],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
             )
-        else:
-            response = keyme.ipc.send_sync(
-                'MANAGER', 'RESTART_PROCESS', {'process': process.upper()},
-                raise_on_error=keyme.ipc.ALL_BUT_TIMEOUT
-            )
-        # MANAGER returns REJECTED with data.reason when e.g. invalid/unmonitored process
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                return {'success': True, 'data': {}}
+            if proc.returncode != 0:
+                err = (proc.stderr.read() or b'').decode('utf-8', errors='replace').strip()
+                return {'success': False, 'errors': [err or 'restart_all.sh exited with code {}'.format(proc.returncode)]}
+            return {'success': True, 'data': {}}
+        response = keyme.ipc.send_sync(
+            'MANAGER', 'RESTART_PROCESS', {'process': process.upper()},
+            raise_on_error=keyme.ipc.ALL_BUT_TIMEOUT
+        )
         if response.get('action') == 'REJECTED':
             reason = (response.get('data') or {}).get('reason', 'Request rejected')
             keyme.log.warning('fleet_restart_process rejected: %s', reason)

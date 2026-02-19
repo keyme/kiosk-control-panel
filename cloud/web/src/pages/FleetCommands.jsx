@@ -312,7 +312,9 @@ export default function FleetCommands({ connected, socket }) {
                   openConfirm(
                     'restart_process',
                     'Restart process',
-                    `Are you sure you want to restart "${processLabel}"?`
+                    processName === 'restart_all'
+                      ? 'Are you sure you want to restart all processes? The connection will be lost because the WebSocket process will be restarted as well.'
+                      : `Are you sure you want to restart "${processLabel}"?`
                   )
                 }
               >
