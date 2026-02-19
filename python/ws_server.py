@@ -6,7 +6,6 @@ import json
 import os
 import ssl
 import threading
-import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
@@ -194,7 +193,6 @@ def emit_async_request(request_obj):
 async def _handler(ws, path):
     """Per-connection handler: hello, then request/response loop. Runs in async loop."""
     global _wellness_client_id
-    t_start = time.perf_counter()
     if path != WS_PATH:
         await ws.close()
         return
@@ -219,8 +217,6 @@ async def _handler(ws, path):
         )
         await ws.close(code=4401, reason="missing or invalid API key")
         return
-    t_after_auth = time.perf_counter()
-    auth_ms = (t_after_auth - t_start) * 1000
     client_id = str(uuid.uuid4())
     kiosk_name = getattr(keyme.config, 'KIOSK_NAME', None) or ''
     hello_msg = json.dumps({
@@ -235,18 +231,11 @@ async def _handler(ws, path):
         await ws.send(hello_msg)
     except (websockets.exceptions.ConnectionClosed, RuntimeError):
         return
-    t_after_hello = time.perf_counter()
-    hello_send_ms = (t_after_hello - t_after_auth) * 1000
     with _clients_lock:
         _connected_clients[client_id] = ws
         count = len(_connected_clients)
     _write_connection_count(count)
-    total_ms = (time.perf_counter() - t_start) * 1000
-    register_ms = total_ms - auth_ms - hello_send_ms
-    keyme.log.info(
-        "Control panel WS client connected id=%s total=%s connection_total_ms=%.0f auth_ms=%.0f hello_send_ms=%.0f register_ms=%.0f",
-        client_id, count, total_ms, auth_ms, hello_send_ms, register_ms,
-    )
+    keyme.log.info(f"Control panel WS client connected id={client_id} total={count}")
     loop = asyncio.get_event_loop()
     try:
         async for message in ws:
