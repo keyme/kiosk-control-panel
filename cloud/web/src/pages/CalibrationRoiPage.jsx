@@ -2,23 +2,28 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { Stage, Layer, Image, Rect, Transformer } from 'react-konva';
 import useImage from 'use-image';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, RotateCcw, Play, Maximize2, Minimize2, ImageIcon, AlertTriangle } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Loader2, RotateCcw, Play, Maximize2, Minimize2, ImageIcon, AlertTriangle, ChevronDown, ChevronRight, CheckCircle, XCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import leftGoodCropUrl from '@/assets/left_good_crop.jpg';
 import rightGoodCropUrl from '@/assets/right_good_crop.jpg';
 
 const RESIZE_FACTOR = 0.5;
-const PREVIEW_RESIZE_FACTOR = 0.2;
+const PREVIEW_RESIZE_FACTOR = 0.3;
 const STAGE_MAX = { width: 800, height: 600 };
 const STAGE_MAX_SIDE = { width: 480, height: 360 };
 const PREVIEW_MAX_SIZE = { width: 400, height: 300 };
 
 const RESTART_PROCESS_OPTIONS = [
-  { value: 'det', label: 'DETs (DET, DET_BITTING_LEFT, DET_BITTING_RIGHT, DET_MILLING)' },
+  { value: 'det', label: 'DETs (DET, DET_BITTING_LEFT, DET_BITTING_RIGHT)' },
   { value: 'det_bitting_left', label: 'DET_BITTING_LEFT' },
   { value: 'det_bitting_right', label: 'DET_BITTING_RIGHT' },
-  { value: 'det_milling', label: 'DET_MILLING' },
-  { value: 'restart_all', label: 'Restart all (connection will drop)' },
 ];
 
 function RoiCanvas({
@@ -194,17 +199,24 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
   const [imagesBySide, setImagesBySide] = useState({ left: null, right: null });
   const [roiBySide, setRoiBySide] = useState({ left: null, right: null });
   const [flipBySide, setFlipBySide] = useState({ left: 0, right: 0 });
-  const [loadingImages, setLoadingImages] = useState(false);
-  const [loadingPhase, setLoadingPhase] = useState('');
+  const [loadingImageBySide, setLoadingImageBySide] = useState({ left: false, right: false });
   const [saving, setSaving] = useState({ left: false, right: false });
   const [restarting, setRestarting] = useState(false);
   const [status, setStatus] = useState({ text: '', isError: false });
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [restartProcess, setRestartProcess] = useState('det');
+  const [submitResult, setSubmitResult] = useState(null);
+  const [confirmRestart, setConfirmRestart] = useState(null);
+  const [restartProgress, setRestartProgress] = useState(null);
+  const restartTimeoutRef = useRef(null);
+  const restartStoppedRef = useRef(null);
+  const restartStartedRef = useRef(null);
+  const restartLogEndRef = useRef(null);
   const [fullscreen, setFullscreen] = useState(null);
   const [previewBySide, setPreviewBySide] = useState({ left: null, right: null });
   const [loadingPreviews, setLoadingPreviews] = useState(false);
   const [previewFullscreen, setPreviewFullscreen] = useState(null);
+  const [previewSectionOpen, setPreviewSectionOpen] = useState(true);
   const fullscreenScaleRef = useRef(1);
   const convertedToFullscreenRef = useRef(false);
   const fullscreenContainerRef = useRef(null);
@@ -320,6 +332,8 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
                 height: ((data.blade_channel_bottom ?? 0) - (data.blade_channel_top ?? 0)) * s2,
               },
             }));
+          } else {
+            setRoiBySide((prev) => ({ ...prev, [s]: null }));
           }
         }
       });
@@ -327,62 +341,38 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
     [socket]
   );
 
-  const loadBothImages = useCallback(() => {
-    if (!socket?.connected || loadingImages) return;
-    setLoadingImages(true);
-    setStatus({ text: '', isError: false });
-    setLoadingPhase('left');
-    socket
-      .request('take_image', { camera: 'bitting_video_left', resize_factor: RESIZE_FACTOR })
-      .then((resLeft) => {
-        if (resLeft && !resLeft.success && resLeft.errors?.some((e) => String(e).toLowerCase().includes('permission'))) {
-          setPermissionDenied(true);
-        }
-        const dataLeft = resLeft?.success ? resLeft.data : null;
-        if (dataLeft?.error) {
-          setLoadingImages(false);
-          setLoadingPhase('');
-          setStatus({ text: `Left: ${dataLeft.error}`, isError: true });
-          return;
-        }
-        return parseImageData(dataLeft).then((left) => {
-          if (!left) {
-            setLoadingImages(false);
-            setLoadingPhase('');
+  const loadImageForSide = useCallback(
+    (s) => {
+      if (!socket?.connected || loadingImageBySide[s]) return;
+      const camera = s === 'left' ? 'bitting_video_left' : 'bitting_video_right';
+      setLoadingImageBySide((prev) => ({ ...prev, [s]: true }));
+      setStatus({ text: '', isError: false });
+      socket
+        .request('take_image', { camera, resize_factor: RESIZE_FACTOR })
+        .then((res) => {
+          if (res && !res.success && res.errors?.some((e) => String(e).toLowerCase().includes('permission'))) {
+            setPermissionDenied(true);
+          }
+          const data = res?.success ? res.data : null;
+          if (data?.error) {
+            setLoadingImageBySide((prev) => ({ ...prev, [s]: false }));
+            setStatus({ text: `${s}: ${data.error}`, isError: true });
             return;
           }
-          setImagesBySide((prev) => ({ ...prev, left }));
-          setLoadingPhase('right');
-          return socket
-            .request('take_image', { camera: 'bitting_video_right', resize_factor: RESIZE_FACTOR })
-            .then((resRight) => {
-              if (resRight && !resRight.success && resRight.errors?.some((e) => String(e).toLowerCase().includes('permission'))) {
-                setPermissionDenied(true);
-              }
-              const dataRight = resRight?.success ? resRight.data : null;
-              if (dataRight?.error) {
-                setLoadingImages(false);
-                setLoadingPhase('');
-                setStatus((prev) => ({ ...prev, text: `Right: ${dataRight.error}`, isError: true }));
-                return;
-              }
-              return parseImageData(dataRight).then((right) => {
-                setLoadingImages(false);
-                setLoadingPhase('');
-                setImagesBySide((prev) => ({ ...prev, right }));
-                if (!socket?.connected) return;
-                loadRoiForSide('left', left);
-                loadRoiForSide('right', right);
-              });
-            });
+          return parseImageData(data).then((img) => {
+            setLoadingImageBySide((prev) => ({ ...prev, [s]: false }));
+            if (!img) return;
+            setImagesBySide((prev) => ({ ...prev, [s]: img }));
+            if (socket?.connected) loadRoiForSide(s, img);
+          });
+        })
+        .catch((err) => {
+          setLoadingImageBySide((prev) => ({ ...prev, [s]: false }));
+          setStatus({ text: err?.message || 'Failed to load image', isError: true });
         });
-      })
-      .catch((err) => {
-        setLoadingImages(false);
-        setLoadingPhase('');
-        setStatus({ text: err?.message || 'Failed to load images', isError: true });
-      });
-  }, [socket, loadingImages, parseImageData, loadRoiForSide]);
+    },
+    [socket, loadingImageBySide, parseImageData, loadRoiForSide]
+  );
 
   // When entering fullscreen, convert panel ROI to fullscreen coords once container has layout
   useEffect(() => {
@@ -470,50 +460,158 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
         .then((res) => {
           setSaving((prev) => ({ ...prev, [s]: false }));
           if (res?.success === false && res?.errors?.length) {
-            setStatus({ text: res.errors.join('; '), isError: true });
+            setSubmitResult({ success: false, message: res.errors.join('; ') });
             return;
           }
           const msg = res?.data?.message ?? 'Config is saved. Please restart DETs process to apply changes.';
-          setStatus({ text: msg, isError: false });
+          setSubmitResult({ success: true, message: msg });
         })
         .catch((err) => {
           setSaving((prev) => ({ ...prev, [s]: false }));
-          setStatus({ text: err?.message || 'Save failed', isError: true });
+          setSubmitResult({ success: false, message: err?.message || 'Save failed' });
         });
     },
     [socket, roiBySide, saving, getScaleForSide]
   );
 
-  const handleRestartDet = () => {
+  function clearRestartListeners() {
+    if (restartTimeoutRef.current) {
+      clearTimeout(restartTimeoutRef.current);
+      restartTimeoutRef.current = null;
+    }
+    if (socket) {
+      if (restartStoppedRef.current) {
+        socket.off('async.PROCESS_STOPPED', restartStoppedRef.current);
+        restartStoppedRef.current = null;
+      }
+      if (restartStartedRef.current) {
+        socket.off('async.PROCESS_STARTED', restartStartedRef.current);
+        restartStartedRef.current = null;
+      }
+    }
+  }
+
+  const closeRestartDialog = useCallback(() => {
+    clearRestartListeners();
+    setRestartProgress(null);
+    setConfirmRestart(null);
+    setRestarting(false);
+  }, []);
+
+  useEffect(() => {
+    return () => clearRestartListeners();
+  }, [socket]);
+
+  useEffect(() => {
+    if (restartProgress?.logLines?.length && restartLogEndRef.current) {
+      restartLogEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [restartProgress?.logLines?.length]);
+
+  const handleRestartClick = () => {
     if (!socket?.connected || restarting) return;
     const label = RESTART_PROCESS_OPTIONS.find((o) => o.value === restartProcess)?.label ?? restartProcess;
-    const warn =
-      restartProcess === 'restart_all'
-        ? 'Restart all processes? The connection will be lost.'
-        : `Restart ${label}?`;
-    if (!window.confirm(warn)) return;
+    setConfirmRestart({ process: restartProcess, label });
+  };
+
+  const handleConfirmRestart = () => {
+    if (!confirmRestart || !socket?.connected) return;
+    const { process: processName, label: processLabel } = confirmRestart;
+    setRestartProgress({
+      processName,
+      logLines: ['Request sent.'],
+      done: false,
+    });
     setRestarting(true);
-    setStatus({ text: '', isError: false });
     socket
-      .request('fleet_restart_process', { process: restartProcess })
+      .request('fleet_restart_process', { process: processName })
       .then((res) => {
-        setRestarting(false);
-        if (res?.success === false && res?.errors?.length) {
-          setStatus({ text: res.errors.join('; '), isError: true });
-          return;
-        }
-        setStatus({ text: `Restart requested: ${restartProcess}`, isError: false });
+        setRestartProgress((prev) =>
+          prev ? { ...prev, logLines: [...prev.logLines, 'Accepted.'] } : prev
+        );
+        const handlerStopped = (data) => {
+          setRestartProgress((prev) =>
+            prev ? { ...prev, logLines: [...prev.logLines, `PROCESS_STOPPED: ${data?.process ?? '?'}`] } : prev
+          );
+        };
+        const handlerStarted = (data) => {
+          const p = data?.process;
+          let matched = false;
+          setRestartProgress((prev) => {
+            if (!prev || prev.done) return prev;
+            const match = p && prev.processName && String(p).toLowerCase() === String(prev.processName).toLowerCase();
+            const next = { ...prev, logLines: [...prev.logLines, `PROCESS_STARTED: ${p ?? '?'}`], done: match };
+            if (match) matched = true;
+            return next;
+          });
+          if (matched) {
+            if (restartTimeoutRef.current) {
+              clearTimeout(restartTimeoutRef.current);
+              restartTimeoutRef.current = null;
+            }
+            setRestarting(false);
+          }
+        };
+        restartStoppedRef.current = handlerStopped;
+        restartStartedRef.current = handlerStarted;
+        socket.on('async.PROCESS_STOPPED', handlerStopped);
+        socket.on('async.PROCESS_STARTED', handlerStarted);
+        restartTimeoutRef.current = setTimeout(() => {
+          restartTimeoutRef.current = null;
+          setRestartProgress((prev) =>
+            prev && !prev.done
+              ? { ...prev, done: true, logLines: [...prev.logLines, 'Timeout waiting for process to start.'] }
+              : prev
+          );
+          setRestarting(false);
+        }, 60000);
       })
       .catch((err) => {
+        const msg = err?.message || 'Request failed';
+        setRestartProgress((prev) =>
+          prev ? { ...prev, done: true, logLines: [...prev.logLines, msg] } : prev
+        );
         setRestarting(false);
-        setStatus({ text: err?.message || 'Restart failed', isError: true });
       });
   };
 
-  const handleReset = useCallback((s) => {
+  const handleReset = useCallback(
+    (s) => {
+      setStatus({ text: '', isError: false });
+      const img = imagesBySide[s];
+      if (img && socket?.connected) loadRoiForSide(s, img);
+      else setRoiBySide((prev) => ({ ...prev, [s]: null }));
+    },
+    [imagesBySide, socket, loadRoiForSide]
+  );
+
+  const handleClearRoi = useCallback((s) => {
     setRoiBySide((prev) => ({ ...prev, [s]: null }));
     setStatus({ text: '', isError: false });
   }, []);
+
+  const handleNewRoi = useCallback(
+    (s) => {
+      const img = imagesBySide[s];
+      if (!img) return;
+      const scale = Math.min(
+        STAGE_MAX_SIDE.width / img.width,
+        STAGE_MAX_SIDE.height / img.height,
+        1
+      );
+      setRoiBySide((prev) => ({
+        ...prev,
+        [s]: {
+          x: 0,
+          y: 0,
+          width: img.width * scale,
+          height: img.height * scale,
+        },
+      }));
+      setStatus({ text: '', isError: false });
+    },
+    [imagesBySide]
+  );
 
   if (permissionDenied) {
     return (
@@ -546,41 +644,53 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
     const rect = roiBySide[s];
     const containerRef = s === 'left' ? leftContainerRef : rightContainerRef;
     const isFullscreen = fullscreen === s;
+    const loading = loadingImageBySide[s];
     return (
       <div className="flex flex-1 min-w-0 flex-col rounded-lg border border-border bg-muted/20 p-3">
         <div className="mb-2 flex items-center justify-between">
           <span className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{s} camera</span>
-          {src && (
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => {
-                if (isFullscreen) handleExitFullscreen();
-                else {
-                  convertedToFullscreenRef.current = false;
-                  setFullscreen(s);
-                }
-              }}
-              className="inline-flex items-center gap-1 rounded border border-input bg-background px-2 py-1 text-xs hover:bg-accent"
-              title="Fullscreen (Esc to exit)"
+              onClick={() => loadImageForSide(s)}
+              disabled={!socket?.connected || loading}
+              className="inline-flex items-center gap-1 rounded border border-input bg-background px-2 py-1 text-xs hover:bg-accent disabled:opacity-50"
             >
-              <Maximize2 className="size-3.5" />
-              Fullscreen
+              {loading ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              Load image
             </button>
-          )}
+            {src && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (isFullscreen) handleExitFullscreen();
+                  else {
+                    convertedToFullscreenRef.current = false;
+                    setFullscreen(s);
+                  }
+                }}
+                className="inline-flex items-center gap-1 rounded border border-input bg-background px-2 py-1 text-xs hover:bg-accent"
+                title="Fullscreen (Esc to exit)"
+              >
+                <Maximize2 className="size-3.5" />
+                Fullscreen
+              </button>
+            )}
+          </div>
         </div>
         <div ref={containerRef} className="relative min-h-[240px] w-full overflow-hidden rounded-md bg-muted/50">
-          {!src && !loadingImages && (
+          {!src && !loading && (
             <div className="flex h-[240px] w-full items-center justify-center text-sm text-muted-foreground">
-              —
+              Load image to draw ROI
             </div>
           )}
-          {loadingImages && loadingPhase === s && (
+          {loading && (
             <div className="flex h-[240px] w-full flex-col items-center justify-center gap-2">
               <Loader2 className="size-8 animate-spin text-muted-foreground" />
               <span className="text-sm text-muted-foreground">Loading {s}…</span>
             </div>
           )}
-          {src && !(loadingImages && loadingPhase === s) && (
+          {src && !loading && (
             <RoiCanvas
               imageSrc={src}
               imageSize={size}
@@ -607,11 +717,30 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
           <button
             type="button"
             onClick={() => handleReset(s)}
-            disabled={!rect}
+            disabled={!socket?.connected || !img}
             className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-2 py-1 text-sm hover:bg-accent disabled:opacity-50"
+            title="Reload ROI from server"
           >
             <RotateCcw className="size-3.5" />
             Reset
+          </button>
+          <button
+            type="button"
+            onClick={() => handleClearRoi(s)}
+            disabled={!rect}
+            className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-2 py-1 text-sm hover:bg-accent disabled:opacity-50"
+            title="Remove ROI (then use New ROI to draw)"
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            onClick={() => handleNewRoi(s)}
+            disabled={!img || !!rect}
+            className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-2 py-1 text-sm hover:bg-accent disabled:opacity-50"
+            title="Draw new ROI (full image, then resize/drag)"
+          >
+            New ROI
           </button>
         </div>
       </div>
@@ -622,55 +751,31 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <div className="flex items-start gap-2">
-            <CardTitle className="shrink-0">Bitting ROI</CardTitle>
-            <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">
-              <AlertTriangle className="size-3.5 shrink-0" />
-              Adjust only if you&apos;re familiar with ROI calibration
-            </span>
-          </div>
-          <div className="mt-2 space-y-3 text-sm text-muted-foreground">
+          <CardTitle>Bitting ROI</CardTitle>
+          <div className="mt-2 space-y-2 text-sm text-muted-foreground">
             <p>
               When calibration bitting, the kiosk detects a Region of Interest (ROI)—what the kiosk actually sees when
-              running the scanning algorithm. Anything outside this region is ignored, so these values are critical.
+              running the scanning algorithm. Anything outside this region is ignored. Restart DETs process after submitting ROI to apply changes.
             </p>
-            <p>
-              In most cases the kiosk finds the correct ROI automatically. Only in rare situations (e.g. poor bitting
-              camera quality) is human intervention needed.
-            </p>
-            <p>
-              <strong>Note:</strong> Gate side is most critical for accurate measurements. Top and bottom can be
-              bigger; right side must be maxed out. Restart DETs process after submitting ROI to apply changes.
-            </p>
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="font-medium text-foreground">Example good crops:</span>
-              <a
-                href={leftGoodCropUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-primary underline underline-offset-2 hover:no-underline"
-              >
-                <ImageIcon className="size-4 shrink-0" />
-                Left side example
-              </a>
-              <a
-                href={rightGoodCropUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-primary underline underline-offset-2 hover:no-underline"
-              >
-                <ImageIcon className="size-4 shrink-0" />
-                Right side example
-              </a>
-            </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-muted-foreground">
-              What the kiosk sees (ROI + dewarp). Check these before loading full images. Click a preview for fullscreen (Esc to close).
-            </p>
-            <div className="flex flex-wrap items-end gap-4">
+        <CardContent className="space-y-6">
+          <section className="space-y-2 rounded-lg border border-border bg-muted/10 p-3" aria-label="Preview">
+            <button
+              type="button"
+              onClick={() => setPreviewSectionOpen((open) => !open)}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset"
+              aria-expanded={previewSectionOpen}
+            >
+              {previewSectionOpen ? (
+                <ChevronDown className="size-4 shrink-0" />
+              ) : (
+                <ChevronRight className="size-4 shrink-0" />
+              )}
+              What the kiosk sees (ROI + dewarp). Check these before adjusting RIO . Click a preview for fullscreen (Esc to close).
+            </button>
+            {previewSectionOpen && (
+            <div className="flex flex-wrap items-end gap-4 border-t border-border px-3 pb-3 pt-1">
               <div className="flex flex-col gap-1">
                 <span className="text-xs font-medium text-muted-foreground">Bitting video left (ROI)</span>
                 <div
@@ -739,7 +844,35 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
                 Refresh previews
               </button>
             </div>
-          </div>
+            )}
+          </section>
+
+          <section className="space-y-2 rounded-lg border border-border bg-muted/10 p-3" aria-label="Example good crops">
+            <h3 className="text-sm font-semibold text-foreground">Example good crops</h3>
+            <p className="text-sm text-muted-foreground">
+              Reference images for how the ROI crop should look. Gate side is most critical; right side must be maxed out.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <a
+                href={leftGoodCropUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-primary underline underline-offset-2 hover:no-underline"
+              >
+                <ImageIcon className="size-4 shrink-0" />
+                Left side example
+              </a>
+              <a
+                href={rightGoodCropUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-primary underline underline-offset-2 hover:no-underline"
+              >
+                <ImageIcon className="size-4 shrink-0" />
+                Right side example
+              </a>
+            </div>
+          </section>
 
           {previewFullscreen && previewBySide[previewFullscreen] && (
             <div
@@ -772,28 +905,22 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
             </div>
           )}
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={loadBothImages}
-              disabled={!socket?.connected || loadingImages}
-              className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
-              {loadingImages ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  Loading {loadingPhase || '…'}
-                </>
-              ) : (
-                'Load images'
-              )}
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <SidePanel side="left" />
-            <SidePanel side="right" />
-          </div>
+          <section className="space-y-3" aria-label="ROI calibration">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-sm font-semibold text-foreground">ROI calibration</h3>
+              <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">
+                <AlertTriangle className="size-3.5 shrink-0" />
+                Adjust only if you&apos;re familiar with ROI calibration
+              </span>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Load an image per side, then adjust the blue rectangle (drag or resize). Submit to save. Reset reloads from server; Clear removes the box; New ROI draws a full-image box to adjust.
+            </p>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <SidePanel side="left" />
+              <SidePanel side="right" />
+            </div>
+          </section>
 
           {status.text && (
             <p className={cn('text-sm', status.isError ? 'text-destructive' : 'text-muted-foreground')}>
@@ -801,7 +928,7 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
             </p>
           )}
 
-          <div className="flex flex-wrap items-center gap-2 border-t border-border pt-2">
+          <section className="flex flex-wrap items-center gap-2 border-t border-border pt-4" aria-label="Restart to apply">
             <span className="text-sm font-medium">Restart to apply:</span>
             <select
               value={restartProcess}
@@ -816,16 +943,111 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
             </select>
             <button
               type="button"
-              onClick={handleRestartDet}
+              onClick={handleRestartClick}
               disabled={!socket?.connected || restarting}
               className="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50"
             >
               {restarting ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
-              Restart DETs process
+              Restart
             </button>
-          </div>
+          </section>
         </CardContent>
       </Card>
+
+      <Dialog open={!!submitResult} onOpenChange={(open) => !open && setSubmitResult(null)}>
+        <DialogContent onClose={() => setSubmitResult(null)}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {submitResult?.success ? (
+                <>
+                  <CheckCircle className="size-5 text-green-600" aria-hidden />
+                  ROI saved
+                </>
+              ) : (
+                <>
+                  <XCircle className="size-5 text-destructive" aria-hidden />
+                  Save failed
+                </>
+              )}
+            </DialogTitle>
+            <DialogDescription>{submitResult?.message}</DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+              onClick={() => setSubmitResult(null)}
+            >
+              OK
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!confirmRestart}
+        onOpenChange={(open) => {
+          if (!open && (!restartProgress || restartProgress.done)) closeRestartDialog();
+        }}
+      >
+        <DialogContent
+          showClose={!(restartProgress != null && !restartProgress.done)}
+          onClose={closeRestartDialog}
+        >
+          {confirmRestart && restartProgress != null ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Restart process</DialogTitle>
+                <DialogDescription>Restarting {confirmRestart.label}.</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3">
+                <div
+                  className="max-h-32 overflow-y-auto rounded border bg-muted/30 p-2 font-mono text-xs"
+                  role="log"
+                  aria-live="polite"
+                >
+                  {restartProgress.logLines.map((line, i) => (
+                    <div key={i}>{line}</div>
+                  ))}
+                  <div ref={restartLogEndRef} />
+                </div>
+                <div className="flex items-center gap-2">
+                  {!restartProgress.done && (
+                    <>
+                      <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+                      <span className="text-sm text-muted-foreground">Restarting…</span>
+                    </>
+                  )}
+                </div>
+                {restartProgress.done && (
+                  <div className="flex justify-end">
+                    <button type="button" className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90" onClick={closeRestartDialog}>
+                      Close
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : confirmRestart ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Restart process</DialogTitle>
+                <DialogDescription>
+                  Are you sure you want to restart &quot;{confirmRestart.label}&quot;?
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-0">
+                <button type="button" className="inline-flex items-center justify-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium hover:bg-accent disabled:opacity-50" onClick={closeRestartDialog}>
+                  Cancel
+                </button>
+                <button type="button" className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 ml-2" onClick={handleConfirmRestart} disabled={restarting}>
+                  {restarting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : 'Confirm'}
+                </button>
+              </div>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       {fullscreen && (
         <div className="fixed inset-0 z-50 flex flex-col bg-background">
