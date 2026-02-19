@@ -216,7 +216,8 @@ def fleet_clear_cutter_stuck(data):
         proc = subprocess.run(
             [sys.executable, script, '--remove-stuck'],
             cwd=cwd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             timeout=30,
         )
         if proc.returncode == 0:

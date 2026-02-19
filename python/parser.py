@@ -28,6 +28,10 @@ class ControlPanelParser(keyme.ipc.Parser):
         """Manager notifies that a process has stopped. Forwarded to UI in handle_async (channel calls handle_async, not this)."""
         pass
 
+    def handle_async_RESET_RESULT(self, request):
+        """DEVICE_DIRECTOR sends RESET_RESULT per device to CONTROL_PANEL."""
+        pass
+
     def handle_PING(self, request):
         """Sync handler so other services can validate the IPC path."""
         return request.response("OK", {"pong": True})
