@@ -338,16 +338,7 @@ def _get_wss_api_key() -> Optional[str]:
         if not secret_str:
             log.warning("WSS secret SecretString is empty")
             return None
-        try:
-            secret = json.loads(secret_str)
-            key = secret.get(WSS_API_KEY_FIELD) or secret.get("api_key")
-        except (ValueError, TypeError):
-            key = secret_str
-        if not key or not isinstance(key, str):
-            log.warning(f"WSS secret has no usable API key (plain string or JSON with {WSS_API_KEY_FIELD}/api_key)")
-            return None
-        _wss_api_key = key
-        return _wss_api_key
+        return secret_str
     except Exception as e:
         log.warning(f"WSS API key fetch failed: {e}")
         return None
