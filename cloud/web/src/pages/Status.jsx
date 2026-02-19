@@ -205,7 +205,7 @@ function WtfWhyDegraded({ wtf, whyDegraded }) {
     <div className="space-y-2 rounded-md border border-border bg-muted/30 px-3 py-2 font-mono text-sm">
       <div className="flex flex-col gap-0.5">
         <div className="flex flex-wrap gap-x-1.5">
-          <span className="text-muted-foreground">wtf:</span>
+          <span className="text-muted-foreground" title="Short list of which abilities are currently degraded (comma-separated names).">wtf:</span>
           <span className="text-foreground">{wtfOut ?? '—'}</span>
         </div>
         {wtfErr && (
@@ -215,7 +215,7 @@ function WtfWhyDegraded({ wtf, whyDegraded }) {
         )}
       </div>
       <div className="flex flex-col gap-1">
-        <span className="text-muted-foreground">why-degraded:</span>
+        <span className="text-muted-foreground" title="For each degraded ability, the reason or details (e.g. which process or condition causes it).">why-degraded:</span>
         {parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (
           <div className="flex flex-col gap-1.5 text-foreground">
             {Object.entries(parsed).map(([key, val]) => (
@@ -270,7 +270,7 @@ function CamerasMatrix({ status }) {
   return (
     <Card id="section-cameras">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
+        <CardTitle className="flex items-center gap-2" title="Status of kiosk cameras (bitting, milling, gripper, inventory, security, etc.): connection, whether frames are received, and ready state from the abilities manager.">
           <Camera className="size-4 shrink-0 text-muted-foreground" aria-hidden />
           Cameras
         </CardTitle>
@@ -353,7 +353,7 @@ function DevicesGrid({ status }) {
   return (
     <Card id="section-devices">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
+        <CardTitle className="flex items-center gap-2" title="Hardware devices reported by the kiosk (e.g. readers, printers): whether each device is currently available.">
           <Wrench className="size-4 shrink-0 text-muted-foreground" aria-hidden />
           Devices
         </CardTitle>
