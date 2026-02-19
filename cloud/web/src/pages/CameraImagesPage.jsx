@@ -49,9 +49,9 @@ const CAMERA_DESCRIPTIONS = {
   inventory_camera:
     'Camera that views the key inventory or magazine area.',
   bitting_video_left_roi_box:
-    'Left key scanner with the ROI (region of interest) crop box drawn on the image. Useful for calibration.',
+    'Left key scanner with the ROI (region of interest) crop box drawn on the image. This is what kiosk actually sees when it scans the key.',
   bitting_video_right_roi_box:
-    'Right key scanner with the ROI crop box drawn on the image. Useful for calibration.',
+    'Right key scanner with the ROI crop box drawn on the image. This is what kiosk actually sees when it scans the key.',
 };
 
 const SCALE_OPTIONS = [
