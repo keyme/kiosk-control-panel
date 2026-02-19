@@ -44,6 +44,8 @@ _ANF_BASE_URLS: dict[str, str] = {
 
 ANF_BASE_URL: str = _ANF_BASE_URLS[API_ENV]
 
+# TODO: Remove stg permission bypass below once we figure out how to re-enable permissions in stg.
+
 # ---------------------------------------------------------------------------
 # Token cache (connect-time check_kiosk_status)
 # ---------------------------------------------------------------------------
@@ -103,7 +105,8 @@ def validate_token(token: str | None) -> dict:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     data = resp.json()
-    if not data.get("granted"):
+    # In stg, require valid token only; skip permission check. Re-enable later.
+    if API_ENV != "stg" and not data.get("granted"):
         log.info("Permission not granted: required=%s response=%s", REQUIRED_PERMISSION_SLUG, data)
         raise HTTPException(
             status_code=401,
@@ -146,7 +149,8 @@ async def validate_token_async(client: httpx.AsyncClient, token: str | None) -> 
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     data = resp.json()
-    if not data.get("granted"):
+    # In stg, require valid token only; skip permission check. Re-enable later.
+    if API_ENV != "stg" and not data.get("granted"):
         log.info("Permission not granted: required=%s response=%s", REQUIRED_PERMISSION_SLUG, data)
         raise HTTPException(
             status_code=401,
@@ -170,9 +174,12 @@ def validate_permission(token: str | None, permission_slug: str) -> tuple[bool, 
 
     user_identifier is from ANF response (e.g. email) when present, for use in error messages.
     Safe to call from WebSocket handler (run in executor if async).
+    In stg, permission check is bypassed (always granted) so user only needs to be logged in.
     """
     if not token:
         return (False, None)
+    if API_ENV == "stg":
+        return (True, None)
     key = (token, permission_slug)
     with _cache_lock:
         cached = _permission_cache.get(key)
@@ -208,9 +215,13 @@ def validate_permission(token: str | None, permission_slug: str) -> tuple[bool, 
 async def validate_permission_async(
     client: httpx.AsyncClient, token: str | None, permission_slug: str
 ) -> tuple[bool, str | None]:
-    """Async permission check for WebSocket path. Same contract as validate_permission."""
+    """Async permission check for WebSocket path. Same contract as validate_permission.
+    In stg, permission check is bypassed (always granted).
+    """
     if not token:
         return (False, None)
+    if API_ENV == "stg":
+        return (True, None)
     key = (token, permission_slug)
     with _cache_lock:
         cached = _permission_cache.get(key)
