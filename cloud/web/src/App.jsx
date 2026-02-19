@@ -264,7 +264,7 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
       )}
       {!connected && deviceHost.trim() && !connectionRejected && !disconnectedDueToInactivity && (
         <div className="shrink-0 bg-amber-500/15 px-4 py-2 text-center text-sm text-amber-800 dark:text-amber-200" role="alert">
-          No connection to the kiosk, only limited functionality would be available.
+          No connection to the kiosk, only calibration page would be available.
         </div>
       )}
 
