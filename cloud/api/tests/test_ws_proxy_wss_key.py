@@ -30,27 +30,29 @@ class TestGetWssApiKey:
         assert result == fake_key
         assert _get_wss_api_key() == fake_key  # cache hit
 
-    def test_returns_json_wss_api_key_field(self):
+    def test_returns_secret_string_as_is_when_json_shaped(self):
+        """Secret is stored as plain text; JSON-shaped value is returned unchanged."""
         _reset_wss_key()
-        fake_key = "json-key-456"
-        mock_response = {"SecretString": json.dumps({"WSS_API_KEY": fake_key})}
+        secret_str = json.dumps({"WSS_API_KEY": "json-key-456"})
+        mock_response = {"SecretString": secret_str}
         with patch("control_panel.cloud.api.main.boto3") as mock_boto:
             mock_client = MagicMock()
             mock_client.get_secret_value.return_value = mock_response
             mock_boto.client.return_value = mock_client
             result = _get_wss_api_key()
-        assert result == fake_key
+        assert result == secret_str
 
-    def test_returns_json_api_key_field(self):
+    def test_returns_secret_string_as_is_when_contains_api_key_key(self):
+        """Secret is stored as plain text; value with api_key key is returned unchanged."""
         _reset_wss_key()
-        fake_key = "api-key-field"
-        mock_response = {"SecretString": json.dumps({"api_key": fake_key})}
+        secret_str = json.dumps({"api_key": "api-key-field"})
+        mock_response = {"SecretString": secret_str}
         with patch("control_panel.cloud.api.main.boto3") as mock_boto:
             mock_client = MagicMock()
             mock_client.get_secret_value.return_value = mock_response
             mock_boto.client.return_value = mock_client
             result = _get_wss_api_key()
-        assert result == fake_key
+        assert result == secret_str
 
     def test_returns_none_on_exception(self):
         _reset_wss_key()
@@ -67,13 +69,13 @@ class TestWsProxyWssKey:
 
     @pytest.fixture
     def client_with_ws_auth(self):
-        """TestClient with validate_token mocked so /ws accepts the handshake."""
+        """TestClient with validate_token_async mocked so /ws accepts the handshake."""
         from control_panel.cloud.api.auth import get_current_user
         from control_panel.cloud.api.main import app
         from starlette.testclient import TestClient
 
         app.dependency_overrides.pop(get_current_user, None)
-        with patch("control_panel.cloud.api.main.validate_token"):
+        with patch("control_panel.cloud.api.main.validate_token_async"):
             with TestClient(app) as c:
                 yield c
         from control_panel.cloud.api.main import app as app2

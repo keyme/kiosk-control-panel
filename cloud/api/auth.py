@@ -11,6 +11,7 @@ Token validation flow:
 
 import logging
 import os
+import threading
 
 import httpx
 from cachetools import TTLCache
@@ -55,6 +56,9 @@ _token_cache: TTLCache = TTLCache(maxsize=1000, ttl=300)
 
 _permission_cache: TTLCache = TTLCache(maxsize=2000, ttl=300)
 
+# Lock for thread-safe cache access (sync REST and async WS paths both touch caches).
+_cache_lock = threading.Lock()
+
 # ---------------------------------------------------------------------------
 # FastAPI security scheme (shows "Authorize" button in /docs)
 # ---------------------------------------------------------------------------
@@ -76,9 +80,10 @@ def validate_token(token: str | None) -> dict:
         raise HTTPException(status_code=401, detail="Missing KEYME-TOKEN header")
 
     # Cache hit ---------------------------------------------------------------
-    cached = _token_cache.get(token)
-    if cached is not None:
-        return cached
+    with _cache_lock:
+        cached = _token_cache.get(token)
+        if cached is not None:
+            return cached
 
     # Validate against ANF ----------------------------------------------------
     url = f"{ANF_BASE_URL}/api/permission/check"
@@ -109,7 +114,50 @@ def validate_token(token: str | None) -> dict:
         )
 
     # Cache successful validation ---------------------------------------------
-    _token_cache[token] = data
+    with _cache_lock:
+        _token_cache[token] = data
+    return data
+
+
+async def validate_token_async(client: httpx.AsyncClient, token: str | None) -> dict:
+    """Async token validation for WebSocket path. Same contract as validate_token."""
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing KEYME-TOKEN header")
+
+    with _cache_lock:
+        cached = _token_cache.get(token)
+        if cached is not None:
+            return cached
+
+    url = f"{ANF_BASE_URL}/api/permission/check"
+    try:
+        resp = await client.get(
+            url,
+            params={"permission_slug": REQUIRED_PERMISSION_SLUG},
+            headers={"KEYME-TOKEN": token},
+            timeout=10.0,
+        )
+    except httpx.HTTPError as exc:
+        log.warning("ANF permission check failed: %s", exc)
+        raise HTTPException(status_code=401, detail="Token validation failed") from exc
+
+    if resp.status_code != 200:
+        log.info("ANF returned %s for permission check", resp.status_code)
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    data = resp.json()
+    if not data.get("granted"):
+        log.info("Permission not granted: required=%s response=%s", REQUIRED_PERMISSION_SLUG, data)
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                f'Access denied. Permission "{REQUIRED_PERMISSION_SLUG}" must be granted in '
+                f"{PERMISSIONS_ADMIN_URL}"
+            ),
+        )
+
+    with _cache_lock:
+        _token_cache[token] = data
     return data
 
 
@@ -126,11 +174,12 @@ def validate_permission(token: str | None, permission_slug: str) -> tuple[bool, 
     if not token:
         return (False, None)
     key = (token, permission_slug)
-    cached = _permission_cache.get(key)
-    if cached is not None:
-        granted = bool(cached.get("granted"))
-        user_id = cached.get("email") or cached.get("user_id")
-        return (granted, user_id)
+    with _cache_lock:
+        cached = _permission_cache.get(key)
+        if cached is not None:
+            granted = bool(cached.get("granted"))
+            user_id = cached.get("email") or cached.get("user_id")
+            return (granted, user_id)
 
     url = f"{ANF_BASE_URL}/api/permission/check"
     try:
@@ -151,7 +200,46 @@ def validate_permission(token: str | None, permission_slug: str) -> tuple[bool, 
     data = resp.json()
     granted = bool(data.get("granted"))
     user_id = data.get("email") or data.get("user_id")
-    _permission_cache[key] = data
+    with _cache_lock:
+        _permission_cache[key] = data
+    return (granted, user_id)
+
+
+async def validate_permission_async(
+    client: httpx.AsyncClient, token: str | None, permission_slug: str
+) -> tuple[bool, str | None]:
+    """Async permission check for WebSocket path. Same contract as validate_permission."""
+    if not token:
+        return (False, None)
+    key = (token, permission_slug)
+    with _cache_lock:
+        cached = _permission_cache.get(key)
+        if cached is not None:
+            granted = bool(cached.get("granted"))
+            user_id = cached.get("email") or cached.get("user_id")
+            return (granted, user_id)
+
+    url = f"{ANF_BASE_URL}/api/permission/check"
+    try:
+        resp = await client.get(
+            url,
+            params={"permission_slug": permission_slug},
+            headers={"KEYME-TOKEN": token},
+            timeout=10.0,
+        )
+    except httpx.HTTPError as exc:
+        log.warning("ANF permission check failed for %s: %s", permission_slug, exc)
+        return (False, None)
+
+    if resp.status_code != 200:
+        log.info("ANF returned %s for permission check slug=%s", resp.status_code, permission_slug)
+        return (False, None)
+
+    data = resp.json()
+    granted = bool(data.get("granted"))
+    user_id = data.get("email") or data.get("user_id")
+    with _cache_lock:
+        _permission_cache[key] = data
     return (granted, user_id)
 
 

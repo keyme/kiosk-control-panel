@@ -38,11 +38,23 @@ class MockDeviceACM:
         return None
 
 
+async def _mock_permission_denied(*a, **k):
+    return (False, None)
+
+
+async def _mock_permission_denied_with_user(*a, **k):
+    return (False, "user@example.com")
+
+
+async def _mock_permission_granted(*a, **k):
+    return (True, None)
+
+
 @pytest.fixture
 def client_with_ws_auth():
-    """TestClient with validate_token mocked so /ws accepts the handshake."""
+    """TestClient with validate_token_async mocked so /ws accepts the handshake."""
     app.dependency_overrides.pop(get_current_user, None)
-    with patch("control_panel.cloud.api.main.validate_token"):
+    with patch("control_panel.cloud.api.main.validate_token_async"):
         with TestClient(app) as c:
             yield c
     app.dependency_overrides[get_current_user] = lambda: {
@@ -61,8 +73,8 @@ class TestWsProxyFleetPermissionDenied:
                 return_value=MockDeviceACM(),
             ):
                 with patch(
-                    "control_panel.cloud.api.main.validate_permission",
-                    return_value=(False, None),
+                    "control_panel.cloud.api.main.validate_permission_async",
+                    side_effect=_mock_permission_denied,
                 ):
                     with client_with_ws_auth.websocket_connect(
                         "/ws?device=ns9999&token=any"
@@ -91,8 +103,8 @@ class TestWsProxyFleetPermissionDenied:
                 return_value=MockDeviceACM(),
             ):
                 with patch(
-                    "control_panel.cloud.api.main.validate_permission",
-                    return_value=(False, "user@example.com"),
+                    "control_panel.cloud.api.main.validate_permission_async",
+                    side_effect=_mock_permission_denied_with_user,
                 ):
                     with client_with_ws_auth.websocket_connect(
                         "/ws?device=ns9999&token=any"
@@ -133,8 +145,8 @@ class TestWsProxyFleetPermissionGranted:
                 return_value=CapturingACM(),
             ):
                 with patch(
-                    "control_panel.cloud.api.main.validate_permission",
-                    return_value=(True, None),
+                    "control_panel.cloud.api.main.validate_permission_async",
+                    side_effect=_mock_permission_granted,
                 ):
                     with client_with_ws_auth.websocket_connect(
                         "/ws?device=ns9999&token=any"

@@ -12,6 +12,7 @@ import ssl
 from typing import Any, Optional, Tuple
 
 import boto3
+import httpx
 
 try:
     import resource  # POSIX-only (for ulimit)
@@ -41,8 +42,8 @@ from control_panel.cloud.api.auth import (
     ANF_BASE_URL,
     API_ENV,
     PERMISSIONS_ADMIN_URL,
-    validate_token,
-    validate_permission,
+    validate_token_async,
+    validate_permission_async,
 )
 from control_panel.cloud.api.ws_fleet_permissions import (
     FLEET_EVENTS_REQUIRING_PERMISSION,
@@ -233,7 +234,9 @@ async def _lifespan(app: FastAPI):
         API_ENV,
         ANF_BASE_URL,
     )
-    yield
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        app.state.httpx_client = client
+        yield
 
 
 app = FastAPI(title="Control Panel Cloud", lifespan=_lifespan)
@@ -320,6 +323,8 @@ async def health() -> dict[str, Any]:
 
 # In-memory cache: fqdn -> PEM string (device public cert from S3).
 _device_cert_cache: dict[str, str] = {}
+# In-memory cache: fqdn -> SSLContext (reused for device WSS connections).
+_device_ssl_ctx_cache: dict[str, ssl.SSLContext] = {}
 
 # In-memory cache for WSS API key (cloud-to-device auth). Fetched from AWS Secrets Manager.
 _wss_api_key: Optional[str] = None
@@ -337,7 +342,8 @@ def _get_wss_api_key() -> Optional[str]:
         if not secret_str:
             log.warning("WSS secret SecretString is empty")
             return None
-        return secret_str
+        _wss_api_key = secret_str
+        return _wss_api_key
     except Exception as e:
         log.warning(f"WSS API key fetch failed: {e}")
         return None
@@ -374,8 +380,11 @@ def _device_ws_backend(device_host: str) -> Tuple[str, str, str, Optional[ssl.SS
         if pem is not None:
             _device_cert_cache[with_domain] = pem
     if pem is not None:
-        ctx = ssl.create_default_context()
-        ctx.load_verify_locations(cadata=pem)
+        ctx = _device_ssl_ctx_cache.get(with_domain)
+        if ctx is None:
+            ctx = ssl.create_default_context()
+            ctx.load_verify_locations(cadata=pem)
+            _device_ssl_ctx_cache[with_domain] = ctx
         return url, with_domain, kiosk_name_upper, ctx, True
     log.warning(f"No device cert for {with_domain}, using unverified TLS")
     ctx = ssl.create_default_context()
@@ -391,10 +400,10 @@ async def ws_proxy(websocket: WebSocket):
     if not token:
         await websocket.close(code=4401, reason="missing token")
         return
+    app = websocket.scope["app"]
+    client = app.state.httpx_client
     try:
-        await asyncio.get_event_loop().run_in_executor(
-            None, lambda t=token: validate_token(t)
-        )
+        await validate_token_async(client, token)
     except HTTPException:
         log.info("ws proxy token validation failed")
         await websocket.close(code=4401, reason="invalid token")
@@ -427,7 +436,6 @@ async def ws_proxy(websocket: WebSocket):
                 log.info(f"ws proxy connected to device device={device} url={backend_url}")
 
             async def client_to_device():
-                loop = asyncio.get_event_loop()
                 try:
                     while True:
                         data = await websocket.receive_text()
@@ -444,8 +452,8 @@ async def ws_proxy(websocket: WebSocket):
                         if slug is None:
                             await device_ws.send(data)
                             continue
-                        granted, user_identifier = await loop.run_in_executor(
-                            None, lambda t=token, s=slug: validate_permission(t, s)
+                        granted, user_identifier = await validate_permission_async(
+                            client, token, slug
                         )
                         if not granted:
                             if user_identifier:
@@ -494,6 +502,7 @@ async def ws_proxy(websocket: WebSocket):
     except (TimeoutError, Exception) as first_error:
         # On connection failure: invalidate cache, refetch from S3, retry once (handles device replacement).
         _device_cert_cache.pop(host_fqdn, None)
+        _device_ssl_ctx_cache.pop(host_fqdn, None)
         refetch_pem = _get_device_cert_from_s3(host_fqdn, kiosk_name_upper)
         if refetch_pem is not None:
             _device_cert_cache[host_fqdn] = refetch_pem
