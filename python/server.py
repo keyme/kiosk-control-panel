@@ -828,6 +828,28 @@ def get_data_usage():
     return WebsocketSuccess(result).to_json()
 
 
+# Log list and tail (one tail per client; allowlist-only paths).
+from control_panel.python import log_tail as _log_tail_module
+
+
+def get_log_list():
+    """Return { logs: [ { id, label, path, type }, ... ] }. Path is server-side allowlist only."""
+    keyme.log.info("WS: requesting get_log_list")
+    return _log_tail_module.get_log_list()
+
+
+def log_tail_start(client_id, data, send_callback, push_event):
+    """Start tailing log_id; initial_lines capped at 200. Stops any existing tail for this client."""
+    keyme.log.info("WS: requesting log_tail_start client_id=%s log_id=%s", client_id, (data or {}).get('log_id'))
+    return _log_tail_module.log_tail_start(client_id, data or {}, send_callback, push_event)
+
+
+def log_tail_stop(client_id):
+    """Stop active tail for client_id. Called on log_tail_stop request or client disconnect."""
+    keyme.log.info("WS: requesting log_tail_stop client_id=%s", client_id)
+    return _log_tail_module.log_tail_stop(client_id)
+
+
 # Fleet commands (state-changing) live in fleet_commands.py; re-export so ws_server and parser keep working.
 from control_panel.python import fleet_commands
 

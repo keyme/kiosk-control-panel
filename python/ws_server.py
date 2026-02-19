@@ -33,6 +33,8 @@ FLEET_EVENT_NAMES = frozenset((
     "fleet_switch_process_list",
 ))
 from control_panel.fleet_permissions import EVENT_TO_PERMISSION
+from control_panel.python import log_tail as _log_tail_module
+
 assert FLEET_EVENT_NAMES == frozenset(EVENT_TO_PERMISSION.keys()), (
     "FLEET_EVENT_NAMES in ws_server must match EVENT_TO_PERMISSION in control_panel.fleet_permissions"
 )
@@ -123,6 +125,14 @@ def _dispatch_request(client_id, request_id, event, data, connection_count):
             send_progress=lambda p: _schedule_send(client_id, {'event': ws_protocol.PUSH_WELLNESS_PROGRESS, 'data': p})
         ),
         'get_data_usage': lambda: handlers.get_data_usage(),
+        'get_log_list': lambda: handlers.get_log_list(),
+        'log_tail_start': lambda: handlers.log_tail_start(
+            client_id,
+            data or {},
+            lambda cid, obj: _schedule_send(cid, obj),
+            ws_protocol.PUSH_LOG_TAIL_LINE,
+        ),
+        'log_tail_stop': lambda: handlers.log_tail_stop(client_id),
         'fleet_restart_process': lambda: handlers.fleet_restart_process(data or {}),
         'fleet_reset_device': lambda: handlers.fleet_reset_device(data or {}),
         'fleet_switch_process_list': lambda: handlers.fleet_switch_process_list(data or {}),
@@ -269,6 +279,7 @@ async def _handler(ws, path):
             _connected_clients.pop(client_id, None)
             count = len(_connected_clients)
         _write_connection_count(count)
+        _log_tail_module.log_tail_stop(client_id)
         with _wellness_client_lock:
             if _wellness_client_id == client_id:
                 _wellness_client_id = None

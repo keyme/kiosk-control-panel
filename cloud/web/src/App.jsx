@@ -24,6 +24,7 @@ import ConfigPage from '@/pages/ConfigPage';
 import WellnessCheck from '@/pages/WellnessCheck';
 import DataUsage from '@/pages/DataUsage';
 import FleetCommands from '@/pages/FleetCommands';
+import LogTailPage from '@/pages/LogTailPage';
 
 const TestcutsImagesPage = lazy(() => import('@/pages/TestcutsImagesPage'));
 const BittingCalibrationImagesPage = lazy(() => import('@/pages/BittingCalibrationImagesPage'));
@@ -555,6 +556,7 @@ function AppContent() {
               <Route path="data-usage" element={<DataUsage socket={socket} />} />
               <Route path="wellness" element={<WellnessCheck socket={socket} />} />
               <Route path="fleet" element={<FleetCommands connected={connected} socket={socket} />} />
+              <Route path="logs" element={<LogTailPage socket={socket} />} />
             </Route>
           </Routes>
         </Layout>

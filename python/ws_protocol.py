@@ -16,14 +16,18 @@ REQUEST_EVENTS = (
     'take_image',
     'get_wellness_check',
     'get_data_usage',
+    'get_log_list',
+    'log_tail_start',
+    'log_tail_stop',
 )
 
 # Events that accept optional "data" in the request.
-EVENTS_WITH_DATA = frozenset(('take_image',))
+EVENTS_WITH_DATA = frozenset(('take_image', 'log_tail_start'))
 
 # Push events (server -> client, no id).
 PUSH_HELLO = 'hello'
 PUSH_WELLNESS_PROGRESS = 'wellness_progress'
+PUSH_LOG_TAIL_LINE = 'log_tail_line'
 PUSH_ASYNC_PREFIX = 'async.'
 
 # Response: success shape has "success": True and "data"; error has "success": False and "errors".
