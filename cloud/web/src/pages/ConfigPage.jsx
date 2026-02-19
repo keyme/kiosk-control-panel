@@ -1,7 +1,7 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageTitle } from '@/components/PageTitle';
-import { Download, Loader2, Settings } from 'lucide-react';
+import { Download, Loader2, Search, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import JSONEditor from 'jsoneditor';
 import 'jsoneditor/dist/jsoneditor.min.css';
@@ -16,6 +16,7 @@ export default function ConfigPage({ socket }) {
   const [error, setError] = useState(null);
   const [selectedProcess, setSelectedProcess] = useState(null);
   const [selectedFilename, setSelectedFilename] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const editorRef = useRef(null);
   const editorInstanceRef = useRef(null);
 
@@ -35,6 +36,7 @@ export default function ConfigPage({ socket }) {
         setError(null);
         setSelectedProcess(null);
         setSelectedFilename(null);
+        setSearchQuery('');
       } else {
         const errMsg = Array.isArray(res?.errors)
           ? res.errors.join(', ')
@@ -64,8 +66,29 @@ export default function ConfigPage({ socket }) {
   const hasConfigs =
     (configs && Object.keys(configs).length > 0) || hardware != null;
 
+  const searchMatches = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q || !hasConfigs) return [];
+    const matches = [];
+    if (hardware != null) {
+      const s = JSON.stringify(hardware).toLowerCase();
+      if (s.includes(q)) matches.push({ process: GLOBAL_HARDWARE_LABEL, filename: HARDWARE_FILENAME });
+    }
+    if (configs) {
+      for (const process of Object.keys(configs)) {
+        for (const filename of Object.keys(configs[process] || {})) {
+          const content = configs[process][filename];
+          const s = JSON.stringify(content).toLowerCase();
+          if (s.includes(q)) matches.push({ process, filename });
+        }
+      }
+    }
+    return matches;
+  }, [configs, hardware, searchQuery, hasConfigs]);
+
   useEffect(() => {
     const el = editorRef.current;
+    const queryToApply = searchQuery.trim();
     if (!el) return;
     if (selectedConfig === null || selectedConfig === undefined) {
       if (editorInstanceRef.current) {
@@ -86,6 +109,16 @@ export default function ConfigPage({ socket }) {
     });
     editor.set(selectedConfig);
     editorInstanceRef.current = editor;
+    if (queryToApply && editor.searchBox) {
+      setTimeout(() => {
+        if (!editorInstanceRef.current || editorInstanceRef.current !== editor) return;
+        const box = editor.searchBox;
+        if (!box || !box.dom || !box.dom.search) return;
+        box.dom.search.value = queryToApply;
+        box._onSearch(true);
+        if (box.results && box.results.length > 0) box.next(true);
+      }, 0);
+    }
     return () => {
       if (editorInstanceRef.current) {
         editorInstanceRef.current.destroy();
@@ -134,7 +167,53 @@ export default function ConfigPage({ socket }) {
         </p>
       )}
       {hasConfigs && (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,12rem)_minmax(0,16rem)_1fr]">
+        <>
+          <div className="flex flex-col gap-2">
+            <label htmlFor="config-global-search" className="text-muted-foreground text-sm font-medium">
+              Search across all configs
+            </label>
+            <div className="relative">
+              <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" aria-hidden />
+              <input
+                id="config-global-search"
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search across all configs…"
+                className="w-full max-w-md rounded-md border border-input bg-background py-2 pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-ring"
+                aria-label="Search across all configs"
+              />
+            </div>
+            {searchQuery.trim() && (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-muted-foreground text-sm">
+                  {searchMatches.length} {searchMatches.length === 1 ? 'file' : 'files'}
+                </span>
+                <ul className="max-h-[200px] overflow-y-auto rounded-md border border-border bg-muted/30 p-1.5">
+                  {searchMatches.map(({ process: p, filename: f }) => (
+                    <li key={`${p}/${f}`}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedProcess(p);
+                          setSelectedFilename(f);
+                        }}
+                        className={cn(
+                          'w-full rounded px-2 py-1.5 text-left text-sm',
+                          selectedProcess === p && selectedFilename === f
+                            ? 'bg-sidebar-accent font-medium'
+                            : 'hover:bg-muted'
+                        )}
+                      >
+                        {p} / {f}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,12rem)_minmax(0,16rem)_1fr]">
           <Card>
             <CardContent className="p-2">
               <div className="text-muted-foreground mb-1.5 text-xs font-medium uppercase tracking-wider">
@@ -216,7 +295,8 @@ export default function ConfigPage({ socket }) {
               )}
             </CardContent>
           </Card>
-        </div>
+          </div>
+        </>
       )}
     </div>
   );
