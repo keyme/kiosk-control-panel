@@ -303,7 +303,7 @@ def run():
     _wss_api_key = keyme.keyring_utils.safe_get_password(WSS_KEYRING_SERVICE, WSS_KEYRING_USERNAME)
     if not _wss_api_key:
         threading.Thread(target=_load_wss_api_key, daemon=True).start()
-    _executor = ThreadPoolExecutor(max_workers=4)
+    _executor = ThreadPoolExecutor(max_workers=2)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     _async_loop = loop

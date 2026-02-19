@@ -39,7 +39,8 @@ _cache = {}
 _cache_lock = threading.Lock()
 if os.path.isfile(_cfg_path):
     try:
-        _cfg = _json.load(open(_cfg_path))
+        with open(_cfg_path) as f:
+            _cfg = _json.load(f)
         _CACHE_TTL_FAST_SEC = _cfg.get("cache_ttl_fast_sec", _CACHE_TTL_FAST_SEC)
         _CACHE_TTL_SLOW_SEC = _cfg.get("cache_ttl_slow_sec", _CACHE_TTL_SLOW_SEC)
     except Exception:
