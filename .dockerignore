@@ -1,0 +1,31 @@
+# Dependencies and build artifacts (recreated in image)
+cloud/web/node_modules
+cloud/web/dist
+
+# Python
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.venv
+venv
+*.egg-info
+*.egg
+
+# Test and tooling
+cloud/.pytest_cache
+cloud/api/tests
+**/.coverage
+**/htmlcov
+.pytest_cache
+
+# Git and IDE
+.git
+.gitignore
+**/.DS_Store
+**/*.swp
+**/*.swo
+
+# Env and local config
+.env
+.env.*
+!.env.example

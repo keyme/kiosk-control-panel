@@ -51,7 +51,6 @@ from control_panel.cloud.api.ws_fleet_permissions import (
 from control_panel.shared import (
     DEVICE_CERTS_BUCKET,
     WSS_SECRET_ID,
-    WSS_API_KEY_FIELD,
     WSS_CERTS_S3_PREFIX,
     WS_PORT,
     WS_PATH,
