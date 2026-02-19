@@ -482,6 +482,7 @@ async def ws_proxy(websocket: WebSocket):
         log.debug("ws_proxy timing wss_key_ms=%.2f", wss_key_ms)
         connect_kwargs: dict = {"ssl": ssl_ctx} if ssl_ctx is not None else {}
         connect_kwargs["additional_headers"] = {"Authorization": "Bearer " + wss_key}
+        connect_kwargs["max_size"] = 10 * 1024 * 1024  # 10 MiB; device may send large take_image payloads
         t_connect = time.perf_counter()
         async with websockets.connect(backend_url, **connect_kwargs) as device_ws:
             device_connect_ms = (time.perf_counter() - t_connect) * 1000

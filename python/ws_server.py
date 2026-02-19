@@ -323,7 +323,8 @@ def run():
     asyncio.set_event_loop(loop)
     _async_loop = loop
     try:
-        start_server = websockets.serve(_handler, host, port, ssl=ctx)
+        # Allow larger messages (e.g. full-res take_image base64); default 1 MiB is too small.
+        start_server = websockets.serve(_handler, host, port, ssl=ctx, max_size=10 * 1024 * 1024)
         loop.run_until_complete(start_server)
         loop.run_forever()
     finally:
