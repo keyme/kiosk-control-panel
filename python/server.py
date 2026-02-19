@@ -840,13 +840,13 @@ def get_log_list():
 
 def log_tail_start(client_id, data, send_callback, push_event):
     """Start tailing log_id; initial_lines capped at 200. Stops any existing tail for this client."""
-    keyme.log.info("WS: requesting log_tail_start client_id=%s log_id=%s", client_id, (data or {}).get('log_id'))
+    keyme.log.info(f"WS: requesting log_tail_start client_id={client_id} log_id={(data or {}).get('log_id')}")
     return _log_tail_module.log_tail_start(client_id, data or {}, send_callback, push_event)
 
 
 def log_tail_stop(client_id):
     """Stop active tail for client_id. Called on log_tail_stop request or client disconnect."""
-    keyme.log.info("WS: requesting log_tail_stop client_id=%s", client_id)
+    keyme.log.info(f"WS: requesting log_tail_stop client_id={client_id}")
     return _log_tail_module.log_tail_stop(client_id)
 
 

@@ -87,7 +87,7 @@ def _read_tail_n(path, n):
             return r.stdout.rstrip('\n').split('\n')
         return []
     except (subprocess.TimeoutExpired, OSError, ValueError) as e:
-        keyme.log.warning('log_tail tail -n failed path=%s n=%s: %s', path, n, e)
+        keyme.log.warning(f"log_tail tail -n failed path={path} n={n}: {e}")
         return []
 
 
@@ -102,7 +102,7 @@ def _tail_follow_thread(client_id, path, send_callback, push_event, is_all_log):
             bufsize=1,
         )
     except OSError as e:
-        keyme.log.warning('log_tail tail -f failed path=%s: %s', path, e)
+        keyme.log.warning(f"log_tail tail -f failed path={path}: {e}")
         return
     try:
         rate_count = 0
@@ -133,7 +133,7 @@ def _tail_follow_thread(client_id, path, send_callback, push_event, is_all_log):
                 proc.kill()
             except OSError:
                 pass
-    keyme.log.info('log_tail follow thread exiting client_id=%s path=%s', client_id, path)
+    keyme.log.info(f"log_tail follow thread exiting client_id={client_id} path={path}")
 
 
 def log_tail_stop(client_id):
