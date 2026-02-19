@@ -34,7 +34,7 @@ from contextlib import asynccontextmanager
 import websockets
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.staticfiles import StaticFiles
 
@@ -205,25 +205,31 @@ def _request_line_safe(path: str, query: str) -> str:
 
 
 class _RestApiLogMiddleware(BaseHTTPMiddleware):
-    """Info-log every REST API request for debuggability. Token never logged."""
+    """Info-log every REST API request for debuggability. Token never logged. No log for GET /api/status when 200."""
 
     async def dispatch(self, request, call_next):
-        if request.url.path.startswith("/api"):
-            path_safe = _request_line_safe(request.url.path, request.url.query)
-            log.info(f"REST API {request.method} {path_safe}")
         response = await call_next(request)
+        if request.url.path.startswith("/api"):
+            if request.url.path == "/api/status" and response.status_code == 200:
+                pass  # skip log for probe to avoid noise
+            else:
+                path_safe = _request_line_safe(request.url.path, request.url.query)
+                log.info(f"REST API {request.method} {path_safe}")
         return response
 
 
 class _AccessLogMiddleware(BaseHTTPMiddleware):
-    """Log every HTTP request (and WebSocket upgrade). Token is never logged."""
+    """Log every HTTP request (and WebSocket upgrade). Token is never logged. No log for GET /api/status when 200."""
 
     async def dispatch(self, request, call_next):
         response = await call_next(request)
-        client = request.client or ("?", "?")
-        client_addr = f"{client[0]}:{client[1]}"
-        path_safe = _request_line_safe(request.url.path, request.url.query)
-        log.info(f'{client_addr} - "{request.method} {path_safe}" {response.status_code}')
+        if request.url.path == "/api/status" and response.status_code == 200:
+            pass  # skip log for probe to avoid noise
+        else:
+            client = request.client or ("?", "?")
+            client_addr = f"{client[0]}:{client[1]}"
+            path_safe = _request_line_safe(request.url.path, request.url.query)
+            log.info(f'{client_addr} - "{request.method} {path_safe}" {response.status_code}')
         return response
 
 
@@ -321,6 +327,20 @@ async def health() -> dict[str, Any]:
         },
         "warnings": warnings,
     }
+
+
+@app.get("/api/status")
+async def status() -> dict[str, Any]:
+    """Unauthenticated probe endpoint: 200 if critical deps (e.g. WSS API key) are present, else 503. No log on 200."""
+    wss_key = _get_wss_api_key()
+    if wss_key is None:
+        log.error("status check failed: WSS API key missing")
+        return JSONResponse(
+            {"status": "error", "missing": "WSS API key"},
+            status_code=503,
+        )
+    return {"status": "ok"}
+
 
 # In-memory cache: fqdn -> PEM string (device public cert from S3).
 _device_cert_cache: dict[str, str] = {}

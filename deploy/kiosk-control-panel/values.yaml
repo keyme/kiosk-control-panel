@@ -91,7 +91,7 @@ resources: {}
 
 livenessProbe:
   httpGet:
-    path: /api/ping
+    path: /api/status
     port: 8080
   initialDelaySeconds: 30
   periodSeconds: 10
@@ -100,7 +100,7 @@ livenessProbe:
 
 readinessProbe:
   httpGet:
-    path: /api/ping
+    path: /api/status
     port: 8080
   initialDelaySeconds: 15
   periodSeconds: 5

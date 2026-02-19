@@ -45,13 +45,8 @@ from control_panel.cloud.api.calibration_trace import (
 
 
 def create_auth_router() -> APIRouter:
-    """Create the **unprotected** auth router (login / logout proxies + health check)."""
+    """Create the **unprotected** auth router (login / logout proxies)."""
     router = APIRouter(tags=["auth"])
-
-    @router.get("/ping")
-    def ping():
-        _log.info("api ping")
-        return {"status": "ok", "source": "cloud"}
 
     @router.post("/login")
     def login(body: dict = Body(...)):
@@ -92,6 +87,11 @@ def create_auth_router() -> APIRouter:
 def create_router():
     """Create the cloud API router (all routes require auth)."""
     router = APIRouter(dependencies=[Depends(get_current_user)])
+
+    @router.get("/ping")
+    def ping():
+        _log.info("api ping")
+        return {"status": "ok", "source": "cloud"}
 
     @router.get("/calibration/testcuts/ids")
     def calibration_testcuts_ids(kiosk: str = Query(None)):
