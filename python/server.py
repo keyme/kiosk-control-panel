@@ -765,6 +765,7 @@ def get_roi(data):
             'blade_channel_bottom': pre_config[side]['blade_channel_bottom'],
             'blade_channel_left': pre_config[side]['blade_channel_left'],
             'blade_channel_right': pre_config[side]['blade_channel_right'],
+            'flip': pre_config[side].get('flip', 0),
         }
         return roi_data
     except Exception as e:
