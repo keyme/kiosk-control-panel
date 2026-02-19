@@ -232,11 +232,6 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
             <StatusDot variant={connected ? 'ok' : 'error'} />
             <span className={connected ? valueOk : valueError}>
               {connected ? 'Connected' : 'Disconnected'}
-              {!connected && lastError && (
-                <span className="ml-1 max-w-40 truncate font-normal text-muted-foreground" title={lastError}>
-                  · {lastError}
-                </span>
-              )}
             </span>
           </TitleItem>
           <Separator orientation="vertical" className="hidden h-4 md:block" />
@@ -363,7 +358,7 @@ const CONNECTION_ERROR_SUFFIX = ' Only calibration page would be available.';
 
 const CONNECTION_ERROR_MESSAGES = {
   port: 'Port 2026 may not be accessible; check modem or device firewall.' + CONNECTION_ERROR_SUFFIX,
-  refused: 'CONTROL_PANEL process may not be running on the device.' + CONNECTION_ERROR_SUFFIX,
+  refused: 'CONTROL_PANEL process may not be running on this device.' + CONNECTION_ERROR_SUFFIX,
   auth: 'Authentication may have failed; check login or permissions.' + CONNECTION_ERROR_SUFFIX,
   ssl: 'Possible SSL or certificate error.' + CONNECTION_ERROR_SUFFIX,
 };
