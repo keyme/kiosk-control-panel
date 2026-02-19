@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import ssl
+import time
 from typing import Any, Optional, Tuple
 
 import boto3
@@ -417,6 +418,7 @@ def _device_connection_failure_reason(exc: BaseException) -> str:
 @app.websocket("/ws")
 async def ws_proxy(websocket: WebSocket):
     """Proxy WebSocket to device. Query params: 'device' (required), 'token' (required, KeyMe)."""
+    t_start = time.perf_counter()
     token = (websocket.query_params.get("token") or "").strip()
     if not token:
         await websocket.close(code=4401, reason="missing token")
@@ -429,6 +431,9 @@ async def ws_proxy(websocket: WebSocket):
         log.info("ws proxy token validation failed")
         await websocket.close(code=4401, reason="invalid token")
         return
+    t_after_token = time.perf_counter()
+    token_ms = (t_after_token - t_start) * 1000
+    log.debug("ws_proxy timing token_validation_ms=%.2f", token_ms)
     device = websocket.query_params.get("device") or ""
     device = device.strip()
     if not device:
@@ -438,17 +443,40 @@ async def ws_proxy(websocket: WebSocket):
     if not backend_url:
         await websocket.close(code=4400, reason="invalid device")
         return
+    t_after_backend = time.perf_counter()
+    backend_ms = (t_after_backend - t_after_token) * 1000
+    log.debug("ws_proxy timing device_backend_ms=%.2f", backend_ms)
     await websocket.accept()
     await _inc_active_ws_connections()
+    t_after_accept = time.perf_counter()
+    accept_ms = (t_after_accept - t_after_backend) * 1000
+    log.debug("ws_proxy timing accept_ms=%.2f", accept_ms)
 
     async def _run_proxy(backend_url: str, ssl_ctx: Optional[ssl.SSLContext], used_cert: bool) -> None:
+        t_key = time.perf_counter()
         wss_key = _get_wss_api_key()
         if wss_key is None:
             await websocket.close(code=4500, reason="server config")
             return
+        wss_key_ms = (time.perf_counter() - t_key) * 1000
+        log.debug("ws_proxy timing wss_key_ms=%.2f", wss_key_ms)
         connect_kwargs: dict = {"ssl": ssl_ctx} if ssl_ctx is not None else {}
         connect_kwargs["additional_headers"] = {"Authorization": "Bearer " + wss_key}
+        t_connect = time.perf_counter()
         async with websockets.connect(backend_url, **connect_kwargs) as device_ws:
+            device_connect_ms = (time.perf_counter() - t_connect) * 1000
+            total_ms = (time.perf_counter() - t_start) * 1000
+            log.debug("ws_proxy timing device_connect_ms=%.2f total_ms=%.2f", device_connect_ms, total_ms)
+            log.info(
+                "ws_proxy connection established device=%s total_ms=%.0f token_ms=%.0f backend_ms=%.0f accept_ms=%.0f wss_key_ms=%.0f device_connect_ms=%.0f",
+                device,
+                total_ms,
+                token_ms,
+                backend_ms,
+                accept_ms,
+                wss_key_ms,
+                device_connect_ms,
+            )
             if used_cert:
                 log.info(
                     f"ws proxy connected to device device={device} url={backend_url} TLS verification successful"
