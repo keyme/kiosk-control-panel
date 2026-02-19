@@ -5,6 +5,7 @@ import { CALIBRATION_REPORT_SECTIONS, formatSectionLabel } from '@/pages/calibra
 
 function useCalibrationPageTitle() {
   const { pathname } = useLocation();
+  if (pathname.endsWith('/calibration/roi')) return 'Bitting ROI';
   if (pathname.endsWith('/calibration/report') || pathname.endsWith('/calibration')) return 'Calibration Reports';
   if (pathname.endsWith('/calibration/tracing') || pathname.endsWith('/calibration/tracing/gripper-cam')) return pathname.endsWith('gripper-cam') ? 'Gripper Cam Calibration' : 'Calibration Tracing';
   const match = pathname.match(/\/calibration\/report\/([^/]+)$/);

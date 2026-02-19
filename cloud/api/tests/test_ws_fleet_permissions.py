@@ -25,9 +25,19 @@ class TestRequiredPermission:
     def test_fleet_switch_process_list_returns_switch_processes(self):
         assert required_permission("fleet_switch_process_list") == "switch_processes"
 
+    def test_get_roi_returns_restart_restart_all_process(self):
+        assert required_permission("get_roi") == "restart_det_process"
+
+    def test_save_roi_returns_restart_restart_all_process(self):
+        assert required_permission("save_roi") == "restart_det_process"
+
     def test_unknown_event_returns_none(self):
         assert required_permission("get_kiosk_name") is None
         assert required_permission("unknown_event") is None
 
     def test_fleet_events_set_matches_mapping(self):
         assert FLEET_EVENTS_REQUIRING_PERMISSION == frozenset(EVENT_TO_PERMISSION)
+
+    def test_roi_events_require_permission(self):
+        assert "get_roi" in FLEET_EVENTS_REQUIRING_PERMISSION
+        assert "save_roi" in FLEET_EVENTS_REQUIRING_PERMISSION

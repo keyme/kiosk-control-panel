@@ -8,6 +8,8 @@ EVENT_TO_PERMISSION: Dict[str, str] = {
     "fleet_restart_process": "restart_restart_all_process",
     "fleet_reset_device": "reset_all_cameras_device",
     "fleet_switch_process_list": "switch_processes",
+    "get_roi": "restart_det_process",
+    "save_roi": "restart_det_process",
 }
 
 FLEET_EVENTS_REQUIRING_PERMISSION: frozenset = frozenset(EVENT_TO_PERMISSION)

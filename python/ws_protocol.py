@@ -19,10 +19,12 @@ REQUEST_EVENTS = (
     'get_log_list',
     'log_tail_start',
     'log_tail_stop',
+    'get_roi',
+    'save_roi',
 )
 
 # Events that accept optional "data" in the request.
-EVENTS_WITH_DATA = frozenset(('take_image', 'log_tail_start'))
+EVENTS_WITH_DATA = frozenset(('take_image', 'log_tail_start', 'get_roi', 'save_roi'))
 
 # Push events (server -> client, no id).
 PUSH_HELLO = 'hello'

@@ -29,6 +29,7 @@ import LogTailPage from '@/pages/LogTailPage';
 const TestcutsImagesPage = lazy(() => import('@/pages/TestcutsImagesPage'));
 const BittingCalibrationImagesPage = lazy(() => import('@/pages/BittingCalibrationImagesPage'));
 const RunBasedCalibrationImagesPage = lazy(() => import('@/pages/RunBasedCalibrationImagesPage'));
+const CalibrationRoiPage = lazy(() => import('@/pages/CalibrationRoiPage'));
 import { AppSidebar } from '@/components/AppSidebar';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
@@ -568,6 +569,7 @@ function AppContent() {
                 <Route path="tracing/gripper-cam/latest" element={<WrapKiosk component={CalibrationTracingLatestRedirect} />} />
                 <Route path="tracing/gripper-cam" element={<WrapKiosk component={CalibrationTracingGripperCam} />} />
                 <Route path="tracing/gripper-cam/:runId" element={<WrapKiosk component={CalibrationTracingGripperCam} />} />
+                <Route path="roi" element={<Suspense fallback={<div className="p-4 text-muted-foreground text-sm">Loading…</div>}><WrapKiosk component={CalibrationRoiPage} socket={socket} /></Suspense>} />
               </Route>
               <Route path="cameras" element={<CameraImagesPage socket={socket} />} />
               <Route path="config" element={<ConfigPage socket={socket} />} />

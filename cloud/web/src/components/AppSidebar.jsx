@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, NavLink, useNavigate } from 'react-router-dom';
-import { Activity, Camera, Flag, Heart, MapPin, Radio, Wrench, ChevronDown, ChevronRight, FileText, Video, Search, BarChart3, ScrollText } from 'lucide-react';
+import { Activity, Camera, Crop, Flag, Heart, MapPin, Radio, Wrench, ChevronDown, ChevronRight, FileText, Video, Search, BarChart3, ScrollText } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { CALIBRATION_REPORT_SECTIONS, formatSectionLabel } from '@/pages/calibrationReportSections';
 
@@ -12,6 +12,7 @@ const QUICK_OPEN_PAGES = [
   { path: '/calibration/report/testcuts', label: 'Testcuts' },
   ...CALIBRATION_REPORT_SECTIONS.map((id) => ({ path: `/calibration/report/${id}`, label: formatSectionLabel(id) })),
   { path: '/calibration/tracing/gripper-cam', label: 'Gripper Cam Calibration' },
+  { path: '/calibration/roi', label: 'Bitting ROI' },
   { path: '/wellness', label: 'Wellness Check' },
   { path: '/data-usage', label: 'Data Usage' },
   { path: '/fleet', label: 'Fleet Commands' },
@@ -326,6 +327,20 @@ export function AppSidebar({ panelInfo }) {
                   </NavLink>
                 )}
               </div>
+              <NavLink
+                to={prefix ? `${prefix}/calibration/roi` : '/calibration/roi'}
+                className={({ isActive }) =>
+                  cn(
+                    'flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors',
+                    isActive
+                      ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
+                      : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                  )
+                }
+              >
+                <Crop className="size-3.5 shrink-0" aria-hidden />
+                Bitting ROI
+              </NavLink>
             </div>
           )}
         </div>

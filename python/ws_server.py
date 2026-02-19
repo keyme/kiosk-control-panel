@@ -31,6 +31,8 @@ FLEET_EVENT_NAMES = frozenset((
     "fleet_restart_process",
     "fleet_reset_device",
     "fleet_switch_process_list",
+    "get_roi",
+    "save_roi",
 ))
 from control_panel.fleet_permissions import EVENT_TO_PERMISSION
 from control_panel.python import log_tail as _log_tail_module
@@ -138,6 +140,8 @@ def _dispatch_request(client_id, request_id, event, data, connection_count):
         'fleet_switch_process_list': lambda: handlers.fleet_switch_process_list(data or {}),
         'fleet_reboot_kiosk': lambda: handlers.fleet_reboot_kiosk(data or {}),
         'fleet_clear_cutter_stuck': lambda: handlers.fleet_clear_cutter_stuck(data or {}),
+        'get_roi': lambda: handlers.get_roi(data or {}),
+        'save_roi': lambda: handlers.save_roi(data or {}),
     }
     if event not in event_handlers:
         return {'id': request_id, 'success': False, 'errors': ['Unknown event']}

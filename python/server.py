@@ -749,6 +749,57 @@ def take_image(data):
     return {'camera': camera, 'imageBase64': image_b64}
 
 
+PREPROCESSOR_SETTINGS_PATH = os.path.join(keyme.config.CONFIG_PATH, 'bitting', 'preprocessor.json')
+
+
+def get_roi(data):
+    """Return ROI (blade_channel_*) for left or right side from preprocessor.json. Requires restart_restart_all_process (enforced by cloud)."""
+    data = data if isinstance(data, dict) else {}
+    side = (data.get('side') or 'left').strip().lower()
+    if side not in ('left', 'right'):
+        return {'success': False, 'errors': ["Invalid side value. Must be 'left' or 'right'."]}
+    try:
+        pre_config = keyme.config.cascade_load('preprocessor.json', process='bitting')
+        roi_data = {
+            'blade_channel_top': pre_config[side]['blade_channel_top'],
+            'blade_channel_bottom': pre_config[side]['blade_channel_bottom'],
+            'blade_channel_left': pre_config[side]['blade_channel_left'],
+            'blade_channel_right': pre_config[side]['blade_channel_right'],
+        }
+        return roi_data
+    except Exception as e:
+        keyme.log.error(f"get_roi failed: {e}")
+        return {'success': False, 'errors': [str(e)]}
+
+
+def save_roi(data):
+    """Save ROI for left or right side to preprocessor.json. Requires restart_restart_all_process (enforced by cloud)."""
+    data = data if isinstance(data, dict) else {}
+    side = (data.get('side') or '').strip().lower()
+    if side not in ('left', 'right'):
+        return {'success': False, 'errors': ["Invalid side value. Must be 'left' or 'right'."]}
+    try:
+        blade_channel_top = data.get('blade_channel_top')
+        blade_channel_bottom = data.get('blade_channel_bottom')
+        blade_channel_left = data.get('blade_channel_left')
+        blade_channel_right = data.get('blade_channel_right')
+        if any(v is None for v in (blade_channel_top, blade_channel_bottom, blade_channel_left, blade_channel_right)):
+            return {'success': False, 'errors': ['Missing one or more blade_channel_* fields.']}
+        pre_config = keyme.config.cascade_load('preprocessor.json', process='bitting')
+        pre_config[side]['blade_channel_top'] = blade_channel_top
+        pre_config[side]['blade_channel_bottom'] = blade_channel_bottom
+        pre_config[side]['blade_channel_left'] = blade_channel_left
+        pre_config[side]['blade_channel_right'] = blade_channel_right
+        keyme.config.save(PREPROCESSOR_SETTINGS_PATH, pre_config)
+        keyme.log.info(f"Control panel save_roi side={side}")
+        return {
+            'message': 'Config is saved. Please restart DETs process to apply changes.',
+        }
+    except Exception as e:
+        keyme.log.error(f"save_roi failed: {e}")
+        return {'success': False, 'errors': [str(e)]}
+
+
 def get_wellness_check(client_id=None, send_progress=None):
     """Wellness check: stream progress per step, then return { summary, detailed } or { error }."""
     from control_panel.python import wellness
