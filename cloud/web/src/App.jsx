@@ -35,7 +35,7 @@ import { cn } from '@/lib/utils';
 import { buildWsUrl, createDeviceSocket } from '@/lib/deviceSocket';
 import { getInitialDeviceHost } from '@/lib/socketUrl';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
-import { getToken } from '@/lib/apiFetch';
+import { getToken, apiFetch } from '@/lib/apiFetch';
 import LoginPage from '@/pages/LoginPage';
 
 const DeviceHostContext = createContext({ deviceHost: '', setDeviceHost: () => {} });
@@ -388,6 +388,10 @@ function isStatusPage(pathname) {
 function RequireAuth({ children }) {
   const location = useLocation();
   const token = getToken();
+  useEffect(() => {
+    if (!token) return;
+    apiFetch('/api/ping').catch(() => {});
+  }, [token]);
   if (!token) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
