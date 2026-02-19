@@ -95,15 +95,15 @@ export function createDeviceSocket(wsUrl) {
         console.error('deviceSocket parse error', e);
       }
     };
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       ws = null;
       helloReceived = false;
       pending.forEach((s) => s.reject(new Error('Connection closed')));
       pending.clear();
-      if (disconnectCallback) disconnectCallback();
+      if (disconnectCallback) disconnectCallback({ code: ev.code, reason: ev.reason ?? '' });
     };
     ws.onerror = () => {
-      if (disconnectCallback) disconnectCallback();
+      if (disconnectCallback) disconnectCallback({ code: undefined, reason: '' });
     };
   }
 

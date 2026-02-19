@@ -393,6 +393,27 @@ def _device_ws_backend(device_host: str) -> Tuple[str, str, str, Optional[ssl.SS
     return url, with_domain, kiosk_name_upper, ctx, False
 
 
+def _device_connection_failure_reason(exc: BaseException) -> str:
+    """Classify device connection failure: 'ssl', 'refused' (port open but nothing listening), or 'port' (timeout/unreachable)."""
+    if isinstance(exc, ssl.SSLError):
+        return "ssl"
+    msg = str(exc).lower()
+    if "certificate" in msg or "ssl" in msg or "tls" in msg:
+        return "ssl"
+    errno = getattr(exc, "errno", None)
+    if errno == 111:  # ECONNREFUSED: port reachable but control_panel not listening
+        return "refused"
+    if "connection refused" in msg:
+        return "refused"
+    if isinstance(exc, TimeoutError):
+        return "port"
+    if errno is not None and errno in (110, 113):  # ETIMEDOUT, EHOSTUNREACH
+        return "port"
+    if "timed out" in msg or "name or service not known" in msg:
+        return "port"
+    return "port"
+
+
 @app.websocket("/ws")
 async def ws_proxy(websocket: WebSocket):
     """Proxy WebSocket to device. Query params: 'device' (required), 'token' (required, KeyMe)."""
@@ -516,7 +537,8 @@ async def ws_proxy(websocket: WebSocket):
                     f"ws proxy connect to device failed after retry device={device} url={backend_url}"
                 )
                 try:
-                    await websocket.close(code=1011, reason=str(retry_error)[:123])
+                    reason = _device_connection_failure_reason(retry_error)
+                    await websocket.close(code=1011, reason=reason)
                 except Exception:
                     pass
             else:
@@ -531,7 +553,8 @@ async def ws_proxy(websocket: WebSocket):
             f"ws proxy connect timed out: url={backend_url} port={WS_PORT} error={e}"
         )
         try:
-            await websocket.close(code=1011, reason=str(e)[:123])
+            reason = _device_connection_failure_reason(e)
+            await websocket.close(code=1011, reason=reason)
         except Exception:
             pass
     except Exception as e:
@@ -539,7 +562,8 @@ async def ws_proxy(websocket: WebSocket):
             f"ws proxy connect to device failed device={device} url={backend_url} port={WS_PORT}"
         )
         try:
-            await websocket.close(code=1011, reason=str(e)[:123])
+            reason = _device_connection_failure_reason(e)
+            await websocket.close(code=1011, reason=reason)
         except Exception:
             pass
     else:

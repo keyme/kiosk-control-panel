@@ -264,7 +264,7 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
       )}
       {!connected && deviceHost.trim() && !connectionRejected && !disconnectedDueToInactivity && (
         <div className="shrink-0 bg-amber-500/15 px-4 py-2 text-center text-sm text-amber-800 dark:text-amber-200" role="alert">
-          No connection to the kiosk, only calibration page would be available.
+          {lastError ? `Could not connect to the kiosk: ${lastError}` : 'No connection to the kiosk, only calibration page would be available.'}
         </div>
       )}
 
@@ -359,6 +359,30 @@ const STATUS_POLL_MS = 10000;
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 const FRONTEND_CONNECTION_LIMIT = 15; // If count > this, show message and disconnect.
 
+const CONNECTION_ERROR_SUFFIX = ' Only calibration page would be available.';
+
+const CONNECTION_ERROR_MESSAGES = {
+  port: 'Port 2026 may not be accessible; check modem or device firewall.' + CONNECTION_ERROR_SUFFIX,
+  refused: 'CONTROL_PANEL process may not be running on the device.' + CONNECTION_ERROR_SUFFIX,
+  auth: 'Authentication may have failed; check login or permissions.' + CONNECTION_ERROR_SUFFIX,
+  ssl: 'Possible SSL or certificate error.' + CONNECTION_ERROR_SUFFIX,
+};
+
+/** Map WebSocket close code/reason from cloud proxy to user-facing message, or null. */
+function getConnectionErrorMessage(code, reason) {
+  if (code === 4401 || code === 4500) return CONNECTION_ERROR_MESSAGES.auth;
+  if (code === 1011) {
+    const r = (reason || '').toLowerCase();
+    if (r.includes('ssl')) return CONNECTION_ERROR_MESSAGES.ssl;
+    if (r.includes('refused')) return CONNECTION_ERROR_MESSAGES.refused;
+    return CONNECTION_ERROR_MESSAGES.port;
+  }
+  if (code === 1006 || (code !== 1000 && code !== undefined)) {
+    return CONNECTION_ERROR_MESSAGES.port;
+  }
+  return null;
+}
+
 /** True when route is Status (root or :kiosk index). */
 function isStatusPage(pathname) {
   return pathname === '/' || /^\/[^/]+$/.test(pathname);
@@ -414,6 +438,7 @@ function AppContent() {
     const finishConnectionSetup = () => {
       setConnectionRejected(null);
       setDisconnectedDueToInactivity(false);
+      setLastError(null);
       setConnected(true);
       requestKioskName(socket, setKioskName);
       requestPanelInfo(socket, setPanelInfo);
@@ -432,7 +457,7 @@ function AppContent() {
         finishConnectionSetup();
       });
     };
-    const onDisconnect = () => {
+    const onDisconnect = (closeInfo) => {
       setConnected(false);
       setKioskName(null);
       setPanelInfo(null);
@@ -441,6 +466,8 @@ function AppContent() {
       setStatusSections(null);
       setTerminals(null);
       setConnectionCount(null);
+      const msg = closeInfo && getConnectionErrorMessage(closeInfo.code, closeInfo.reason);
+      setLastError(msg ?? null);
       if (pollInterval) clearInterval(pollInterval);
     };
 
