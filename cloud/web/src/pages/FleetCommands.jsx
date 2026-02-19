@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageTitle } from '@/components/PageTitle';
 import {
@@ -97,7 +97,48 @@ export default function FleetCommands({ connected, socket }) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
 
+  // Restart process progress: log tail + spinner until PROCESS_STARTED (single) or accepted (restart_all).
+  const [restartProgress, setRestartProgress] = useState(null);
+  const timeoutRef = useRef(null);
+  const stoppedHandlerRef = useRef(null);
+  const startedHandlerRef = useRef(null);
+  const logEndRef = useRef(null);
+
   const isDisabled = !connected || !socket?.connected;
+
+  function clearRestartListenersAndTimeout() {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    if (socket) {
+      if (stoppedHandlerRef.current) {
+        socket.off('async.PROCESS_STOPPED', stoppedHandlerRef.current);
+        stoppedHandlerRef.current = null;
+      }
+      if (startedHandlerRef.current) {
+        socket.off('async.PROCESS_STARTED', startedHandlerRef.current);
+        startedHandlerRef.current = null;
+      }
+    }
+  }
+
+  function closeRestartProgressDialog() {
+    clearRestartListenersAndTimeout();
+    setRestartProgress(null);
+    setConfirmAction(null);
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    return () => clearRestartListenersAndTimeout();
+  }, [socket]);
+
+  useEffect(() => {
+    if (restartProgress?.logLines?.length && logEndRef.current) {
+      logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [restartProgress?.logLines?.length]);
 
   function getRequestEventAndData() {
     if (!confirmAction) return null;
@@ -124,8 +165,82 @@ export default function FleetCommands({ connected, socket }) {
     if (!confirmAction || !socket?.connected) return;
     const req = getRequestEventAndData();
     if (!req) return;
-    setLoading(true);
     setResult(null);
+
+    if (confirmAction.action === 'restart_process') {
+      const isRestartAll = processName === 'restart_all';
+      setRestartProgress({
+        processName,
+        isRestartAll,
+        logLines: ['Request sent.'],
+        done: false,
+      });
+      setLoading(true);
+      socket
+        .request('fleet_restart_process', { process: processName })
+        .then((res) => {
+          setRestartProgress((prev) => {
+            if (!prev) return prev;
+            const next = { ...prev, logLines: [...prev.logLines, 'Accepted.'] };
+            if (prev.isRestartAll) next.done = true;
+            return next;
+          });
+          if (isRestartAll) {
+            setLoading(false);
+            return;
+          }
+          const handlerStopped = (data) => {
+            setRestartProgress((prev) =>
+              prev ? { ...prev, logLines: [...prev.logLines, `PROCESS_STOPPED: ${data?.process ?? '?'}`] } : prev
+            );
+          };
+          const handlerStarted = (data) => {
+            const p = data?.process;
+            let matched = false;
+            setRestartProgress((prev) => {
+              if (!prev || prev.done) return prev;
+              const match =
+                p && prev.processName && String(p).toLowerCase() === String(prev.processName).toLowerCase();
+              const next = { ...prev, logLines: [...prev.logLines, `PROCESS_STARTED: ${p ?? '?'}`] };
+              if (match) {
+                next.done = true;
+                matched = true;
+              }
+              return next;
+            });
+            if (matched) {
+              if (timeoutRef.current) {
+                clearTimeout(timeoutRef.current);
+                timeoutRef.current = null;
+              }
+              setLoading(false);
+            }
+          };
+          stoppedHandlerRef.current = handlerStopped;
+          startedHandlerRef.current = handlerStarted;
+          socket.on('async.PROCESS_STOPPED', handlerStopped);
+          socket.on('async.PROCESS_STARTED', handlerStarted);
+          timeoutRef.current = setTimeout(() => {
+            timeoutRef.current = null;
+            setRestartProgress((prev) =>
+              prev && !prev.done
+                ? { ...prev, done: true, logLines: [...prev.logLines, 'Timeout waiting for process to start.'] }
+                : prev
+            );
+            setLoading(false);
+          }, 60000);
+        })
+        .catch((err) => {
+          const msg = err?.message || 'Request failed';
+          setRestartProgress((prev) =>
+            prev ? { ...prev, done: true, logLines: [...prev.logLines, msg] } : prev
+          );
+          setLoading(false);
+        });
+      return;
+    }
+
+    setLoading(true);
     socket
       .request(req.event, req.data)
       .then((res) => {
@@ -397,20 +512,65 @@ export default function FleetCommands({ connected, socket }) {
       </Dialog>
 
       {/* Confirmation dialog */}
-      <Dialog open={!!confirmAction} onOpenChange={(open) => !open && setConfirmAction(null)}>
-        <DialogContent showClose={true} onClose={() => setConfirmAction(null)}>
-          <DialogHeader>
-            <DialogTitle>{confirmAction?.title}</DialogTitle>
-            <DialogDescription>{confirmAction?.description}</DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-0">
-            <button type="button" className={btnOutline} onClick={() => setConfirmAction(null)}>
-              Cancel
-            </button>
-            <button type="button" className={btnPrimary} onClick={handleConfirm} disabled={loading}>
-              {loading ? <Loader2 className="size-4 animate-spin" aria-hidden /> : 'Confirm'}
-            </button>
-          </div>
+      <Dialog
+        open={!!confirmAction}
+        onOpenChange={(open) => {
+          if (!open) closeRestartProgressDialog();
+        }}
+      >
+        <DialogContent showClose={true} onClose={closeRestartProgressDialog}>
+          {confirmAction?.action === 'restart_process' && restartProgress != null ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Restart process</DialogTitle>
+                <DialogDescription>
+                  {restartProgress.isRestartAll ? 'Reloading all processes.' : `Restarting ${processLabel}.`}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3">
+                <div
+                  className="max-h-32 overflow-y-auto rounded border bg-muted/30 p-2 font-mono text-xs"
+                  role="log"
+                  aria-live="polite"
+                >
+                  {restartProgress.logLines.map((line, i) => (
+                    <div key={i}>{line}</div>
+                  ))}
+                  <div ref={logEndRef} />
+                </div>
+                <div className="flex items-center gap-2">
+                  {!restartProgress.done && (
+                    <>
+                      <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+                      <span className="text-sm text-muted-foreground">Restarting…</span>
+                    </>
+                  )}
+                </div>
+                {restartProgress.done && (
+                  <div className="flex justify-end">
+                    <button type="button" className={btnPrimary} onClick={closeRestartProgressDialog}>
+                      Close
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>{confirmAction?.title}</DialogTitle>
+                <DialogDescription>{confirmAction?.description}</DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-0">
+                <button type="button" className={btnOutline} onClick={closeRestartProgressDialog}>
+                  Cancel
+                </button>
+                <button type="button" className={btnPrimary} onClick={handleConfirm} disabled={loading}>
+                  {loading ? <Loader2 className="size-4 animate-spin" aria-hidden /> : 'Confirm'}
+                </button>
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>
