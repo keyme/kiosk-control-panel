@@ -6,7 +6,6 @@
 
 import { getToken } from './apiFetch';
 
-const WS_PORT = 2026;
 const WS_PATH = '/ws';
 const REQUEST_TIMEOUT_MS = 60000;
 
@@ -62,10 +61,14 @@ export function createDeviceSocket(wsUrl) {
         } else {
           settle.resolve(msg);
         }
+        return;
       }
-      return;
+      // If the server mistakenly includes an `id` on a push message (or the client has already timed out),
+      // treat it as a push only if it also includes an `event`.
+      if (msg.event == null) return;
     }
-    const event = msg && msg.event;
+    const event = msg && msg.event != null ? String(msg.event).trim() : undefined;
+    if (!event) return;
     if (event === 'hello') {
       helloReceived = true;
       if (connectCallback) connectCallback();
@@ -82,17 +85,42 @@ export function createDeviceSocket(wsUrl) {
     }
   }
 
+  function parseMessage(raw) {
+    if (raw == null) return null;
+    if (typeof raw !== 'string') return null;
+    const s = raw.trim();
+    if (!s) return null;
+    try {
+      return JSON.parse(s);
+    } catch {
+      // Some tools/servers can append extra columns after JSON when copying/printing.
+      // Try to recover by parsing the first {...} span.
+      const start = s.indexOf('{');
+      const end = s.lastIndexOf('}');
+      if (start !== -1 && end !== -1 && end > start) {
+        const candidate = s.slice(start, end + 1);
+        try {
+          return JSON.parse(candidate);
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    }
+  }
+
   function connect() {
     if (ws) return;
     helloReceived = false;
     ws = new WebSocket(wsUrl);
     ws.onopen = () => {};
     ws.onmessage = (ev) => {
-      try {
-        const msg = JSON.parse(ev.data);
+      const raw = ev.data;
+      const msg = parseMessage(raw);
+      if (msg) {
         handleMessage(msg);
-      } catch (e) {
-        console.error('deviceSocket parse error', e);
+      } else {
+        console.error('deviceSocket parse error');
       }
     };
     ws.onclose = (ev) => {

@@ -1,7 +1,5 @@
 # Log list and tail for control panel device. One active tail per client; allowlist-only paths.
 
-from __future__ import absolute_import, division, print_function
-
 import glob
 import os
 import subprocess
@@ -79,8 +77,9 @@ def _read_tail_n(path, n):
     try:
         r = subprocess.run(
             ['tail', '-n', str(n), path],
-            capture_output=True,
-            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
             timeout=10,
         )
         if r.returncode == 0 and r.stdout:
@@ -98,7 +97,7 @@ def _tail_follow_thread(client_id, path, send_callback, push_event, is_all_log):
             ['tail', '-f', path],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            text=True,
+            universal_newlines=True,
             bufsize=1,
         )
     except OSError as e:
