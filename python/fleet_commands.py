@@ -85,18 +85,12 @@ def fleet_restart_process(data):
         return {'success': False, 'errors': ['Missing process']}
     try:
         if process == 'restart_all':
-            proc = subprocess.Popen(
-                [_RESTART_ALL_SCRIPT],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+            # Start detached (nohup) so the script keeps running after stop-all
+            # kills this process; we cannot wait or check exit code.
+            subprocess.Popen(
+                'nohup {} >/dev/null 2>&1 &'.format(_RESTART_ALL_SCRIPT),
+                shell=True,
             )
-            try:
-                proc.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                return {'success': True, 'data': {}}
-            if proc.returncode != 0:
-                err = (proc.stderr.read() or b'').decode('utf-8', errors='replace').strip()
-                return {'success': False, 'errors': [err or 'restart_all.sh exited with code {}'.format(proc.returncode)]}
             return {'success': True, 'data': {}}
         response = keyme.ipc.send_sync(
             'MANAGER', 'RESTART_PROCESS', {'process': process.upper()},
