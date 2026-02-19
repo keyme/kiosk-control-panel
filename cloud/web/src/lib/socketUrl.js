@@ -15,27 +15,33 @@ export function buildBaseUrl(deviceHost, port = DEFAULT_PORT) {
 }
 
 /**
- * Initial value for the device host field: from path (first segment), ?host=, or hostname.
- * Path takes precedence: e.g. /ns1234/calibration/ or /192.168.1.1/calibration/ → use that segment.
+ * If value is all digits (e.g. 1111), return 'ns' + value (e.g. ns1111). Otherwise return trimmed value.
+ */
+export function normalizeDeviceHost(value) {
+  const v = (value || '').trim();
+  if (/^\d+$/.test(v)) return 'ns' + v;
+  return v;
+}
+
+/**
+ * Initial value for the device host field: from path (first segment) or ?host= only.
+ * Never use the page's URL hostname/DNS as the device — user must enter kiosk or use path/query.
  */
 export function getInitialDeviceHost() {
   const pathSegments = window.location.pathname.replace(/^\/+|\/+$/g, '').split('/');
   if (pathSegments[0]) {
-    return pathSegments[0];
+    return normalizeDeviceHost(pathSegments[0]);
   }
   const params = new URLSearchParams(window.location.search);
   const hostParam = params.get('host');
   if (hostParam) {
     const hostOnly = hostParam.replace(/^(https?:\/\/)?([^/]+).*$/i, '$2');
-    return hostOnly.endsWith('.keymekiosk.com')
+    const short = hostOnly.endsWith('.keymekiosk.com')
       ? hostOnly.slice(0, -'.keymekiosk.com'.length)
       : hostOnly;
+    return normalizeDeviceHost(short);
   }
-  const hostname = window.location.hostname || '';
-  if (hostname.endsWith('.keymekiosk.com')) {
-    return hostname.slice(0, -'.keymekiosk.com'.length);
-  }
-  return hostname || '';
+  return '';
 }
 
 /**

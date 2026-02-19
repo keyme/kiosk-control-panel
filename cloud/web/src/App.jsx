@@ -33,7 +33,7 @@ import { AppSidebar } from '@/components/AppSidebar';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import { buildWsUrl, createDeviceSocket } from '@/lib/deviceSocket';
-import { getInitialDeviceHost } from '@/lib/socketUrl';
+import { getInitialDeviceHost, normalizeDeviceHost } from '@/lib/socketUrl';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import { getToken, apiFetch } from '@/lib/apiFetch';
 import LoginPage from '@/pages/LoginPage';
@@ -42,10 +42,18 @@ const DeviceHostContext = createContext({ deviceHost: '', setDeviceHost: () => {
 
 function KioskSync() {
   const { kiosk } = useParams();
+  const location = useLocation();
+  const navigate = useNavigate();
   const { setDeviceHost } = useContext(DeviceHostContext);
   useEffect(() => {
-    if (kiosk) setDeviceHost(kiosk);
-  }, [kiosk, setDeviceHost]);
+    if (!kiosk) return;
+    const normalized = normalizeDeviceHost(kiosk);
+    setDeviceHost(normalized);
+    if (normalized !== kiosk) {
+      const path = location.pathname.replace(/^\/[^/]+/, `/${normalized}`);
+      navigate(path + location.search + location.hash, { replace: true });
+    }
+  }, [kiosk, setDeviceHost, location.pathname, location.search, location.hash, navigate]);
   return <Outlet />;
 }
 
@@ -123,7 +131,7 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
   }, [deviceHost]);
 
   const commitHost = () => {
-    const v = editValue.trim();
+    const v = normalizeDeviceHost(editValue.trim());
     if (!v) return;
     setDeviceHost(v);
     const pathWithoutFirst = location.pathname.replace(/^\/[^/]+/, '') || '';
@@ -157,6 +165,7 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
             title="Change and press Enter to connect. Ctrl+U to focus this field."
             className="min-w-0 max-w-[12rem] rounded border border-input bg-background px-2 py-1 text-lg font-semibold text-card-foreground outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-ring md:truncate"
             aria-label="Device host"
+            spellCheck={false}
           />
           {!connected && (
             <button
@@ -256,6 +265,11 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
       {disconnectedDueToInactivity && !connected && (
         <div className="shrink-0 bg-amber-500/15 px-4 py-2 text-center text-sm text-amber-800 dark:text-amber-200" role="alert">
           You were disconnected due to inactivity. Connect again to continue.
+        </div>
+      )}
+      {!connected && !deviceHost.trim() && !connectionRejected && !disconnectedDueToInactivity && (
+        <div className="shrink-0 bg-amber-500/15 px-4 py-2 text-center text-sm text-amber-800 dark:text-amber-200" role="alert">
+          Enter kiosk name above to connect.
         </div>
       )}
       {!connected && deviceHost.trim() && !connectionRejected && !disconnectedDueToInactivity && (
