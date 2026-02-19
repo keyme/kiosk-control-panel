@@ -104,7 +104,18 @@ export default function FleetCommands({ connected, socket }) {
   const startedHandlerRef = useRef(null);
   const logEndRef = useRef(null);
 
+  // Reset device progress: log tail + no close until done.
+  const [resetProgress, setResetProgress] = useState(null);
+  const resetResultHandlerRef = useRef(null);
+
   const isDisabled = !connected || !socket?.connected;
+
+  function clearResetListener() {
+    if (socket && resetResultHandlerRef.current) {
+      socket.off('async.RESET_RESULT', resetResultHandlerRef.current);
+      resetResultHandlerRef.current = null;
+    }
+  }
 
   function clearRestartListenersAndTimeout() {
     if (timeoutRef.current) {
@@ -125,20 +136,25 @@ export default function FleetCommands({ connected, socket }) {
 
   function closeRestartProgressDialog() {
     clearRestartListenersAndTimeout();
+    clearResetListener();
     setRestartProgress(null);
+    setResetProgress(null);
     setConfirmAction(null);
     setLoading(false);
   }
 
   useEffect(() => {
-    return () => clearRestartListenersAndTimeout();
+    return () => {
+      clearRestartListenersAndTimeout();
+      clearResetListener();
+    };
   }, [socket]);
 
   useEffect(() => {
-    if (restartProgress?.logLines?.length && logEndRef.current) {
+    if ((restartProgress?.logLines?.length || resetProgress?.logLines?.length) && logEndRef.current) {
       logEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [restartProgress?.logLines?.length]);
+  }, [restartProgress?.logLines?.length, resetProgress?.logLines?.length]);
 
   function getRequestEventAndData() {
     if (!confirmAction) return null;
@@ -233,6 +249,40 @@ export default function FleetCommands({ connected, socket }) {
         .catch((err) => {
           const msg = err?.message || 'Request failed';
           setRestartProgress((prev) =>
+            prev ? { ...prev, done: true, logLines: [...prev.logLines, msg] } : prev
+          );
+          setLoading(false);
+        });
+      return;
+    }
+
+    if (confirmAction.action === 'reset_device') {
+      setResetProgress({ logLines: ['Request sent.'], done: false });
+      setLoading(true);
+      const handler = (data) => {
+        const device = data?.device ?? '?';
+        const ok = data?.result === true;
+        const msg = ok ? `${device}: ok` : `${device}: failed${data?.error_message ? ` — ${data.error_message}` : ''}`;
+        setResetProgress((prev) =>
+          prev ? { ...prev, logLines: [...prev.logLines, msg] } : prev
+        );
+      };
+      resetResultHandlerRef.current = handler;
+      socket.on('async.RESET_RESULT', handler);
+      socket
+        .request('fleet_reset_device', req.data)
+        .then((res) => {
+          clearResetListener();
+          const finalLine = res.success ? 'Done.' : (res.errors?.length ? res.errors.join(' ') : 'Request failed');
+          setResetProgress((prev) =>
+            prev ? { ...prev, done: true, logLines: [...prev.logLines, finalLine] } : prev
+          );
+          setLoading(false);
+        })
+        .catch((err) => {
+          clearResetListener();
+          const msg = err?.message || 'Request failed';
+          setResetProgress((prev) =>
             prev ? { ...prev, done: true, logLines: [...prev.logLines, msg] } : prev
           );
           setLoading(false);
@@ -517,10 +567,16 @@ export default function FleetCommands({ connected, socket }) {
       <Dialog
         open={!!confirmAction}
         onOpenChange={(open) => {
-          if (!open) closeRestartProgressDialog();
+          if (!open) {
+            if (resetProgress && !resetProgress.done) return;
+            closeRestartProgressDialog();
+          }
         }}
       >
-        <DialogContent showClose={true} onClose={closeRestartProgressDialog}>
+        <DialogContent
+          showClose={!(confirmAction?.action === 'reset_device' && resetProgress != null && !resetProgress.done)}
+          onClose={closeRestartProgressDialog}
+        >
           {confirmAction?.action === 'restart_process' && restartProgress != null ? (
             <>
               <DialogHeader>
@@ -549,6 +605,42 @@ export default function FleetCommands({ connected, socket }) {
                   )}
                 </div>
                 {restartProgress.done && (
+                  <div className="flex justify-end">
+                    <button type="button" className={btnPrimary} onClick={closeRestartProgressDialog}>
+                      Close
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : confirmAction?.action === 'reset_device' && resetProgress != null ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Reset device</DialogTitle>
+                <DialogDescription>
+                  Resetting {deviceLabel}. Do not close this window.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3">
+                <div
+                  className="max-h-32 overflow-y-auto rounded border bg-muted/30 p-2 font-mono text-xs"
+                  role="log"
+                  aria-live="polite"
+                >
+                  {resetProgress.logLines.map((line, i) => (
+                    <div key={i}>{line}</div>
+                  ))}
+                  <div ref={logEndRef} />
+                </div>
+                <div className="flex items-center gap-2">
+                  {!resetProgress.done && (
+                    <>
+                      <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+                      <span className="text-sm text-muted-foreground">Resetting…</span>
+                    </>
+                  )}
+                </div>
+                {resetProgress.done && (
                   <div className="flex justify-end">
                     <button type="button" className={btnPrimary} onClick={closeRestartProgressDialog}>
                       Close
