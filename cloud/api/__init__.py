@@ -5,7 +5,12 @@ import httpx
 from fastapi import APIRouter, Body, Depends, Query
 from fastapi.responses import JSONResponse, Response
 
-from control_panel.cloud.api.auth import ANF_BASE_URL, _token_cache, get_current_user
+from control_panel.cloud.api.auth import (
+    ANF_BASE_URL,
+    evict_token_caches,
+    get_current_user,
+    store_user_identifier_for_token,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -61,6 +66,13 @@ def create_auth_router() -> APIRouter:
         except httpx.HTTPError as exc:
             _log.warning(f"ANF login request failed: {exc}")
             return JSONResponse({"error": "Login service unavailable"}, status_code=502)
+        if 200 <= resp.status_code < 300:
+            data = resp.json()
+            keyme_token = data.get("keyme_token")
+            identifier = data.get("email") or data.get("user_id")
+            expires_at = data.get("expires_at")
+            if keyme_token and identifier:
+                store_user_identifier_for_token(keyme_token, identifier, expires_at)
         return JSONResponse(resp.json(), status_code=resp.status_code)
 
     @router.post("/logout")
@@ -68,8 +80,7 @@ def create_auth_router() -> APIRouter:
         """Proxy logout to ANF and evict the token from the local cache."""
         session_token = body.get("session_token", "")
         _log.info("logout request")
-        # Evict from local cache so the token is no longer trusted locally.
-        _token_cache.pop(session_token, None)
+        evict_token_caches(session_token)
         try:
             resp = httpx.post(
                 f"{ANF_BASE_URL}/api/logout",

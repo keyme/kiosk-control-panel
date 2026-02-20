@@ -12,6 +12,7 @@ Token validation flow:
 import logging
 import os
 import threading
+import time
 
 import httpx
 from cachetools import TTLCache
@@ -57,6 +58,9 @@ _token_cache: TTLCache = TTLCache(maxsize=1000, ttl=300)
 # ---------------------------------------------------------------------------
 
 _permission_cache: TTLCache = TTLCache(maxsize=2000, ttl=300)
+
+# Token -> (identifier, expires_at_ms). Primed from login (expires_at from ANF); backfill uses 300s.
+_user_identifier_by_token: dict[str, tuple[str, int]] = {}
 
 # Lock for thread-safe cache access (sync REST and async WS paths both touch caches).
 _cache_lock = threading.Lock()
@@ -119,6 +123,9 @@ def validate_token(token: str | None) -> dict:
     # Cache successful validation ---------------------------------------------
     with _cache_lock:
         _token_cache[token] = data
+        uid = data.get("email") or data.get("user_id")
+        if uid:
+            _user_identifier_by_token[token] = (uid, int((time.time() + 300) * 1000))
     return data
 
 
@@ -162,7 +169,53 @@ async def validate_token_async(client: httpx.AsyncClient, token: str | None) -> 
 
     with _cache_lock:
         _token_cache[token] = data
+        uid = data.get("email") or data.get("user_id")
+        if uid:
+            _user_identifier_by_token[token] = (uid, int((time.time() + 300) * 1000))
     return data
+
+
+# ---------------------------------------------------------------------------
+# User identifier for audit logging (primed from login; optional backfill from permission/check)
+# ---------------------------------------------------------------------------
+
+
+def store_user_identifier_for_token(
+    token: str, identifier: str | None, expires_at_ms: int | None = None
+) -> None:
+    """Store token -> user identifier for audit logging. expires_at_ms from ANF login (ms since epoch); else 300s from now."""
+    if not token or not identifier:
+        return
+    if expires_at_ms is None:
+        expires_at_ms = int((time.time() + 300) * 1000)
+    with _cache_lock:
+        _user_identifier_by_token[token] = (identifier, expires_at_ms)
+
+
+def get_user_identifier_for_token(token: str | None) -> str | None:
+    """Return cached user identifier for a token, or None. Respects expires_at from login."""
+    if not token:
+        return None
+    now_ms = int(time.time() * 1000)
+    with _cache_lock:
+        entry = _user_identifier_by_token.get(token)
+        if entry is not None:
+            identifier, expires_at_ms = entry
+            if now_ms >= expires_at_ms:
+                _user_identifier_by_token.pop(token, None)
+                return None
+            return identifier
+        cached = _token_cache.get(token)
+        if cached is not None:
+            return cached.get("email") or cached.get("user_id")
+    return None
+
+
+def evict_token_caches(token: str) -> None:
+    """Evict token from token cache and user-identifier cache (e.g. on logout)."""
+    with _cache_lock:
+        _token_cache.pop(token, None)
+        _user_identifier_by_token.pop(token, None)
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +262,8 @@ def validate_permission(token: str | None, permission_slug: str) -> tuple[bool, 
     user_id = data.get("email") or data.get("user_id")
     with _cache_lock:
         _permission_cache[key] = data
+        if user_id:
+            _user_identifier_by_token[token] = (user_id, int((time.time() + 300) * 1000))
     return (granted, user_id)
 
 
@@ -251,6 +306,8 @@ async def validate_permission_async(
     user_id = data.get("email") or data.get("user_id")
     with _cache_lock:
         _permission_cache[key] = data
+        if user_id:
+            _user_identifier_by_token[token] = (user_id, int((time.time() + 300) * 1000))
     return (granted, user_id)
 
 

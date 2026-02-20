@@ -42,6 +42,7 @@ from control_panel.cloud.api import create_auth_router, create_router
 from control_panel.cloud.api.auth import (
     ANF_BASE_URL,
     API_ENV,
+    get_user_identifier_for_token,
     PERMISSIONS_ADMIN_URL,
     validate_token_async,
     validate_permission_async,
@@ -233,6 +234,23 @@ class _AccessLogMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class _AuditLogMiddleware(BaseHTTPMiddleware):
+    """Log authenticated API requests with user identity for audit. No log for /api/login, /api/logout, /api/status."""
+
+    async def dispatch(self, request, call_next):
+        token = (request.headers.get("KEYME-TOKEN") or "").strip()
+        response = await call_next(request)
+        path = request.url.path
+        if not path.startswith("/api"):
+            return response
+        if path in ("/api/login", "/api/logout", "/api/status"):
+            return response
+        user_id = get_user_identifier_for_token(token)
+        path_safe = _request_line_safe(request.url.path, request.url.query)
+        log.info("User %s: %s %s %s", user_id or "?", request.method, path_safe, response.status_code)
+        return response
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     log.info(
@@ -247,6 +265,7 @@ async def _lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Control Panel Cloud", lifespan=_lifespan)
+app.add_middleware(_AuditLogMiddleware)  # outermost: after call_next cache may be populated
 app.add_middleware(_RestApiLogMiddleware)
 app.add_middleware(_AccessLogMiddleware)
 app.add_middleware(
@@ -446,11 +465,12 @@ async def ws_proxy(websocket: WebSocket):
     app = websocket.scope["app"]
     client = app.state.httpx_client
     try:
-        await validate_token_async(client, token)
+        user_data = await validate_token_async(client, token)
     except HTTPException:
         log.info("ws proxy token validation failed")
         await websocket.close(code=4401, reason="invalid token")
         return
+    user_identifier = (user_data.get("email") or user_data.get("user_id")) or get_user_identifier_for_token(token) or "?"
     t_after_token = time.perf_counter()
     token_ms = (t_after_token - t_start) * 1000
     log.debug("ws_proxy timing token_validation_ms=%.2f", token_ms)
@@ -498,6 +518,7 @@ async def ws_proxy(websocket: WebSocket):
                 wss_key_ms,
                 device_connect_ms,
             )
+            log.info("User %s: WS connect device=%s", user_identifier, device)
             if used_cert:
                 log.info(
                     f"ws proxy connected to device device={device} url={backend_url} TLS verification successful"
@@ -515,6 +536,7 @@ async def ws_proxy(websocket: WebSocket):
                             await device_ws.send(data)
                             continue
                         event = msg.get("event") if isinstance(msg, dict) else None
+                        log.info("User %s: WS event=%s device=%s", user_identifier, event, device)
                         if event not in FLEET_EVENTS_REQUIRING_PERMISSION:
                             await device_ws.send(data)
                             continue
@@ -522,13 +544,13 @@ async def ws_proxy(websocket: WebSocket):
                         if slug is None:
                             await device_ws.send(data)
                             continue
-                        granted, user_identifier = await validate_permission_async(
+                        granted, perm_user_id = await validate_permission_async(
                             client, token, slug
                         )
                         if not granted:
-                            if user_identifier:
+                            if perm_user_id:
                                 err_msg = (
-                                    f"User {user_identifier} does not have permission '{slug}'. "
+                                    f"User {perm_user_id} does not have permission '{slug}'. "
                                     f"You can add the permission at {PERMISSIONS_ADMIN_URL}"
                                 )
                             else:
