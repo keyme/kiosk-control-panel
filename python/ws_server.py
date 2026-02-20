@@ -48,7 +48,7 @@ _executor = None
 
 _CONNECTION_COUNT_STATE = 'state/control_panel/connection_count.json'
 
-# Connected clients: id -> ws (websockets WebSocketServerProtocol)
+# Connected clients: id -> {"ws": WebSocketServerProtocol, "email": str}
 _connected_clients = {}
 _clients_lock = threading.Lock()
 _wellness_client_id = None
@@ -94,6 +94,12 @@ def _get_connection_count():
         return len(_connected_clients)
 
 
+def _get_connection_list():
+    """Return list of {"email": str} for each connected client. Caller must hold _clients_lock or use from sync context."""
+    with _clients_lock:
+        return [{"email": entry["email"]} for entry in _connected_clients.values()]
+
+
 def _normalize_response(request_id, handler_result):
     """Turn handler return into { id, success, data } or { id, success, errors }."""
     if handler_result is None:
@@ -105,7 +111,7 @@ def _normalize_response(request_id, handler_result):
     return {'id': request_id, 'success': True, 'data': handler_result}
 
 
-def _dispatch_request(client_id, request_id, event, data, connection_count):
+def _dispatch_request(client_id, request_id, event, data, connection_count, connection_list):
     """Call the right handler and return normalized response dict. Runs in executor (sync)."""
     if _server_handlers is None:
         return {'id': request_id, 'success': False, 'errors': ['Server not ready']}
@@ -118,8 +124,8 @@ def _dispatch_request(client_id, request_id, event, data, connection_count):
         'get_terminals': lambda: handlers.get_terminals(),
         'get_wtf_why_degraded': lambda: handlers.get_wtf_why_degraded(),
         'get_status_sections': lambda: handlers.get_status_sections(),
-        'get_connection_count': lambda: handlers.get_connection_count(connection_count=connection_count),
-        'get_status_snapshot': lambda: handlers.get_status_snapshot(connection_count=connection_count),
+        'get_connection_count': lambda: handlers.get_connection_count(connection_count=connection_count, connection_list=connection_list),
+        'get_status_snapshot': lambda: handlers.get_status_snapshot(connection_count=connection_count, connection_list=connection_list),
         'get_all_configs': lambda: handlers.get_all_configs(),
         'take_image': lambda: handlers.take_image(data or {}),
         'get_wellness_check': lambda: handlers.get_wellness_check(
@@ -156,7 +162,8 @@ def _dispatch_request(client_id, request_id, event, data, connection_count):
 def _schedule_send(client_id, obj):
     """Schedule sending a JSON message to a client from a sync context (e.g. wellness progress)."""
     with _clients_lock:
-        ws = _connected_clients.get(client_id)
+        entry = _connected_clients.get(client_id)
+        ws = entry["ws"] if isinstance(entry, dict) else entry
     if ws is None:
         return
     loop = _async_loop
@@ -200,7 +207,8 @@ def emit_async_request(request_obj):
         raw = json.dumps(payload)
     except (TypeError, ValueError):
         return
-    for cid, ws in clients:
+    for cid, entry in clients:
+        ws = entry["ws"] if isinstance(entry, dict) else entry
         asyncio.run_coroutine_threadsafe(_send_text(ws, raw), loop)
 
 
@@ -231,6 +239,7 @@ async def _handler(ws, path):
         )
         await ws.close(code=4401, reason="missing or invalid API key")
         return
+    email = (headers.get("X-User-Email") or "").strip() or "?"
     client_id = str(uuid.uuid4())
     kiosk_name = getattr(keyme.config, 'KIOSK_NAME', None) or ''
     hello_msg = json.dumps({
@@ -246,7 +255,7 @@ async def _handler(ws, path):
     except (websockets.exceptions.ConnectionClosed, RuntimeError):
         return
     with _clients_lock:
-        _connected_clients[client_id] = ws
+        _connected_clients[client_id] = {"ws": ws, "email": email}
         count = len(_connected_clients)
     _write_connection_count(count)
     keyme.log.info(f"Control panel WS client connected id={client_id} total={count}")
@@ -267,9 +276,10 @@ async def _handler(ws, path):
                 await _send_text(ws, err)
                 continue
             connection_count = _get_connection_count()
+            connection_list = _get_connection_list()
             response = await loop.run_in_executor(
                 _executor,
-                lambda: _dispatch_request(client_id, request_id, event, data, connection_count)
+                lambda: _dispatch_request(client_id, request_id, event, data, connection_count, connection_list)
             )
             try:
                 response_str = json.dumps(response)

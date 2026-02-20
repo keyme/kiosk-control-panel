@@ -516,6 +516,9 @@ async def ws_proxy(websocket: WebSocket):
         log.debug("ws_proxy timing wss_key_ms=%.2f", wss_key_ms)
         connect_kwargs: dict = {"ssl": ssl_ctx} if ssl_ctx is not None else {}
         connect_kwargs["additional_headers"] = {"Authorization": "Bearer " + wss_key}
+        # Pass user identity to device so it can track who is connected (for UI and logs).
+        user_email_header = (user_identifier or "")[:256].strip() or "?"
+        connect_kwargs["additional_headers"]["X-User-Email"] = user_email_header
         connect_kwargs["max_size"] = 10 * 1024 * 1024  # 10 MiB; device may send large take_image payloads
         t_connect = time.perf_counter()
         async with websockets.connect(backend_url, **connect_kwargs) as device_ws:

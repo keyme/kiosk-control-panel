@@ -441,7 +441,7 @@ function formatCpuMem(v) {
   return v != null && typeof v === 'number' ? `${v}%` : '—';
 }
 
-export default function Status({ connected, computerStats, wtfWhyDegraded, status: statusProp, terminals, connectionCount }) {
+export default function Status({ connected, computerStats, wtfWhyDegraded, status: statusProp, terminals, connectionCount, connectionList = [] }) {
   const s = computerStats ?? PC_STATS_DUMMY;
   const k = KIOSK_STATS_DUMMY;
   const w = wtfWhyDegraded;
@@ -482,7 +482,17 @@ export default function Status({ connected, computerStats, wtfWhyDegraded, statu
             <StatItem icon={Thermometer} label="CPU temp" value={s.cpu_temp || '—'} />
             <StatItem icon={Gauge} label="Load average" value={s.load_average || '—'} />
             <StatItem icon={Monitor} label="OS version" value={s.os_version || '—'} />
-            <StatItem icon={Link2} label="WebSocket connections" value={connectionCount != null ? String(connectionCount) : '—'} />
+            <StatItem
+              icon={Link2}
+              label="WebSocket connections"
+              value={
+                connectionCount != null
+                  ? Array.isArray(connectionList) && connectionList.length > 0
+                    ? `${connectionCount} (${connectionList.map((c) => c.email || '?').join(', ')})`
+                    : String(connectionCount)
+                  : '—'
+              }
+            />
           </div>
           <TerminalsBlock terminals={terminals} />
           <TimeUpdatedFooter timeUpdated={s.time_updated || null} />

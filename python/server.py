@@ -545,10 +545,10 @@ def get_status_sections():
     return _cached('status_sections', _CACHE_TTL_SLOW_SEC, _status_sections)
 
 
-def get_connection_count(connection_count=0):
-    """Current number of WebSocket connections to this control panel. Not cached."""
+def get_connection_count(connection_count=0, connection_list=None):
+    """Current number of WebSocket connections to this control panel and list of connected users. Not cached."""
     keyme.log.info("WS: requesting get_connection_count")
-    return {'count': connection_count}
+    return {'count': connection_count, 'connections': connection_list or []}
 
 
 def _build_status_snapshot_core():
@@ -563,11 +563,11 @@ def _build_status_snapshot_core():
 _STATUS_SNAPSHOT_TTL_SEC = 6
 
 
-def get_status_snapshot(connection_count=0):
-    """Single response with computer_stats, wtf_why_degraded, status_sections (cached), and connection_count (fresh). Terminals are not included; use get_terminals for that."""
+def get_status_snapshot(connection_count=0, connection_list=None):
+    """Single response with computer_stats, wtf_why_degraded, status_sections (cached), connection_count and connection_list (fresh). Terminals are not included; use get_terminals for that."""
     keyme.log.info("WS: requesting get_status_snapshot")
     data = _cached('status_snapshot', _STATUS_SNAPSHOT_TTL_SEC, _build_status_snapshot_core)
-    data = dict(data, connection_count=connection_count)
+    data = dict(data, connection_count=connection_count, connection_list=connection_list or [])
     return data
 
 

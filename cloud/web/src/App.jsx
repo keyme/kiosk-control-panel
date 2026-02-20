@@ -358,13 +358,14 @@ function requestConnectionCountWithCallback(sock, callback) {
   }).catch(() => callback(null));
 }
 
-/** Single request for all Status page data. Callback receives { computer_stats, connection_count, wtf_why_degraded, status_sections }. Terminals are requested separately so the header updates on all pages. */
-function requestStatusSnapshot(sock, setComputerStats, setConnectionCount, setWtfWhyDegraded, setStatusSections) {
+/** Single request for all Status page data. Callback receives { computer_stats, connection_count, connection_list, wtf_why_degraded, status_sections }. Terminals are requested separately so the header updates on all pages. */
+function requestStatusSnapshot(sock, setComputerStats, setConnectionCount, setConnectionList, setWtfWhyDegraded, setStatusSections) {
   sock.request('get_status_snapshot').then((res) => {
     if (!res.success || !res.data || typeof res.data !== 'object') return;
     const d = res.data;
     setComputerStats(d.computer_stats ?? null);
     setConnectionCount(typeof d.connection_count === 'number' ? d.connection_count : null);
+    setConnectionList(Array.isArray(d.connection_list) ? d.connection_list : []);
     setWtfWhyDegraded(d.wtf_why_degraded ?? null);
     setStatusSections(d.status_sections ?? null);
   }).catch(() => {});
@@ -436,6 +437,7 @@ function AppContent() {
   const [statusSections, setStatusSections] = useState(null);
   const [terminals, setTerminals] = useState(null);
   const [connectionCount, setConnectionCount] = useState(null);
+  const [connectionList, setConnectionList] = useState([]);
   const [lastError, setLastError] = useState(null);
   const [connectionRejected, setConnectionRejected] = useState(null);
   const [disconnectedDueToInactivity, setDisconnectedDueToInactivity] = useState(false);
@@ -455,7 +457,7 @@ function AppContent() {
       requestPanelInfo(socket, setPanelInfo);
       requestTerminals(socket, setTerminals);
       if (isStatusPage(pathnameRef.current)) {
-        requestStatusSnapshot(socket, setComputerStats, setConnectionCount, setWtfWhyDegraded, setStatusSections);
+        requestStatusSnapshot(socket, setComputerStats, setConnectionCount, setConnectionList, setWtfWhyDegraded, setStatusSections);
       }
     };
     const finishConnectionSetup = () => {
@@ -489,6 +491,7 @@ function AppContent() {
       setStatusSections(null);
       setTerminals(null);
       setConnectionCount(null);
+      setConnectionList([]);
       const msg = closeInfo && getConnectionErrorMessage(closeInfo.code, closeInfo.reason);
       setLastError(msg ?? null);
       if (pollInterval) clearInterval(pollInterval);
@@ -506,7 +509,7 @@ function AppContent() {
   // When navigating to Status page (or when connection establishes on Status), pull updates immediately once.
   useEffect(() => {
     if (!socket || !connected || !isStatusPage(location.pathname)) return;
-    requestStatusSnapshot(socket, setComputerStats, setConnectionCount, setWtfWhyDegraded, setStatusSections);
+    requestStatusSnapshot(socket, setComputerStats, setConnectionCount, setConnectionList, setWtfWhyDegraded, setStatusSections);
   }, [location.pathname, connected, socket]);
 
   // Inactivity timeout: disconnect after 15 min with no user activity (only when connected).
@@ -550,9 +553,9 @@ function AppContent() {
           terminals={terminals}
         >
           <Routes>
-            <Route path="/" element={<Status connected={connected} computerStats={computerStats} wtfWhyDegraded={wtfWhyDegraded} status={statusSections} terminals={terminals} connectionCount={connectionCount} />} />
+            <Route path="/" element={<Status connected={connected} computerStats={computerStats} wtfWhyDegraded={wtfWhyDegraded} status={statusSections} terminals={terminals} connectionCount={connectionCount} connectionList={connectionList} />} />
             <Route path=":kiosk" element={<KioskSync />}>
-              <Route index element={<Status connected={connected} computerStats={computerStats} wtfWhyDegraded={wtfWhyDegraded} status={statusSections} terminals={terminals} connectionCount={connectionCount} />} />
+              <Route index element={<Status connected={connected} computerStats={computerStats} wtfWhyDegraded={wtfWhyDegraded} status={statusSections} terminals={terminals} connectionCount={connectionCount} connectionList={connectionList} />} />
               <Route path="calibration" element={<Calibration />}>
                 <Route index element={<CalibrationIndexRedirect />} />
                 <Route path="report" element={<CalibrationReport />} />
