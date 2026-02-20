@@ -566,8 +566,10 @@ _STATUS_SNAPSHOT_TTL_SEC = 6
 def get_status_snapshot(connection_count=0, connection_list=None):
     """Single response with computer_stats, wtf_why_degraded, status_sections (cached), connection_count and connection_list (fresh). Terminals are not included; use get_terminals for that."""
     keyme.log.info("WS: requesting get_status_snapshot")
+    connections = connection_list or []
+    keyme.log.info(f"get_status_snapshot returning connection_count={connection_count} connection_list len={len(connections)} items={connections}")
     data = _cached('status_snapshot', _STATUS_SNAPSHOT_TTL_SEC, _build_status_snapshot_core)
-    data = dict(data, connection_count=connection_count, connection_list=connection_list or [])
+    data = dict(data, connection_count=connection_count, connection_list=connections)
     return data
 
 

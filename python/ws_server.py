@@ -239,7 +239,12 @@ async def _handler(ws, path):
         )
         await ws.close(code=4401, reason="missing or invalid API key")
         return
-    email = (headers.get("X-User-Email") or "").strip() or "?"
+    raw_user_email = headers.get("X-User-Email")
+    keyme.log.info(f"WS connection X-User-Email header: {raw_user_email!r}")
+    email = (raw_user_email or "").strip() if raw_user_email else "?"
+    if not email:
+        email = "?"
+    keyme.log.info(f"WS connection resolved email for client: {email!r}")
     client_id = str(uuid.uuid4())
     kiosk_name = getattr(keyme.config, 'KIOSK_NAME', None) or ''
     hello_msg = json.dumps({
@@ -258,7 +263,7 @@ async def _handler(ws, path):
         _connected_clients[client_id] = {"ws": ws, "email": email}
         count = len(_connected_clients)
     _write_connection_count(count)
-    keyme.log.info(f"Control panel WS client connected id={client_id} total={count}")
+    keyme.log.info(f"Control panel WS client connected id={client_id} email={email!r} total={count}")
     loop = asyncio.get_event_loop()
     try:
         async for message in ws:
@@ -277,6 +282,8 @@ async def _handler(ws, path):
                 continue
             connection_count = _get_connection_count()
             connection_list = _get_connection_list()
+            if event == "get_status_snapshot":
+                keyme.log.info(f"get_status_snapshot: connection_count={connection_count} connection_list={connection_list}")
             response = await loop.run_in_executor(
                 _executor,
                 lambda: _dispatch_request(client_id, request_id, event, data, connection_count, connection_list)
