@@ -275,7 +275,11 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
       )}
       {!connected && deviceHost.trim() && !connectionRejected && !disconnectedDueToInactivity && (
         <div className="shrink-0 bg-amber-500/15 px-4 py-2 text-center text-sm text-amber-800 dark:text-amber-200" role="alert">
-          {lastError ? `Could not connect to the kiosk: ${lastError}` : 'No connection to the kiosk, only calibration page would be available.'}
+          {lastError
+            ? (lastError === STG_DEPLOYED_MESSAGE
+              ? lastError
+              : `Could not connect to the kiosk: ${lastError}`)
+            : 'No connection to the kiosk, only calibration page would be available.'}
         </div>
       )}
 
@@ -379,8 +383,12 @@ const CONNECTION_ERROR_MESSAGES = {
   ssl: 'Possible SSL or certificate error.' + CONNECTION_ERROR_SUFFIX,
 };
 
+/** Message for close code 4403 (staging cannot connect to deployed kiosk). Shown as-is, no prefix. */
+const STG_DEPLOYED_MESSAGE = 'Staging environment cannot connect to a deployed kiosk. Please use the production site to connect to this kiosk.';
+
 /** Map WebSocket close code/reason from cloud proxy to user-facing message, or null. */
 function getConnectionErrorMessage(code, reason) {
+  if (code === 4403) return STG_DEPLOYED_MESSAGE;
   if (code === 4401 || code === 4500) return CONNECTION_ERROR_MESSAGES.auth;
   if (code === 1011) {
     const r = (reason || '').toLowerCase();

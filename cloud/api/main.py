@@ -61,6 +61,11 @@ from control_panel.shared import (
 
 log = logging.getLogger(__name__)
 
+# Staging must not connect to deployed kiosks (close code and reason for frontend).
+STG_DEPLOYED_CLOSE_CODE = 4403
+STG_DEPLOYED_CLOSE_REASON = "Staging environment cannot connect to a deployed kiosk. Use production to connect to this kiosk."
+PANEL_INFO_GATE_TIMEOUT_SEC = 8
+
 # WebSocket connection counter (active connections proxied through this service).
 _active_ws_connections = 0
 _active_ws_connections_lock = asyncio.Lock()
@@ -526,6 +531,43 @@ async def ws_proxy(websocket: WebSocket):
             else:
                 log.info(f"ws proxy connected to device device={device} url={backend_url}")
 
+            # Messages read from device during gate phase (e.g. hello) to forward once proxy starts.
+            device_message_buffer: list[str] = []
+
+            # Limit stg to only connect to non-deployed kiosks
+            if API_ENV == "stg":
+                await device_ws.send(json.dumps({"id": 0, "event": "get_panel_info"}))
+                try:
+                    while True:
+                        msg_raw = await asyncio.wait_for(
+                            device_ws.recv(), timeout=PANEL_INFO_GATE_TIMEOUT_SEC
+                        )
+                        try:
+                            msg = json.loads(msg_raw)
+                        except (json.JSONDecodeError, TypeError):
+                            device_message_buffer.append(msg_raw)
+                            continue
+                        if isinstance(msg, dict) and msg.get("id") == 0:
+                            if (
+                                msg.get("success")
+                                and isinstance(msg.get("data"), dict)
+                                and msg["data"].get("deployed") is True
+                            ):
+                                log.info("User %s: WS deployed false, closing connection", user_identifier)
+                                await websocket.close(
+                                    code=STG_DEPLOYED_CLOSE_CODE,
+                                    reason=STG_DEPLOYED_CLOSE_REASON,
+                                )
+                                return
+                            device_message_buffer.append(msg_raw)
+                            break
+                        device_message_buffer.append(msg_raw)
+                except asyncio.TimeoutError:
+                    log.warning(
+                        "ws_proxy stg gate: get_panel_info timeout device=%s, allowing connection",
+                        device,
+                    )
+
             async def client_to_device():
                 try:
                     while True:
@@ -573,6 +615,8 @@ async def ws_proxy(websocket: WebSocket):
 
             async def device_to_client():
                 try:
+                    for message in device_message_buffer:
+                        await websocket.send_text(message)
                     async for message in device_ws:
                         await websocket.send_text(message)
                 except Exception as e:
