@@ -20,14 +20,9 @@ try:
 except Exception:  # pragma: no cover
     resource = None  # type: ignore[assignment]
 
-# So app logs (INFO) are visible when run under uvicorn (e.g. in Docker).
-# Uvicorn only sets level for its own loggers; root stays WARNING and filters our logs.
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(levelname)s [%(name)s] %(message)s",
-    force=True,
-)
-# force=True (Python 3.8+) applies config even if root already has handlers (e.g. uvicorn).
+from control_panel.cloud.api.logging_config import setup_logging
+
+setup_logging()
 
 from contextlib import asynccontextmanager
 
@@ -228,14 +223,28 @@ class _AccessLogMiddleware(BaseHTTPMiddleware):
     """Log every HTTP request (and WebSocket upgrade). Token is never logged. No log for GET /api/status when 200."""
 
     async def dispatch(self, request, call_next):
+        start = time.perf_counter()
         response = await call_next(request)
         if request.url.path == "/api/status" and response.status_code == 200:
             pass  # skip log for probe to avoid noise
         else:
+            duration = time.perf_counter() - start
             client = request.client or ("?", "?")
             client_addr = f"{client[0]}:{client[1]}"
             path_safe = _request_line_safe(request.url.path, request.url.query)
-            log.info(f'{client_addr} - "{request.method} {path_safe}" {response.status_code}')
+            log.info(
+                '%s - "%s %s" %s',
+                client_addr,
+                request.method,
+                path_safe,
+                response.status_code,
+                extra={
+                    "duration": duration,
+                    "client": client_addr,
+                    "path": path_safe,
+                    "method": request.method,
+                },
+            )
         return response
 
 
