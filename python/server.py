@@ -13,6 +13,7 @@ from functools import partial, wraps
 
 import pylib as keyme
 
+from control_panel.python import activity
 from control_panel.python.putil import SocketErrors, WebsocketError, WebsocketSuccess
 from control_panel.python.shared import PORTS
 
@@ -94,30 +95,6 @@ def _handle_errors(handler=None, return_value=None):
 _IPC_ERRORS = (keyme.ipc.exceptions.TimeoutException, keyme.ipc.exceptions.IPCException)
 
 
-def _activity():
-    """Activity from new_activity_check logic (gui5/scripts/activity_check.py). Returns 'inactive'|'active'|'service'."""
-    try:
-        svc = keyme.status.remote.get(
-            'processes.MANAGER.configuration.service',
-            logging=False,
-            raise_on_error=keyme.ipc.NO_ERRORS)
-        if svc is True:
-            return 'service'
-    except _IPC_ERRORS as e:
-        keyme.log.error(f"Activity service check failed, assuming not service: {e}")
-    try:
-        idle = keyme.status.remote.get(
-            'abilities.idle_kiosk',
-            logging=False,
-            raise_on_error=keyme.ipc.NO_ERRORS)
-        if idle is None or idle is True:
-            return 'inactive'
-        return 'active'
-    except _IPC_ERRORS as e:
-        keyme.log.error(f"Activity idle check failed, assuming inactive: {e}")
-        return 'inactive'
-
-
 def _kiosk_state():
     """Kiosk state from ABILITIES_MANAGER GET_STATUS key 'state' (abilities_manager/tools/get_status.py)."""
     try:
@@ -156,7 +133,7 @@ def _panel_info():
         keyme.log.error(f"Panel info: store_address failed: {e}")
         store_address = ''
     return {
-        'activity': _activity(),
+        'activity': activity.get_activity(),
         'kiosk_status': _kiosk_state(),
         'generation': generation,
         'git_tag': git_tag,
@@ -541,7 +518,7 @@ def get_panel_info():
 def get_activity():
     """Activity only. Poll every 5s for live updates."""
     keyme.log.info("WS: requesting get_activity")
-    return {'activity': _activity()}
+    return {'activity': activity.get_activity()}
 
 
 def get_computer_stats():

@@ -9,6 +9,7 @@ from functools import wraps
 
 import pylib as keyme
 
+from control_panel.python import activity
 from util.check_users import has_logged_in_user
 
 
@@ -17,6 +18,8 @@ def check_fleet_command_allowed():
     if has_logged_in_user():
         return ( False, [ ( "Remote (fab/SSH) session detected. Commands are temporarily"
                 " disabled to prevent conflicts while a developer is connected.") ])
+    if activity.is_kiosk_in_use():
+        return (False, ["Kiosk is in use. Fleet commands are not allowed while a customer is using the kiosk."])
     return (True, [])
 
 
