@@ -350,11 +350,19 @@ function requestConnectionCount(sock, setConnectionCount) {
   }).catch(() => {});
 }
 
-/** Request connection count and call callback(count). Used to gate connect setup by frontend limit. */
-function requestConnectionCountWithCallback(sock, callback) {
+/** Request connection count and call callback(count, connectionList?). Used to gate connect setup by frontend limit. Also sets connection list when provided so Status can show who is connected. */
+function requestConnectionCountWithCallback(sock, callback, setConnectionList) {
   sock.request('get_connection_count').then((res) => {
-    const n = res.success && res.data != null ? res.data.count : null;
-    callback(typeof n === 'number' ? n : null);
+    if (!res.success || res.data == null) {
+      callback(null);
+      return;
+    }
+    const d = res.data;
+    const n = typeof d.count === 'number' ? d.count : null;
+    callback(n);
+    if (setConnectionList && Array.isArray(d.connections)) {
+      setConnectionList(d.connections);
+    }
   }).catch(() => callback(null));
 }
 
@@ -364,8 +372,10 @@ function requestStatusSnapshot(sock, setComputerStats, setConnectionCount, setCo
     if (!res.success || !res.data || typeof res.data !== 'object') return;
     const d = res.data;
     setComputerStats(d.computer_stats ?? null);
-    setConnectionCount(typeof d.connection_count === 'number' ? d.connection_count : null);
-    setConnectionList(Array.isArray(d.connection_list) ? d.connection_list : []);
+    const count = typeof d.connection_count === 'number' ? d.connection_count : (typeof d.count === 'number' ? d.count : null);
+    const list = Array.isArray(d.connection_list) ? d.connection_list : (Array.isArray(d.connections) ? d.connections : []);
+    setConnectionCount(count);
+    setConnectionList(list);
     setWtfWhyDegraded(d.wtf_why_degraded ?? null);
     setStatusSections(d.status_sections ?? null);
   }).catch(() => {});
@@ -480,7 +490,7 @@ function AppContent() {
           return;
         }
         finishConnectionSetup();
-      });
+      }, setConnectionList);
     };
     const onDisconnect = (closeInfo) => {
       setConnected(false);
