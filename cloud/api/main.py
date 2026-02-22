@@ -10,7 +10,7 @@ import os
 import re
 import ssl
 import time
-from typing import Any, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 import boto3
 import httpx
@@ -233,11 +233,7 @@ class _AccessLogMiddleware(BaseHTTPMiddleware):
             client_addr = f"{client[0]}:{client[1]}"
             path_safe = _request_line_safe(request.url.path, request.url.query)
             log.info(
-                '%s - "%s %s" %s',
-                client_addr,
-                request.method,
-                path_safe,
-                response.status_code,
+                f'{client_addr} - "{request.method} {path_safe}" {response.status_code}',
                 extra={
                     "duration": duration,
                     "client": client_addr,
@@ -261,17 +257,14 @@ class _AuditLogMiddleware(BaseHTTPMiddleware):
             return response
         user_id = get_user_identifier_for_token(token)
         path_safe = _request_line_safe(request.url.path, request.url.query)
-        log.info("User %s: %s %s %s", user_id or "?", request.method, path_safe, response.status_code)
+        log.info(f"User {user_id or '?'}: {request.method} {path_safe} {response.status_code}")
         return response
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     log.info(
-        "Control panel cloud API app loaded static_root=%s API_ENV=%s ANF_BASE_URL=%s",
-        _STATIC_ROOT,
-        API_ENV,
-        ANF_BASE_URL,
+        f"Control panel cloud API app loaded static_root={_STATIC_ROOT} API_ENV={API_ENV} ANF_BASE_URL={ANF_BASE_URL}"
     )
     async with httpx.AsyncClient(timeout=10.0) as client:
         app.state.httpx_client = client
@@ -468,6 +461,244 @@ def _device_connection_failure_reason(exc: BaseException) -> str:
     return "port"
 
 
+async def _handle_connect_failure_retry(
+    websocket: WebSocket,
+    device: str,
+    backend_url: str,
+    host_fqdn: str,
+    kiosk_name_upper: str,
+    session: "WSProxySession",
+) -> bool:
+    """
+    On connection failure: invalidate cache, refetch cert from S3, retry once.
+    Returns True if the failure was handled (retry succeeded or we closed the client); False to re-raise.
+    """
+    _device_cert_cache.pop(host_fqdn, None)
+    _device_ssl_ctx_cache.pop(host_fqdn, None)
+    refetch_pem = _get_device_cert_from_s3(host_fqdn, kiosk_name_upper)
+    if refetch_pem is None:
+        return False
+    _device_cert_cache[host_fqdn] = refetch_pem
+    refetch_ctx = ssl.create_default_context()
+    refetch_ctx.load_verify_locations(cadata=refetch_pem)
+    log.info(f"ws proxy refetched device cert from S3, retrying device={device}")
+    try:
+        await session.run_with_refetched_cert(refetch_ctx)
+    except Exception as retry_error:
+        log.exception(
+            f"ws proxy connect to device failed after retry device={device} url={backend_url}"
+        )
+        try:
+            reason = _device_connection_failure_reason(retry_error)
+            await websocket.close(code=1011, reason=reason)
+        except Exception:
+            pass
+        return True
+    try:
+        await websocket.close()
+    except Exception:
+        pass
+    return True
+
+
+class WSProxySession:
+    """Single WebSocket proxy session: client <-> device. All deps passed via constructor."""
+
+    def __init__(
+        self,
+        websocket: WebSocket,
+        backend_url: str,
+        ssl_ctx: Optional[ssl.SSLContext],
+        used_cert: bool,
+        get_wss_key: Callable[[], Optional[str]],
+        client: httpx.AsyncClient,
+        token: str,
+        user_identifier: str,
+        device: str,
+        t_start: float,
+        token_ms: float,
+        backend_ms: float,
+        accept_ms: float,
+    ):
+        self.websocket = websocket
+        self.backend_url = backend_url
+        self.ssl_ctx = ssl_ctx
+        self.used_cert = used_cert
+        self.get_wss_key = get_wss_key
+        self.client = client
+        self.token = token
+        self.user_identifier = user_identifier
+        self.device = device
+        self.t_start = t_start
+        self.token_ms = token_ms
+        self.backend_ms = backend_ms
+        self.accept_ms = accept_ms
+
+    async def run(self) -> None:
+        await self._run_with_ctx(self.ssl_ctx, self.used_cert)
+
+    async def run_with_refetched_cert(self, refetch_ctx: ssl.SSLContext) -> None:
+        await self._run_with_ctx(refetch_ctx, True)
+
+    async def _run_with_ctx(
+        self, ssl_ctx: Optional[ssl.SSLContext], used_cert: bool
+    ) -> None:
+        t_key = time.perf_counter()
+        wss_key = self.get_wss_key()
+        if wss_key is None:
+            await self.websocket.close(code=4500, reason="server config")
+            return
+        wss_key_ms = (time.perf_counter() - t_key) * 1000
+        log.debug(f"ws_proxy timing wss_key_ms={wss_key_ms:.2f}")
+        connect_kwargs: dict = {"ssl": ssl_ctx} if ssl_ctx is not None else {}
+        connect_kwargs["additional_headers"] = {"Authorization": "Bearer " + wss_key}
+        user_email_header = (self.user_identifier or "")[:256].strip() or "?"
+        connect_kwargs["additional_headers"]["X-User-Email"] = user_email_header
+        connect_kwargs["max_size"] = 10 * 1024 * 1024  # 10 MiB
+        t_connect = time.perf_counter()
+        async with websockets.connect(self.backend_url, **connect_kwargs) as device_ws:
+            device_connect_ms = (time.perf_counter() - t_connect) * 1000
+            total_ms = (time.perf_counter() - self.t_start) * 1000
+            log.debug(
+                f"ws_proxy timing device_connect_ms={device_connect_ms:.2f}"
+            )
+            timings = " ".join(
+                f"{k}={v:.0f}"
+                for k, v in [
+                    ("total_ms", total_ms),
+                    ("token_ms", self.token_ms),
+                    ("backend_ms", self.backend_ms),
+                    ("accept_ms", self.accept_ms),
+                    ("wss_key_ms", wss_key_ms),
+                    ("device_connect_ms", device_connect_ms),
+                ]
+            )
+            log.info(f"ws_proxy connection established device={self.device} {timings}")
+            log.info(f"User {self.user_identifier}: WS connect device={self.device}")
+            if used_cert:
+                log.info(
+                    f"ws proxy connected to device device={self.device} url={self.backend_url} TLS verification successful"
+                )
+            else:
+                log.info(
+                    f"ws proxy connected to device device={self.device} url={self.backend_url}"
+                )
+            device_message_buffer = await self._run_staging_gate(device_ws)
+            if device_message_buffer is None:
+                return
+            done, pending = await asyncio.wait(
+                [
+                    asyncio.create_task(self._client_to_device(device_ws)),
+                    asyncio.create_task(self._device_to_client(device_ws, device_message_buffer)),
+                ],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for t in pending:
+                t.cancel()
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+
+    async def _run_staging_gate(
+        self, device_ws: Any
+    ) -> Optional[list[str]]:
+        device_message_buffer: list[str] = []
+        if API_ENV != "stg":
+            return device_message_buffer
+        await device_ws.send(json.dumps({"id": 0, "event": "get_panel_info"}))
+        try:
+            while True:
+                msg_raw = await asyncio.wait_for(
+                    device_ws.recv(), timeout=PANEL_INFO_GATE_TIMEOUT_SEC
+                )
+                try:
+                    msg = json.loads(msg_raw)
+                except (json.JSONDecodeError, TypeError):
+                    device_message_buffer.append(msg_raw)
+                    continue
+                if isinstance(msg, dict) and msg.get("id") == 0:
+                    if (
+                        msg.get("success")
+                        and isinstance(msg.get("data"), dict)
+                        and msg["data"].get("deployed") is True
+                    ):
+                        log.info(
+                            f"User {self.user_identifier}: WS deployed false, closing connection"
+                        )
+                        await self.websocket.close(
+                            code=STG_DEPLOYED_CLOSE_CODE,
+                            reason=STG_DEPLOYED_CLOSE_REASON,
+                        )
+                        return None
+                    device_message_buffer.append(msg_raw)
+                    break
+                device_message_buffer.append(msg_raw)
+        except asyncio.TimeoutError:
+            log.warning(
+                f"ws_proxy stg gate: get_panel_info timeout device={self.device}, allowing connection"
+            )
+        return device_message_buffer
+
+    async def _client_to_device(self, device_ws: Any) -> None:
+        try:
+            while True:
+                data = await self.websocket.receive_text()
+                try:
+                    msg = json.loads(data)
+                except (json.JSONDecodeError, TypeError):
+                    await device_ws.send(data)
+                    continue
+                event = msg.get("event") if isinstance(msg, dict) else None
+                log.info(
+                    f"User {self.user_identifier}: WS event={event} device={self.device}"
+                )
+                if event not in FLEET_EVENTS_REQUIRING_PERMISSION:
+                    await device_ws.send(data)
+                    continue
+                slug = required_permission(event)
+                if slug is None:
+                    await device_ws.send(data)
+                    continue
+                granted, perm_user_id = await validate_permission_async(
+                    self.client, self.token, slug
+                )
+                if not granted:
+                    if perm_user_id:
+                        err_msg = (
+                            f"User {perm_user_id} does not have permission '{slug}'. "
+                            f"You can add the permission at {PERMISSIONS_ADMIN_URL}"
+                        )
+                    else:
+                        err_msg = (
+                            f"Permission denied: '{slug}' required. "
+                            f"You can add the permission at {PERMISSIONS_ADMIN_URL}"
+                        )
+                    err_response = json.dumps({
+                        "id": msg.get("id"),
+                        "success": False,
+                        "errors": [err_msg],
+                    })
+                    await self.websocket.send_text(err_response)
+                    continue
+                await device_ws.send(data)
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            log.warning(f"ws proxy client_to_device: {e}")
+
+    async def _device_to_client(
+        self, device_ws: Any, device_message_buffer: list[str]
+    ) -> None:
+        try:
+            for message in device_message_buffer:
+                await self.websocket.send_text(message)
+            async for message in device_ws:
+                await self.websocket.send_text(message)
+        except Exception as e:
+            log.warning(f"ws proxy device_to_client: {e}")
+
+
 @app.websocket("/ws")
 async def ws_proxy(websocket: WebSocket):
     """Proxy WebSocket to device. Query params: 'device' (required), 'token' (required, KeyMe)."""
@@ -484,10 +715,15 @@ async def ws_proxy(websocket: WebSocket):
         log.info("ws proxy token validation failed")
         await websocket.close(code=4401, reason="invalid token")
         return
-    user_identifier = (user_data.get("email") or user_data.get("user_id")) or get_user_identifier_for_token(token) or "?"
+    raw_uid = (user_data.get("email") or user_data.get("user_id")) or get_user_identifier_for_token(token) or "?"
+    if asyncio.iscoroutine(raw_uid):
+        user_identifier = (await raw_uid) or "?"
+    else:
+        user_identifier = raw_uid or "?"
+    user_identifier = str(user_identifier)[:256].strip() or "?"
     t_after_token = time.perf_counter()
     token_ms = (t_after_token - t_start) * 1000
-    log.debug("ws_proxy timing token_validation_ms=%.2f", token_ms)
+    log.debug(f"ws_proxy timing token_validation_ms={token_ms:.2f}")
     device = websocket.query_params.get("device") or ""
     device = device.strip()
     if not device:
@@ -499,186 +735,47 @@ async def ws_proxy(websocket: WebSocket):
         return
     t_after_backend = time.perf_counter()
     backend_ms = (t_after_backend - t_after_token) * 1000
-    log.debug("ws_proxy timing device_backend_ms=%.2f", backend_ms)
+    log.debug(f"ws_proxy timing device_backend_ms={backend_ms:.2f}")
     await websocket.accept()
     await _inc_active_ws_connections()
     t_after_accept = time.perf_counter()
     accept_ms = (t_after_accept - t_after_backend) * 1000
-    log.debug("ws_proxy timing accept_ms=%.2f", accept_ms)
+    log.debug(f"ws_proxy timing accept_ms={accept_ms:.2f}")
 
-    async def _run_proxy(backend_url: str, ssl_ctx: Optional[ssl.SSLContext], used_cert: bool) -> None:
-        t_key = time.perf_counter()
-        wss_key = _get_wss_api_key()
-        if wss_key is None:
-            await websocket.close(code=4500, reason="server config")
-            return
-        wss_key_ms = (time.perf_counter() - t_key) * 1000
-        log.debug("ws_proxy timing wss_key_ms=%.2f", wss_key_ms)
-        connect_kwargs: dict = {"ssl": ssl_ctx} if ssl_ctx is not None else {}
-        connect_kwargs["additional_headers"] = {"Authorization": "Bearer " + wss_key}
-        # Pass user identity to device so it can track who is connected (for UI and logs).
-        user_email_header = (user_identifier or "")[:256].strip() or "?"
-        connect_kwargs["additional_headers"]["X-User-Email"] = user_email_header
-        connect_kwargs["max_size"] = 10 * 1024 * 1024  # 10 MiB; device may send large take_image payloads
-        t_connect = time.perf_counter()
-        async with websockets.connect(backend_url, **connect_kwargs) as device_ws:
-            device_connect_ms = (time.perf_counter() - t_connect) * 1000
-            total_ms = (time.perf_counter() - t_start) * 1000
-            log.debug("ws_proxy timing device_connect_ms=%.2f total_ms=%.2f", device_connect_ms, total_ms)
-            log.info(
-                "ws_proxy connection established device=%s total_ms=%.0f token_ms=%.0f backend_ms=%.0f accept_ms=%.0f wss_key_ms=%.0f device_connect_ms=%.0f",
-                device,
-                total_ms,
-                token_ms,
-                backend_ms,
-                accept_ms,
-                wss_key_ms,
-                device_connect_ms,
-            )
-            log.info("User %s: WS connect device=%s", user_identifier, device)
-            if used_cert:
-                log.info(
-                    f"ws proxy connected to device device={device} url={backend_url} TLS verification successful"
-                )
-            else:
-                log.info(f"ws proxy connected to device device={device} url={backend_url}")
-
-            # Messages read from device during gate phase (e.g. hello) to forward once proxy starts.
-            device_message_buffer: list[str] = []
-
-            # Limit stg to only connect to non-deployed kiosks
-            if API_ENV == "stg":
-                await device_ws.send(json.dumps({"id": 0, "event": "get_panel_info"}))
-                try:
-                    while True:
-                        msg_raw = await asyncio.wait_for(
-                            device_ws.recv(), timeout=PANEL_INFO_GATE_TIMEOUT_SEC
-                        )
-                        try:
-                            msg = json.loads(msg_raw)
-                        except (json.JSONDecodeError, TypeError):
-                            device_message_buffer.append(msg_raw)
-                            continue
-                        if isinstance(msg, dict) and msg.get("id") == 0:
-                            if (
-                                msg.get("success")
-                                and isinstance(msg.get("data"), dict)
-                                and msg["data"].get("deployed") is True
-                            ):
-                                log.info("User %s: WS deployed false, closing connection", user_identifier)
-                                await websocket.close(
-                                    code=STG_DEPLOYED_CLOSE_CODE,
-                                    reason=STG_DEPLOYED_CLOSE_REASON,
-                                )
-                                return
-                            device_message_buffer.append(msg_raw)
-                            break
-                        device_message_buffer.append(msg_raw)
-                except asyncio.TimeoutError:
-                    log.warning(
-                        "ws_proxy stg gate: get_panel_info timeout device=%s, allowing connection",
-                        device,
-                    )
-
-            async def client_to_device():
-                try:
-                    while True:
-                        data = await websocket.receive_text()
-                        try:
-                            msg = json.loads(data)
-                        except (json.JSONDecodeError, TypeError):
-                            await device_ws.send(data)
-                            continue
-                        event = msg.get("event") if isinstance(msg, dict) else None
-                        log.info("User %s: WS event=%s device=%s", user_identifier, event, device)
-                        if event not in FLEET_EVENTS_REQUIRING_PERMISSION:
-                            await device_ws.send(data)
-                            continue
-                        slug = required_permission(event)
-                        if slug is None:
-                            await device_ws.send(data)
-                            continue
-                        granted, perm_user_id = await validate_permission_async(
-                            client, token, slug
-                        )
-                        if not granted:
-                            if perm_user_id:
-                                err_msg = (
-                                    f"User {perm_user_id} does not have permission '{slug}'. "
-                                    f"You can add the permission at {PERMISSIONS_ADMIN_URL}"
-                                )
-                            else:
-                                err_msg = (
-                                    f"Permission denied: '{slug}' required. "
-                                    f"You can add the permission at {PERMISSIONS_ADMIN_URL}"
-                                )
-                            err_response = json.dumps({
-                                "id": msg.get("id"),
-                                "success": False,
-                                "errors": [err_msg],
-                            })
-                            await websocket.send_text(err_response)
-                            continue
-                        await device_ws.send(data)
-                except WebSocketDisconnect:
-                    pass
-                except Exception as e:
-                    log.warning(f"ws proxy client_to_device: {e}")
-
-            async def device_to_client():
-                try:
-                    for message in device_message_buffer:
-                        await websocket.send_text(message)
-                    async for message in device_ws:
-                        await websocket.send_text(message)
-                except Exception as e:
-                    log.warning(f"ws proxy device_to_client: {e}")
-
-            done, pending = await asyncio.wait(
-                [asyncio.create_task(client_to_device()), asyncio.create_task(device_to_client())],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for t in pending:
-                t.cancel()
-                try:
-                    await t
-                except asyncio.CancelledError:
-                    pass
+    session = WSProxySession(
+        websocket=websocket,
+        backend_url=backend_url,
+        ssl_ctx=ssl_ctx,
+        used_cert=used_cert,
+        get_wss_key=_get_wss_api_key,
+        client=client,
+        token=token,
+        user_identifier=user_identifier,
+        device=device,
+        t_start=t_start,
+        token_ms=token_ms,
+        backend_ms=backend_ms,
+        accept_ms=accept_ms,
+    )
 
     try:
-        await _run_proxy(backend_url, ssl_ctx, used_cert)
-    except (TimeoutError, Exception) as first_error:
-        # On connection failure: invalidate cache, refetch from S3, retry once (handles device replacement).
-        _device_cert_cache.pop(host_fqdn, None)
-        _device_ssl_ctx_cache.pop(host_fqdn, None)
-        refetch_pem = _get_device_cert_from_s3(host_fqdn, kiosk_name_upper)
-        if refetch_pem is not None:
-            _device_cert_cache[host_fqdn] = refetch_pem
-            refetch_ctx = ssl.create_default_context()
-            refetch_ctx.load_verify_locations(cadata=refetch_pem)
-            log.info(f"ws proxy refetched device cert from S3, retrying device={device}")
-            try:
-                await _run_proxy(backend_url, refetch_ctx, True)
-            except Exception as retry_error:
-                log.exception(
-                    f"ws proxy connect to device failed after retry device={device} url={backend_url}"
-                )
-                try:
-                    reason = _device_connection_failure_reason(retry_error)
-                    await websocket.close(code=1011, reason=reason)
-                except Exception:
-                    pass
-            else:
-                try:
-                    await websocket.close()
-                except Exception:
-                    pass
-            return
-        raise first_error
+        await session.run()
+    except WebSocketDisconnect:
+        pass
     except TimeoutError as e:
         log.error(
             f"ws proxy connect timed out: url={backend_url} port={WS_PORT} error={e}"
         )
+        handled = await _handle_connect_failure_retry(
+            websocket,
+            device,
+            backend_url,
+            host_fqdn,
+            kiosk_name_upper,
+            session,
+        )
+        if handled:
+            return
         try:
             reason = _device_connection_failure_reason(e)
             await websocket.close(code=1011, reason=reason)
@@ -688,6 +785,16 @@ async def ws_proxy(websocket: WebSocket):
         log.exception(
             f"ws proxy connect to device failed device={device} url={backend_url} port={WS_PORT}"
         )
+        handled = await _handle_connect_failure_retry(
+            websocket,
+            device,
+            backend_url,
+            host_fqdn,
+            kiosk_name_upper,
+            session,
+        )
+        if handled:
+            return
         try:
             reason = _device_connection_failure_reason(e)
             await websocket.close(code=1011, reason=reason)
