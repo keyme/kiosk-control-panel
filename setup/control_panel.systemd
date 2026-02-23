@@ -7,18 +7,15 @@ Description=KeyMe Control Panel (WebSocket + IPC for fleet/device control)
 Type=simple
 User=kiosk
 Group=kiosk
-
-WorkingDirectory=/kiosk
-Environment=PYTHONPATH=/kiosk
-
-ExecStart=/usr/bin/python3 /kiosk/control_panel/python/main.py
-
 Restart=always
+Nice=10
 RestartSec=15
-
 KillMode=process
 KillSignal=SIGTERM
 TimeoutStopSec=2
+WorkingDirectory=/kiosk
+Environment=PYTHONPATH=/kiosk
+ExecStart=/usr/bin/python3 /kiosk/control_panel/python/main.py
 
 [Install]
 WantedBy=multi-user.target
