@@ -1,4 +1,9 @@
 {% set allowed = salt['cp.get_file_str']('salt://allowed_ips.json') | load_json %}
+{% if pillar.get('python_version', '') == '3.9' %}
+{% set systemd_file_source = 'salt://control_panel-venv.systemd' %}
+{% else %}
+{% set systemd_file_source = 'salt://control_panel.systemd' %}
+{% endif %}
 
 # Flush and recreate the CONTROL_PANEL chain for idempotency
 control-panel-iptables:
@@ -37,3 +42,28 @@ control-panel-wss-device-certs:
     - name: /kiosk/control_panel/python/scripts/create_wss_cert_and_upload.py
     - runas: kiosk
     - cwd: /kiosk
+
+control-panel-service:
+  file.managed:
+    - source: {{ systemd_file_source }}
+    - name: /etc/systemd/system/keyme-control-panel.service
+  module.wait:
+    - name: service.systemctl_reload
+    - watch:
+      - file: control-panel-service
+  service.enabled:
+    - name: keyme-control-panel
+    - require:
+      - file: control-panel-service
+      - cmd: control-panel-wss-api-key-keyring
+      - cmd: control-panel-wss-device-certs
+
+# Daily restart at 3 AM to free up any memory leaks. Just a preventative measure.
+daily-restart-control-panel-service:
+  cron.present:
+    - name: 'systemctl restart keyme-control-panel.service'
+    - user: root
+    - minute: 0
+    - hour: 3
+    - require:
+      - service: control-panel-service

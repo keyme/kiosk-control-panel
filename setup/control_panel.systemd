@@ -1,0 +1,20 @@
+[Unit]
+ConditionPathExists=/kiosk
+After=graphical.target keyme-manager.service
+Description=KeyMe Control Panel (WebSocket + IPC for fleet/device control)
+
+[Service]
+Type=simple
+User=kiosk
+Group=kiosk
+RestartSec=15
+Restart=always
+KillMode=process
+KillSignal=SIGINT
+ExecStop=/bin/sleep 0.1
+Environment=PYTHONPATH=/kiosk
+WorkingDirectory=/kiosk
+ExecStart=/usr/bin/python3 /kiosk/control_panel/python/main.py
+
+[Install]
+WantedBy=graphical.target
