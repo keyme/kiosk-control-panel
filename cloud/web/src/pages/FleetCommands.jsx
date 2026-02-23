@@ -546,7 +546,7 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
                 openConfirm(
                   'reboot_kiosk',
                   'Reboot kiosk',
-                  'Are you sure you want to reboot the kiosk? The connection will be lost.'
+                  'Are you sure you want to reboot the kiosk? The connection will be lost. After reboot, wait about 5 minutes for the kiosk to become ASG (All Systems Go) and clear all degradations.'
                 )
               }
             >
@@ -725,11 +725,18 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
                   )}
                 </div>
                 {restartProgress.done && (
-                  <div className="flex justify-end">
-                    <button type="button" className={btnPrimary} onClick={closeRestartProgressDialog}>
-                      Close
-                    </button>
-                  </div>
+                  <>
+                    {restartProgress.isRestartAll && (
+                      <p className="rounded-md border border-blue-500/50 bg-blue-500/15 px-3 py-2 text-sm text-blue-800 dark:bg-blue-500/20 dark:text-blue-200">
+                        Wait about 5 minutes for the kiosk to become ASG (All Systems Go) and clear all degradations.
+                      </p>
+                    )}
+                    <div className="flex justify-end">
+                      <button type="button" className={btnPrimary} onClick={closeRestartProgressDialog}>
+                        Close
+                      </button>
+                    </div>
+                  </>
                 )}
               </div>
             </>
