@@ -4,6 +4,7 @@ import { PageTitle } from '@/components/PageTitle';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Camera, Loader2, Download, Maximize2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
 
 const CAMERAS = [
   'bitting_video_left',
@@ -84,7 +85,7 @@ export default function CameraImagesPage({ socket }) {
       if (!socket?.connected || loadingCamera) return;
       setLoadingCamera(camera);
       setError(null);
-      socket.request('take_image', { camera, resize_factor: scaleFactor }).then((res) => {
+      socket.requestIfSupported('take_image', { camera, resize_factor: scaleFactor }).then((res) => {
         setLoadingCamera(null);
         const data = res?.success ? res.data : null;
         if (data && typeof data === 'object') {
@@ -102,7 +103,10 @@ export default function CameraImagesPage({ socket }) {
         } else {
           setError('No response from device');
         }
-      }).catch(() => setLoadingCamera(null));
+      }).catch((err) => {
+        setLoadingCamera(null);
+        setError(err?.code === ERROR_UNSUPPORTED_COMMAND ? UNSUPPORTED_FEATURE_MESSAGE : (err?.message || 'Request failed'));
+      });
     },
     [socket, loadingCamera, scaleFactor]
   );

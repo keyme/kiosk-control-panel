@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog';
 import { Radio, Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
 
 const btnPrimary =
   'inline-flex items-center justify-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none';
@@ -199,7 +200,7 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
       });
       setLoading(true);
       socket
-        .request('fleet_restart_process', payloadWithForce({ process: processName }))
+        .requestIfSupported('fleet_restart_process', payloadWithForce({ process: processName }))
         .then((res) => {
           setRestartProgress((prev) => {
             if (!prev) return prev;
@@ -276,7 +277,7 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
       resetResultHandlerRef.current = handler;
       socket.on('async.RESET_RESULT', handler);
       socket
-        .request('fleet_reset_device', payloadWithForce(req.data))
+        .requestIfSupported('fleet_reset_device', payloadWithForce(req.data))
         .then((res) => {
           clearResetListener();
           const finalLine = res.success ? 'Done.' : (res.errors?.length ? res.errors.join(' ') : 'Request failed');
@@ -298,7 +299,7 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
 
     setLoading(true);
     socket
-      .request(req.event, payloadWithForce(req.data))
+      .requestIfSupported(req.event, payloadWithForce(req.data))
       .then((res) => {
         setLoading(false);
         setResult({
@@ -310,10 +311,11 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
       })
       .catch((err) => {
         setLoading(false);
+        const msg = err?.code === ERROR_UNSUPPORTED_COMMAND ? UNSUPPORTED_FEATURE_MESSAGE : (err?.message || 'Request failed');
         setResult({
           success: false,
           action: confirmAction.action,
-          errors: [err?.message || 'Request failed'],
+          errors: [msg],
         });
         setConfirmAction(null);
       });

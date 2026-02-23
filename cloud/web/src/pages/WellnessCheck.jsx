@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageTitle } from '@/components/PageTitle';
 import { Heart, Check, ChevronDown, ChevronRight, X, AlertTriangle, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
 
 const STEPS = [
   'software', 'speedtest', 'signal', 'modem_resets', 'camera_box',
@@ -65,7 +66,7 @@ export default function WellnessCheck({ socket }) {
 
     socket.on('wellness_progress', onProgress);
 
-    socket.request('get_wellness_check').then((res) => {
+    socket.requestIfSupported('get_wellness_check').then((res) => {
       socket.off('wellness_progress', onProgress);
       setLoading(false);
       if (res && res.success && res.data && typeof res.data === 'object') {
@@ -73,9 +74,10 @@ export default function WellnessCheck({ socket }) {
       } else if (res && !res.success) {
         setResult({ error: res.errors?.join(', ') || 'Request failed' });
       }
-    }).catch(() => {
+    }).catch((err) => {
       socket.off('wellness_progress', onProgress);
       setLoading(false);
+      setResult({ error: err?.code === ERROR_UNSUPPORTED_COMMAND ? UNSUPPORTED_FEATURE_MESSAGE : (err?.message || 'Request failed') });
     });
   }, [socket, loading]);
 

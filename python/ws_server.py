@@ -149,8 +149,8 @@ def _dispatch_request(client_id, request_id, event, data, connection_count, conn
         'get_roi': lambda: handlers.get_roi(data or {}),
         'save_roi': lambda: handlers.save_roi(data or {}),
     }
-    if event not in event_handlers:
-        return {'id': request_id, 'success': False, 'errors': ['Unknown event']}
+    if event not in ws_protocol.SUPPORTED_REQUEST_EVENTS:
+        return {'id': request_id, 'success': False, 'errors': [ws_protocol.ERROR_UNSUPPORTED_COMMAND]}
     try:
         result = event_handlers[event]()
         return _normalize_response(request_id, result)
@@ -253,6 +253,8 @@ async def _handler(ws, path):
             'connected': True,
             'service': 'CONTROL_PANEL',
             'kiosk_name': kiosk_name,
+            'protocol_version': ws_protocol.PROTOCOL_VERSION,
+            'capabilities': list(ws_protocol.SUPPORTED_REQUEST_EVENTS),
         }
     })
     try:

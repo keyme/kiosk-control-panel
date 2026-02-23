@@ -4,6 +4,7 @@ import { PageTitle } from '@/components/PageTitle';
 import { ScrollText, Play, Square, Download, AlertTriangle, Loader2, HelpCircle, Maximize2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
 
 const INITIAL_LINES_DEFAULT = 50;
 const INITIAL_LINES_MAX = 200;
@@ -174,7 +175,7 @@ export default function LogTailPage({ socket }) {
   const fetchLogList = useCallback(() => {
     if (!socket?.connected) return;
     setError(null);
-    socket.request('get_log_list').then((res) => {
+    socket.requestIfSupported('get_log_list').then((res) => {
       if (res?.success && res?.data?.logs) {
         setLogs(res.data.logs);
         if (!logId && res.data.logs.length > 0) {
@@ -184,7 +185,7 @@ export default function LogTailPage({ socket }) {
         setError(res?.errors?.join(', ') || 'Failed to load log list');
       }
     }).catch((err) => {
-      setError(err?.message || 'Failed to load log list');
+      setError(err?.code === ERROR_UNSUPPORTED_COMMAND ? UNSUPPORTED_FEATURE_MESSAGE : (err?.message || 'Failed to load log list'));
     });
   }, [socket, logId]);
 
@@ -206,7 +207,7 @@ export default function LogTailPage({ socket }) {
     if (!socket) return;
     return () => {
       if (tailingRef.current) {
-        socket.request('log_tail_stop').catch(() => {});
+        socket.requestIfSupported('log_tail_stop').catch(() => {});
       }
       socket.off('log_tail_line', onTailLineRef.current);
       if (throttleTimeoutRef.current) {
@@ -320,7 +321,7 @@ export default function LogTailPage({ socket }) {
     }
 
     // Best-effort: stop any previous tail if the server still has one.
-    socket.request('log_tail_stop').catch(() => {});
+    socket.requestIfSupported('log_tail_stop').catch(() => {});
     socket.off('log_tail_line', onTailLineRef.current);
     onTailLineRef.current = null;
 
@@ -342,7 +343,7 @@ export default function LogTailPage({ socket }) {
     socket.on('log_tail_line', onTailLine);
 
     const n = clampInitialLines(initialLines);
-    socket.request('log_tail_start', { log_id: selected, initial_lines: n }).then((res) => {
+    socket.requestIfSupported('log_tail_start', { log_id: selected, initial_lines: n }).then((res) => {
       setLoading(false);
       if (res?.success && Array.isArray(res?.data?.lines)) {
         setTailing(true);
@@ -356,7 +357,7 @@ export default function LogTailPage({ socket }) {
     }).catch((err) => {
       setLoading(false);
       setTailing(false);
-      setError(err?.message || 'Failed to start tail');
+      setError(err?.code === ERROR_UNSUPPORTED_COMMAND ? UNSUPPORTED_FEATURE_MESSAGE : (err?.message || 'Failed to start tail'));
       socket.off('log_tail_line', onTailLineRef.current);
     });
   }, [socket, logId, logs, initialLines, tailing, loading, enforceMaxLines, scheduleFlush, flushRender]);
@@ -369,7 +370,7 @@ export default function LogTailPage({ socket }) {
       clearTimeout(throttleTimeoutRef.current);
       throttleTimeoutRef.current = null;
     }
-    socket.request('log_tail_stop').catch(() => {});
+    socket.requestIfSupported('log_tail_stop').catch(() => {});
     setTailing(false);
   }, [socket, tailing]);
 

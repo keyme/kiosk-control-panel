@@ -3,6 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { PageTitle } from '@/components/PageTitle';
 import { Download, Loader2, Search, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
 import JSONEditor from 'jsoneditor';
 import 'jsoneditor/dist/jsoneditor.min.css';
 
@@ -24,7 +25,7 @@ export default function ConfigPage({ socket }) {
     if (!socket || loading) return;
     setLoading(true);
     setError(null);
-    socket.request('get_all_configs').then((res) => {
+    socket.requestIfSupported('get_all_configs').then((res) => {
       setLoading(false);
       if (res?.success && res?.data != null) {
         setConfigs(res.data.configs ?? {});
@@ -43,7 +44,10 @@ export default function ConfigPage({ socket }) {
           : res?.errors ?? 'Failed to load configs';
         setError(errMsg);
       }
-    }).catch(() => setLoading(false));
+    }).catch((err) => {
+      setLoading(false);
+      setError(err?.code === ERROR_UNSUPPORTED_COMMAND ? UNSUPPORTED_FEATURE_MESSAGE : (err?.message || 'Failed to load configs'));
+    });
   }, [socket, loading]);
 
   const processes = [

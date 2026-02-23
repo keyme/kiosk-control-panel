@@ -1,7 +1,13 @@
 # Wire protocol for control panel WebSocket (JSON over WebSocket).
 # Client <-> Server message shapes. Python 3.6 compatible.
 
+PROTOCOL_VERSION = 1
+
+# Structured error code for unsupported command (version skew).
+ERROR_UNSUPPORTED_COMMAND = 'unsupported_command'
+
 # Request events (client sends "event", server responds with same id).
+# Legacy list for reference; SUPPORTED_REQUEST_EVENTS is the single source of truth for capabilities.
 REQUEST_EVENTS = (
     'get_kiosk_name',
     'get_panel_info',
@@ -19,6 +25,34 @@ REQUEST_EVENTS = (
     'get_log_list',
     'log_tail_start',
     'log_tail_stop',
+    'get_roi',
+    'save_roi',
+)
+
+# All request events the server supports (used for hello capabilities and unknown-command check).
+# Must match event_handlers in ws_server.py.
+SUPPORTED_REQUEST_EVENTS = (
+    'get_kiosk_name',
+    'get_panel_info',
+    'get_activity',
+    'get_computer_stats',
+    'get_terminals',
+    'get_wtf_why_degraded',
+    'get_status_sections',
+    'get_connection_count',
+    'get_status_snapshot',
+    'get_all_configs',
+    'take_image',
+    'get_wellness_check',
+    'get_data_usage',
+    'get_log_list',
+    'log_tail_start',
+    'log_tail_stop',
+    'fleet_restart_process',
+    'fleet_reset_device',
+    'fleet_switch_process_list',
+    'fleet_reboot_kiosk',
+    'fleet_clear_cutter_stuck',
     'get_roi',
     'save_roi',
 )

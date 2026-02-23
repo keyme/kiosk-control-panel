@@ -9,6 +9,14 @@ import { getToken } from './apiFetch';
 const WS_PATH = '/ws';
 const REQUEST_TIMEOUT_MS = 60000;
 
+/** Error code in server response when the command is not supported (version skew). */
+export const ERROR_UNSUPPORTED_COMMAND = 'unsupported_command';
+
+/** User-facing message when a feature is not supported (device needs software update). */
+export const UNSUPPORTED_FEATURE_MESSAGE =
+  `This feature is not available on the current kiosk software version.
+Please update the kiosk to enable it.`;
+
 /**
  * Build WebSocket URL for device. Same-origin /ws (cloud proxy or Vite dev proxy).
  * When deviceHost is set, add ?device=... so the cloud proxy can connect to that device.
@@ -40,6 +48,8 @@ export function createDeviceSocket(wsUrl) {
   const listeners = new Map();
   let ws = null;
   let helloReceived = false;
+  let protocolVersion = null;
+  let capabilities = new Set();
   let connectCallback = null;
   let disconnectCallback = null;
 
@@ -57,7 +67,11 @@ export function createDeviceSocket(wsUrl) {
       if (settle) {
         pending.delete(id);
         if (msg.success === false) {
-          settle.reject(new Error(Array.isArray(msg.errors) ? msg.errors.join('; ') : 'Request failed'));
+          const errors = Array.isArray(msg.errors) ? msg.errors : [];
+          const isUnsupported = errors.includes(ERROR_UNSUPPORTED_COMMAND);
+          const err = new Error(isUnsupported ? UNSUPPORTED_FEATURE_MESSAGE : errors.join('; ') || 'Request failed');
+          if (isUnsupported) err.code = ERROR_UNSUPPORTED_COMMAND;
+          settle.reject(err);
         } else {
           settle.resolve(msg);
         }
@@ -71,6 +85,13 @@ export function createDeviceSocket(wsUrl) {
     if (!event) return;
     if (event === 'hello') {
       helloReceived = true;
+      const data = msg && msg.data != null ? msg.data : {};
+      const v = data.protocol_version;
+      protocolVersion = typeof v === 'number' && Number.isInteger(v) ? v : null;
+      const cap = data.capabilities;
+      capabilities = Array.isArray(cap)
+        ? new Set(cap.filter((c) => typeof c === 'string'))
+        : new Set();
       if (connectCallback) connectCallback();
     }
     const list = listeners.get(event);
@@ -112,6 +133,8 @@ export function createDeviceSocket(wsUrl) {
   function connect() {
     if (ws) return;
     helloReceived = false;
+    protocolVersion = null;
+    capabilities = new Set();
     ws = new WebSocket(wsUrl);
     ws.onopen = () => {};
     ws.onmessage = (ev) => {
@@ -126,6 +149,8 @@ export function createDeviceSocket(wsUrl) {
     ws.onclose = (ev) => {
       ws = null;
       helloReceived = false;
+      protocolVersion = null;
+      capabilities = new Set();
       pending.forEach((s) => s.reject(new Error('Connection closed')));
       pending.clear();
       if (disconnectCallback) disconnectCallback({ code: ev.code, reason: ev.reason ?? '' });
@@ -150,6 +175,29 @@ export function createDeviceSocket(wsUrl) {
         ws = null;
       }
       helloReceived = false;
+      protocolVersion = null;
+      capabilities = new Set();
+    },
+
+    getProtocolVersion() {
+      return protocolVersion;
+    },
+
+    getCapabilities() {
+      return capabilities;
+    },
+
+    hasCapability(name) {
+      return typeof name === 'string' && capabilities.has(name);
+    },
+
+    requestIfSupported(event, data) {
+      if (!this.hasCapability(event)) {
+        const err = new Error(UNSUPPORTED_FEATURE_MESSAGE);
+        err.code = ERROR_UNSUPPORTED_COMMAND;
+        return Promise.reject(err);
+      }
+      return this.request(event, data);
     },
 
     request(event, data) {

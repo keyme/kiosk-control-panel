@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog';
 import { Loader2, RotateCcw, Play, Maximize2, Minimize2, ImageIcon, AlertTriangle, ChevronDown, ChevronRight, CheckCircle, XCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
 import leftGoodCropUrl from '@/assets/left_good_crop.jpg';
 import rightGoodCropUrl from '@/assets/right_good_crop.jpg';
 
@@ -276,8 +277,8 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
     setLoadingPreviews(true);
     setStatus((prev) => (prev.text ? prev : { text: '', isError: false }));
     Promise.all([
-      socket.request('take_image', { camera: 'bitting_video_left_roi_box', resize_factor: PREVIEW_RESIZE_FACTOR }),
-      socket.request('take_image', { camera: 'bitting_video_right_roi_box', resize_factor: PREVIEW_RESIZE_FACTOR }),
+      socket.requestIfSupported('take_image', { camera: 'bitting_video_left_roi_box', resize_factor: PREVIEW_RESIZE_FACTOR }),
+      socket.requestIfSupported('take_image', { camera: 'bitting_video_right_roi_box', resize_factor: PREVIEW_RESIZE_FACTOR }),
     ])
       .then(([resLeft, resRight]) => {
         if (resLeft && !resLeft.success && resLeft.errors?.some((e) => String(e).toLowerCase().includes('permission'))) {
@@ -296,7 +297,7 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
         });
       })
       .catch((err) => {
-        setStatus({ text: err?.message || 'Failed to load previews', isError: true });
+        setStatus({ text: err?.code === ERROR_UNSUPPORTED_COMMAND ? UNSUPPORTED_FEATURE_MESSAGE : (err?.message || 'Failed to load previews'), isError: true });
       })
       .finally(() => setLoadingPreviews(false));
   }, [socket, loadingPreviews, parseImageData]);
@@ -310,7 +311,7 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
         1
       );
       const s2 = RESIZE_FACTOR * scale;
-      return socket.request('get_roi', { side: s }).then((res) => {
+      return socket.requestIfSupported('get_roi', { side: s }).then((res) => {
         if (res && res.success === false && res.errors?.length) {
           if (res.errors.some((e) => String(e).toLowerCase().includes('permission'))) {
             setPermissionDenied(true);
@@ -348,7 +349,7 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
       setLoadingImageBySide((prev) => ({ ...prev, [s]: true }));
       setStatus({ text: '', isError: false });
       socket
-        .request('take_image', { camera, resize_factor: RESIZE_FACTOR })
+        .requestIfSupported('take_image', { camera, resize_factor: RESIZE_FACTOR })
         .then((res) => {
           if (res && !res.success && res.errors?.some((e) => String(e).toLowerCase().includes('permission'))) {
             setPermissionDenied(true);
@@ -368,7 +369,7 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
         })
         .catch((err) => {
           setLoadingImageBySide((prev) => ({ ...prev, [s]: false }));
-          setStatus({ text: err?.message || 'Failed to load image', isError: true });
+          setStatus({ text: err?.code === ERROR_UNSUPPORTED_COMMAND ? UNSUPPORTED_FEATURE_MESSAGE : (err?.message || 'Failed to load image'), isError: true });
         });
     },
     [socket, loadingImageBySide, parseImageData, loadRoiForSide]
@@ -456,7 +457,7 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
         blade_channel_right: Math.round((rect.x + rect.width) * div),
       };
       socket
-        .request('save_roi', payload)
+        .requestIfSupported('save_roi', payload)
         .then((res) => {
           setSaving((prev) => ({ ...prev, [s]: false }));
           if (res?.success === false && res?.errors?.length) {
@@ -468,7 +469,7 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
         })
         .catch((err) => {
           setSaving((prev) => ({ ...prev, [s]: false }));
-          setSubmitResult({ success: false, message: err?.message || 'Save failed' });
+          setSubmitResult({ success: false, message: err?.code === ERROR_UNSUPPORTED_COMMAND ? UNSUPPORTED_FEATURE_MESSAGE : (err?.message || 'Save failed') });
         });
     },
     [socket, roiBySide, saving, getScaleForSide]
@@ -524,7 +525,7 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
     });
     setRestarting(true);
     socket
-      .request('fleet_restart_process', { process: processName })
+      .requestIfSupported('fleet_restart_process', { process: processName })
       .then((res) => {
         setRestartProgress((prev) =>
           prev ? { ...prev, logLines: [...prev.logLines, 'Accepted.'] } : prev
@@ -567,7 +568,7 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
         }, 60000);
       })
       .catch((err) => {
-        const msg = err?.message || 'Request failed';
+        const msg = err?.code === ERROR_UNSUPPORTED_COMMAND ? UNSUPPORTED_FEATURE_MESSAGE : (err?.message || 'Request failed');
         setRestartProgress((prev) =>
           prev ? { ...prev, done: true, logLines: [...prev.logLines, msg] } : prev
         );

@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardAction } from '@/components/ui/card';
 import { PageTitle } from '@/components/PageTitle';
 import { cn } from '@/lib/utils';
+import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
 import { BarChart3, Loader2, RefreshCw, ArrowUpDown, Search, Info, Download, Maximize2, X } from 'lucide-react';
 import {
   PieChart, Pie, Cell, Tooltip as RTooltip, Legend, ResponsiveContainer,
@@ -415,7 +416,7 @@ export default function DataUsage({ socket }) {
     if (!socket || loading) return;
     setLoading(true);
     setError(null);
-    socket.request('get_data_usage').then((res) => {
+    socket.requestIfSupported('get_data_usage').then((res) => {
       setLoading(false);
       if (!res) {
         setError('No response from device');
@@ -432,7 +433,10 @@ export default function DataUsage({ socket }) {
         const keys = Object.keys(data.daily).sort();
         if (keys.length) setSelectedDate((prev) => prev || keys[keys.length - 1]);
       }
-    }).catch(() => setLoading(false));
+    }).catch((err) => {
+      setLoading(false);
+      setError(err?.code === ERROR_UNSUPPORTED_COMMAND ? UNSUPPORTED_FEATURE_MESSAGE : (err?.message || 'Failed to load data usage'));
+    });
   }, [socket, loading]);
 
   const onSort = useCallback((col) => {
