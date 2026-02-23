@@ -12,6 +12,20 @@ import pylib as keyme
 from control_panel.python import activity
 from util.check_users import has_logged_in_user
 
+_KIOSK_CWD = getattr(keyme.config, 'PATH', None) or '/kiosk'
+_RESTART_ALL_SCRIPT = os.path.join(_KIOSK_CWD, 'util', 'restart_all.sh')
+
+_ALL_CAMERAS_DEVICES = [
+    'bitting_left_camera', 'bitting_right_camera', 'milling_camera',
+    'gripper_camera', 'security_camera', 'overhead_camera', 'inventory_camera',
+]
+
+_RESET_RESULT_TIMEOUT_SEC = 55  # Stay under typical WS request timeout (60s)
+
+# RESET_DEVICES is async: DEVICE_DIRECTOR sends RESET_RESULT per device to CONTROL_PANEL.
+# Pending reset state so fleet_reset_device can block until all results or timeout.
+_pending_reset_lock = threading.Lock()
+_pending_reset = None  # { 'event': Event(), 'expected': set of device names, 'results': list of dicts }
 
 def check_fleet_command_allowed(data=None):
     """Return (allowed, errors). If not allowed, errors is a non-empty list of strings.
@@ -23,7 +37,6 @@ def check_fleet_command_allowed(data=None):
         return (False, ["Kiosk is in use. Fleet commands are not allowed while a customer is using the kiosk."])
     return (True, [])
 
-
 def require_fleet_allowed(f):
     """Decorator: run check_fleet_command_allowed(data); if not allowed return error dict, else call f."""
     @wraps(f)
@@ -33,14 +46,6 @@ def require_fleet_allowed(f):
             return {'success': False, 'errors': errors}
         return f(data)
     return wrapper
-
-
-# RESET_DEVICES is async: DEVICE_DIRECTOR sends RESET_RESULT per device to CONTROL_PANEL.
-# Pending reset state so fleet_reset_device can block until all results or timeout.
-_pending_reset_lock = threading.Lock()
-_pending_reset = None  # { 'event': Event(), 'expected': set of device names, 'results': list of dicts }
-
-_RESET_RESULT_TIMEOUT_SEC = 55  # Stay under typical WS request timeout (60s)
 
 
 def deliver_reset_result(request):
@@ -69,19 +74,12 @@ def deliver_reset_result(request):
             _pending_reset['event'].set()
 
 
-_ALL_CAMERAS_DEVICES = [
-    'bitting_left_camera', 'bitting_right_camera', 'milling_camera',
-    'gripper_camera', 'security_camera', 'overhead_camera', 'inventory_camera',
-]
-
-
-_RESTART_ALL_SCRIPT = '/kiosk/util/restart_all.sh'
-
 
 @require_fleet_allowed
 def fleet_restart_process(data):
     """Restart a single process or all. data['process'] e.g. 'gui' or 'restart_all'.
-    Single process: MANAGER RESTART_PROCESS (sync). Restart all: run restart_all.sh in background (connection will be lost).
+    Single process: MANAGER RESTART_PROCESS (sync). Restart all: run restart_all.sh in background.
+    Control panel (WS) runs as a separate systemd service and is not restarted.
     """
     data = data if isinstance(data, dict) else {}
     process = (data.get('process') or '').strip()
@@ -89,11 +87,12 @@ def fleet_restart_process(data):
         return {'success': False, 'errors': ['Missing process']}
     try:
         if process == 'restart_all':
-            # Start detached (nohup) so the script keeps running after stop-all
-            # kills this process; we cannot wait or check exit code.
             subprocess.Popen(
-                'nohup {} >/dev/null 2>&1 &'.format(_RESTART_ALL_SCRIPT),
-                shell=True,
+                [_RESTART_ALL_SCRIPT],
+                cwd=_KIOSK_CWD,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
             return {'success': True, 'data': {}}
         response = keyme.ipc.send_sync(
@@ -204,11 +203,10 @@ def fleet_switch_process_list(data):
 def fleet_reboot_kiosk(data):
     """Run reboot script; return success immediately. Kiosk will disconnect shortly."""
     try:
-        cwd = getattr(keyme.config, 'PATH', None) or '/kiosk'
         subprocess.Popen(
-            'nohup ./util/reboot_kiosk.sh >nohup.out',
+            './util/reboot_kiosk.sh',
             shell=True,
-            cwd=cwd,
+            cwd=_KIOSK_CWD,
         )
         return {'success': True, 'data': {}}
     except Exception as e:
@@ -220,11 +218,10 @@ def fleet_reboot_kiosk(data):
 def fleet_clear_cutter_stuck(data):
     """Run cutter_state.py --remove-stuck; return success/errors from exit code."""
     try:
-        cwd = getattr(keyme.config, 'PATH', None) or '/kiosk'
-        script = os.path.join(cwd, 'cutter', 'shared', 'cutter_state.py')
+        script = os.path.join(_KIOSK_CWD, 'cutter', 'shared', 'cutter_state.py')
         proc = subprocess.run(
             [sys.executable, script, '--remove-stuck'],
-            cwd=cwd,
+            cwd=_KIOSK_CWD,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=30,
@@ -244,12 +241,11 @@ def fleet_clear_cutter_stuck(data):
 def fleet_load_mom(data):
     """Run cutter_state.py --disable-cutting [reason]; put kiosk in mail order only mode."""
     try:
-        cwd = getattr(keyme.config, 'PATH', None) or '/kiosk'
-        script = os.path.join(cwd, 'cutter', 'shared', 'cutter_state.py')
+        script = os.path.join(_KIOSK_CWD, 'cutter', 'shared', 'cutter_state.py')
         reason = (data.get('reason') if isinstance(data, dict) else None) or ''
         proc = subprocess.run(
             [sys.executable, script, '--disable-cutting'] + reason.split(),
-            cwd=cwd,
+            cwd=_KIOSK_CWD,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=30,
@@ -289,15 +285,14 @@ def _run_cutter_state_step(cwd, script, step_name, args):
 def fleet_restore_cutting(data):
     """Run clear-exposed-key-lock, remove-stuck, then restore-cutting; re-enable cutting, clear MOM."""
     try:
-        cwd = getattr(keyme.config, 'PATH', None) or '/kiosk'
-        script = os.path.join(cwd, 'cutter', 'shared', 'cutter_state.py')
+        script = os.path.join(_KIOSK_CWD, 'cutter', 'shared', 'cutter_state.py')
         errors = []
         for step_name, args in [
             ('clear-exposed-key-lock', ['--clear-exposed-key-lock']),
             ('remove-stuck', ['--remove-stuck']),
             ('restore-cutting', ['--restore-cutting']),
         ]:
-            ok, err = _run_cutter_state_step(cwd, script, step_name, args)
+            ok, err = _run_cutter_state_step(_KIOSK_CWD, script, step_name, args)
             if not ok:
                 errors.append(err)
         if errors:
