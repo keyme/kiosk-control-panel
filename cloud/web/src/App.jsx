@@ -596,7 +596,7 @@ function AppContent() {
               <Route path="config" element={<ConfigPage socket={socket} />} />
               <Route path="data-usage" element={<DataUsage socket={socket} />} />
               <Route path="wellness" element={<WellnessCheck socket={socket} />} />
-              <Route path="fleet" element={<FleetCommands connected={connected} socket={socket} />} />
+              <Route path="fleet" element={<FleetCommands connected={connected} socket={socket} panelInfo={panelInfo} />} />
               <Route path="logs" element={<LogTailPage socket={socket} />} />
             </Route>
           </Routes>

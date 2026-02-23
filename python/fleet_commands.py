@@ -13,21 +13,22 @@ from control_panel.python import activity
 from util.check_users import has_logged_in_user
 
 
-def check_fleet_command_allowed():
-    """Return (allowed, errors). If not allowed, errors is a non-empty list of strings."""
+def check_fleet_command_allowed(data=None):
+    """Return (allowed, errors). If not allowed, errors is a non-empty list of strings.
+    When data has force=True, skip the kiosk-in-use check (for tech on site / interrupt)."""
     if has_logged_in_user():
         return ( False, [ ( "Remote (fab/SSH) session detected. Commands are temporarily"
                 " disabled to prevent conflicts while a developer is connected.") ])
-    if activity.is_kiosk_in_use():
+    if activity.is_kiosk_in_use() and not (data and data.get('force')):
         return (False, ["Kiosk is in use. Fleet commands are not allowed while a customer is using the kiosk."])
     return (True, [])
 
 
 def require_fleet_allowed(f):
-    """Decorator: run check_fleet_command_allowed(); if not allowed return error dict, else call f."""
+    """Decorator: run check_fleet_command_allowed(data); if not allowed return error dict, else call f."""
     @wraps(f)
     def wrapper(data):
-        allowed, errors = check_fleet_command_allowed()
+        allowed, errors = check_fleet_command_allowed(data)
         if not allowed:
             return {'success': False, 'errors': errors}
         return f(data)

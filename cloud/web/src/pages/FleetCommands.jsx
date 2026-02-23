@@ -87,7 +87,9 @@ const selectClass = cn(
   'disabled:opacity-50 disabled:pointer-events-none'
 );
 
-export default function FleetCommands({ connected, socket }) {
+export default function FleetCommands({ connected, socket, panelInfo }) {
+  const isKioskActive = panelInfo?.activity === 'active';
+
   const [processName, setProcessName] = useState('gui');
   const [deviceName, setDeviceName] = useState('milling_camera');
   const [processListName, setProcessListName] = useState('processes');
@@ -96,6 +98,7 @@ export default function FleetCommands({ connected, socket }) {
   const [confirmAction, setConfirmAction] = useState(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
+  const [runAnyway, setRunAnyway] = useState(false);
 
   // Restart process progress: log tail + spinner until PROCESS_STARTED (single) or accepted (restart_all).
   const [restartProgress, setRestartProgress] = useState(null);
@@ -140,6 +143,7 @@ export default function FleetCommands({ connected, socket }) {
     setRestartProgress(null);
     setResetProgress(null);
     setConfirmAction(null);
+    setRunAnyway(false);
     setLoading(false);
   }
 
@@ -183,6 +187,8 @@ export default function FleetCommands({ connected, socket }) {
     if (!req) return;
     setResult(null);
 
+    const payloadWithForce = (data) => ({ ...data, ...(runAnyway && { force: true }) });
+
     if (confirmAction.action === 'restart_process') {
       const isRestartAll = processName === 'restart_all';
       setRestartProgress({
@@ -193,7 +199,7 @@ export default function FleetCommands({ connected, socket }) {
       });
       setLoading(true);
       socket
-        .request('fleet_restart_process', { process: processName })
+        .request('fleet_restart_process', payloadWithForce({ process: processName }))
         .then((res) => {
           setRestartProgress((prev) => {
             if (!prev) return prev;
@@ -270,7 +276,7 @@ export default function FleetCommands({ connected, socket }) {
       resetResultHandlerRef.current = handler;
       socket.on('async.RESET_RESULT', handler);
       socket
-        .request('fleet_reset_device', req.data)
+        .request('fleet_reset_device', payloadWithForce(req.data))
         .then((res) => {
           clearResetListener();
           const finalLine = res.success ? 'Done.' : (res.errors?.length ? res.errors.join(' ') : 'Request failed');
@@ -292,7 +298,7 @@ export default function FleetCommands({ connected, socket }) {
 
     setLoading(true);
     socket
-      .request(req.event, req.data)
+      .request(req.event, payloadWithForce(req.data))
       .then((res) => {
         setLoading(false);
         setResult({
@@ -315,6 +321,7 @@ export default function FleetCommands({ connected, socket }) {
 
   const openConfirm = (action, title, description) => {
     setResult(null);
+    setRunAnyway(false);
     setConfirmAction({ action, title, description });
   };
 
@@ -325,6 +332,12 @@ export default function FleetCommands({ connected, socket }) {
   return (
     <div className="space-y-6">
       <PageTitle icon={Radio}>Fleet Commands</PageTitle>
+
+      {isKioskActive && (
+        <div className="rounded-md border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200" role="alert">
+          Kiosk is in use. Fleet commands are normally blocked while a customer is using the kiosk. You can run commands anyway (e.g. for tech on site) by checking &quot;Run anyway&quot; in the confirmation dialog.
+        </div>
+      )}
 
       {!connected && (
         <div className="rounded-md border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200" role="alert">
@@ -655,6 +668,23 @@ export default function FleetCommands({ connected, socket }) {
                 <DialogTitle>{confirmAction?.title}</DialogTitle>
                 <DialogDescription>{confirmAction?.description}</DialogDescription>
               </DialogHeader>
+              {isKioskActive && (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    Kiosk is in use. Running may interrupt the customer.
+                  </p>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={runAnyway}
+                      onChange={(e) => setRunAnyway(e.target.checked)}
+                      className="h-4 w-4 rounded border-input"
+                      aria-label="Run anyway (interrupt customer)"
+                    />
+                    <span>Run anyway (interrupt customer)</span>
+                  </label>
+                </div>
+              )}
               <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-0">
                 <button type="button" className={btnOutline} onClick={closeRestartProgressDialog}>
                   Cancel
