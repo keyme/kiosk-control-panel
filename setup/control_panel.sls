@@ -58,6 +58,13 @@ control-panel-service:
       - cmd: control-panel-wss-api-key-keyring
       - cmd: control-panel-wss-device-certs
 
+# Start the service after enable so it runs immediately (enable only sets boot behavior).
+start-control-panel-service:
+  cmd.run:
+    - name: systemctl start keyme-control-panel.service
+    - require:
+      - service: control-panel-service
+
 # Daily restart at 3 AM to free up any memory leaks. Just a preventative measure.
 daily-restart-control-panel-service:
   cron.present:

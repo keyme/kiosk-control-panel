@@ -1,6 +1,6 @@
 [Unit]
 ConditionPathExists=/kiosk
-After=graphical.target keyme-manager.service
+After=network-online.target
 Description=KeyMe Control Panel (WebSocket + IPC for fleet/device control)
 
 [Service]
@@ -10,11 +10,11 @@ Group=kiosk
 RestartSec=15
 Restart=always
 KillMode=process
-KillSignal=SIGINT
+KillSignal=SIGTERM
 ExecStop=/bin/sleep 0.1
 Environment=PYTHONPATH=/kiosk
 WorkingDirectory=/kiosk
 ExecStart=/bin/bash -c 'PATH=/usr/venv/bin/:$PATH exec /kiosk/control_panel/python/main.py'
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
