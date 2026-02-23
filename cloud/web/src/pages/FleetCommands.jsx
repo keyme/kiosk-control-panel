@@ -354,11 +354,11 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
 
       <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-2">
         {/* Restart Process */}
-        <Card>
-          <CardHeader className="pb-2">
+        <Card className="gap-2">
+          <CardHeader className="pb-0">
             <CardTitle className="text-base">Restart Process</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-3 pt-0">
             <p className="text-muted-foreground text-sm">Restart a single process or all processes (e.g. GUI, Cutter).</p>
             <div className="flex flex-wrap items-center gap-2">
               <select
@@ -399,11 +399,11 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
         </Card>
 
         {/* Reset Device */}
-        <Card>
-          <CardHeader className="pb-2">
+        <Card className="gap-2">
+          <CardHeader className="pb-0">
             <CardTitle className="text-base">Reset Device</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-3 pt-0">
             <p className="text-muted-foreground text-sm">Power-cycle a device (e.g. camera, modem, touchscreen).</p>
             <div className="flex flex-wrap items-center gap-2">
               <select
@@ -442,11 +442,11 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
         </Card>
 
         {/* Switch Process List */}
-        <Card>
-          <CardHeader className="pb-2">
+        <Card className="gap-2">
+          <CardHeader className="pb-0">
             <CardTitle className="text-base">Switch Process List</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-3 pt-0">
             <p className="text-muted-foreground text-sm">Load a different process list (e.g. maintenance, service).</p>
             <div className="flex flex-col gap-2">
               <select
@@ -494,11 +494,11 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
         </Card>
 
         {/* Reboot Kiosk */}
-        <Card>
-          <CardHeader className="pb-2">
+        <Card className="gap-2">
+          <CardHeader className="pb-0">
             <CardTitle className="text-base">Reboot kiosk</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-3 pt-0">
             <p className="text-muted-foreground text-sm">Reboot the entire kiosk. Connection will be lost.</p>
             <button
               type="button"
@@ -522,11 +522,11 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
         </Card>
 
         {/* Clear Cutter Stuck */}
-        <Card>
-          <CardHeader className="pb-2">
+        <Card className="gap-2">
+          <CardHeader className="pb-0">
             <CardTitle className="text-base">Clear cutter stuck</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-3 pt-0">
             <p className="text-muted-foreground text-sm">Clear the cutter stuck lock (unstuck).</p>
             <button
               type="button"
@@ -550,12 +550,12 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
         </Card>
 
         {/* Mail Order Only Mode */}
-        <Card>
-          <CardHeader className="pb-2">
+        <Card className="gap-2">
+          <CardHeader className="pb-0">
             <CardTitle className="text-base">Mail Order Only Mode</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-muted-foreground text-sm">Disable cutting and put the kiosk in mail order only mode.</p>
+          <CardContent className="space-y-3 pt-0">
+            <p className="text-muted-foreground text-sm">Load MOM to disable cutting, or restore cutting to re-enable it and take the kiosk out of mail order only mode.</p>
             <div className="flex flex-col gap-2">
               <input
                 type="text"
@@ -735,7 +735,7 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
                 <DialogDescription>{confirmAction?.description}</DialogDescription>
               </DialogHeader>
               {confirmAction?.action === 'restore_cutting' && (
-                <p className="text-sm text-muted-foreground">
+                <p className="rounded-md border border-amber-500/50 bg-amber-500/15 px-3 py-2 text-sm font-medium text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">
                   Before confirming, check the overhead and gripper camera images for any obstructions for carousel, exposed key in magazine, dangling keys, etc.
                 </p>
               )}
