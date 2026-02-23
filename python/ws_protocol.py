@@ -53,6 +53,7 @@ SUPPORTED_REQUEST_EVENTS = (
     'fleet_switch_process_list',
     'fleet_reboot_kiosk',
     'fleet_clear_cutter_stuck',
+    'fleet_load_mom',
     'get_roi',
     'save_roi',
 )

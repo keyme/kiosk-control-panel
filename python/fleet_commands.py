@@ -238,3 +238,28 @@ def fleet_clear_cutter_stuck(data):
     except Exception as e:
         keyme.log.exception('fleet_clear_cutter_stuck failed')
         return {'success': False, 'errors': [str(e)]}
+
+
+@require_fleet_allowed
+def fleet_load_mom(data):
+    """Run cutter_state.py --disable-cutting [reason]; put kiosk in mail order only mode."""
+    try:
+        cwd = getattr(keyme.config, 'PATH', None) or '/kiosk'
+        script = os.path.join(cwd, 'cutter', 'shared', 'cutter_state.py')
+        reason = (data.get('reason') if isinstance(data, dict) else None) or ''
+        proc = subprocess.run(
+            [sys.executable, script, '--disable-cutting'] + reason.split(),
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+        )
+        if proc.returncode == 0:
+            return {'success': True, 'data': {}}
+        err = (proc.stderr or b'').decode('utf-8', errors='replace').strip() or (proc.stdout or b'').decode('utf-8', errors='replace').strip()
+        return {'success': False, 'errors': [err or 'Script exited with code {}'.format(proc.returncode)]}
+    except subprocess.TimeoutExpired:
+        return {'success': False, 'errors': ['Script timed out']}
+    except Exception as e:
+        keyme.log.exception('fleet_load_mom failed')
+        return {'success': False, 'errors': [str(e)]}

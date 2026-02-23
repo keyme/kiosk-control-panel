@@ -95,6 +95,7 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
   const [deviceName, setDeviceName] = useState('milling_camera');
   const [processListName, setProcessListName] = useState('processes');
   const [switchReason, setSwitchReason] = useState('');
+  const [momReason, setMomReason] = useState('');
 
   const [confirmAction, setConfirmAction] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -177,6 +178,8 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
         return { event: 'fleet_reboot_kiosk', data: {} };
       case 'clear_cutter_stuck':
         return { event: 'fleet_clear_cutter_stuck', data: {} };
+      case 'load_mom':
+        return { event: 'fleet_load_mom', data: { reason: momReason || 'Fleet command' } };
       default:
         return null;
     }
@@ -541,6 +544,47 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
                 'Clear cutter stuck'
               )}
             </button>
+          </CardContent>
+        </Card>
+
+        {/* Mail Order Only Mode */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Mail Order Only Mode</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-muted-foreground text-sm">Disable cutting and put the kiosk in mail order only mode.</p>
+            <div className="flex flex-col gap-2">
+              <input
+                type="text"
+                placeholder="Reason (optional)"
+                value={momReason}
+                onChange={(e) => setMomReason(e.target.value)}
+                disabled={isDisabled}
+                className={cn(selectClass, 'w-full')}
+                aria-label="Reason for mail order only mode"
+              />
+              <button
+                type="button"
+                className={btnPrimary}
+                disabled={isDisabled || loading}
+                onClick={() =>
+                  openConfirm(
+                    'load_mom',
+                    'Load Mail Order Only Mode',
+                    momReason.trim()
+                      ? `Put kiosk in mail order only mode? Reason: "${momReason.trim()}".`
+                      : 'Are you sure you want to put the kiosk in mail order only mode?'
+                  )
+                }
+              >
+                {loading && confirmAction?.action === 'load_mom' ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                ) : (
+                  'Load MOM'
+                )}
+              </button>
+            </div>
           </CardContent>
         </Card>
       </div>

@@ -890,3 +890,4 @@ fleet_reset_device = fleet_commands.fleet_reset_device
 fleet_switch_process_list = fleet_commands.fleet_switch_process_list
 fleet_reboot_kiosk = fleet_commands.fleet_reboot_kiosk
 fleet_clear_cutter_stuck = fleet_commands.fleet_clear_cutter_stuck
+fleet_load_mom = fleet_commands.fleet_load_mom
