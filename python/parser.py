@@ -2,6 +2,7 @@
 import pylib as keyme
 
 from control_panel.python.ws_server import emit_async_request
+from lib.save_image import got_response, success
 
 
 class ControlPanelParser(keyme.ipc.Parser):
@@ -35,3 +36,18 @@ class ControlPanelParser(keyme.ipc.Parser):
     def handle_PING(self, request):
         """Sync handler so other services can validate the IPC path."""
         return request.response("OK", {"pong": True})
+
+    # Camera take_image response handlers: set events so request_save_frame wait unblocks.
+    def handle_async_IMAGE_SAVED(self, request):
+        success.set()
+        got_response.set()
+
+    def handle_async_IMAGE_NOT_SAVED(self, request):
+        got_response.set()
+
+    def handle_async_TAKEN(self, request):
+        success.set()
+        got_response.set()
+
+    def handle_async_NOT_TAKEN(self, request):
+        got_response.set()

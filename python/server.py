@@ -628,7 +628,7 @@ def clear_cache():
 
 
 def _take_image_on_device(camera, resize_factor=0.5):
-    """Run take_image.py or scrot on the device; return (image_base64, None) or (None, error_msg)."""
+    """Take a camera image via IPC (in-process) or scrot for screenshot; return (image_base64, None) or (None, error_msg)."""
     if camera not in TAKE_IMAGE_CAMERAS:
         return None, 'Invalid camera'
 
@@ -643,7 +643,6 @@ def _take_image_on_device(camera, resize_factor=0.5):
     temp_path = '/tmp/{}.jpg'.format(random.randrange(2 ** 31))
     kiosk_path = keyme.config.PATH
     scripts_dir = os.path.join(kiosk_path, 'scripts')
-    take_image_script = os.path.join(scripts_dir, 'take_image.py')
     draw_roi_script = os.path.join(scripts_dir, 'draw_roi_crop_box.py')
 
     # Resolve ROI variants to base camera + roi_side
@@ -669,32 +668,39 @@ def _take_image_on_device(camera, resize_factor=0.5):
                 env=env,
             )
         else:
+            # In-process: request camera process to save frame via IPC (no subprocess).
+            from lib.save_image import request_save_frame, got_response, success
             device_name = 'keyme_{}'.format(base_camera)
-            r = subprocess.run(
-                [sys.executable, take_image_script, device_name, temp_path,
-                 '--resize_factor', resize_factor_str],
+            got_response.clear()
+            success.clear()
+            try:
+                request_save_frame(device_name, temp_path, show_timestamp=False,
+                                  resize_factor=resize_factor, upload_data=None)
+            except keyme.ipc.exceptions.IPCException:
+                return None, 'Camera process not responding'
+            if not got_response.wait(15):
+                return None, 'Capture timed out'
+            if not success.is_set():
+                return None, 'Capture failed'
+            r = None  # no subprocess for camera path
+
+        if r is not None and r.returncode != 0:
+            err = (r.stderr or b'').decode(errors='replace') or (r.stdout or b'').decode(errors='replace')
+            return None, 'Capture failed: {}'.format(err.strip() or 'exit {}'.format(r.returncode))
+
+        if roi_side is not None:
+            r_roi = subprocess.run(
+                [sys.executable, draw_roi_script, roi_side, temp_path,
+                 temp_path, resize_factor_str],
                 cwd=kiosk_path,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=60,
+                timeout=15,
             )
-            if r.returncode == 0 and roi_side is not None:
-                r_roi = subprocess.run(
-                    [sys.executable, draw_roi_script, roi_side, temp_path,
-                     temp_path, resize_factor_str],
-                    cwd=kiosk_path,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    timeout=15,
+            if r_roi.returncode != 0:
+                keyme.log.warning(
+                    'draw_roi_crop_box failed: %s', (r_roi.stderr or b'').decode(errors='replace')
                 )
-                if r_roi.returncode != 0:
-                    keyme.log.warning(
-                        'draw_roi_crop_box failed: %s', (r_roi.stderr or b'').decode(errors='replace')
-                    )
-
-        if r.returncode != 0:
-            err = (r.stderr or b'').decode(errors='replace') or (r.stdout or b'').decode(errors='replace')
-            return None, 'Capture failed: {}'.format(err.strip() or 'exit {}'.format(r.returncode))
 
         if not os.path.isfile(temp_path):
             return None, 'Capture produced no file'
