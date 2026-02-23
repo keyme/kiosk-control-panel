@@ -263,3 +263,46 @@ def fleet_load_mom(data):
     except Exception as e:
         keyme.log.exception('fleet_load_mom failed')
         return {'success': False, 'errors': [str(e)]}
+
+
+def _run_cutter_state_step(cwd, script, step_name, args):
+    """Run cutter_state.py with given args. Return (True, None) on success, (False, error_msg) on failure."""
+    try:
+        proc = subprocess.run(
+            [sys.executable, script] + args,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+        )
+        if proc.returncode == 0:
+            return (True, None)
+        err = (proc.stderr or b'').decode('utf-8', errors='replace').strip() or (proc.stdout or b'').decode('utf-8', errors='replace').strip()
+        return (False, '{}: {}'.format(step_name, err or 'Script exited with code {}'.format(proc.returncode)))
+    except subprocess.TimeoutExpired:
+        return (False, '{}: Script timed out'.format(step_name))
+    except Exception as e:
+        return (False, '{}: {}'.format(step_name, str(e)))
+
+
+@require_fleet_allowed
+def fleet_restore_cutting(data):
+    """Run clear-exposed-key-lock, remove-stuck, then restore-cutting; re-enable cutting, clear MOM."""
+    try:
+        cwd = getattr(keyme.config, 'PATH', None) or '/kiosk'
+        script = os.path.join(cwd, 'cutter', 'shared', 'cutter_state.py')
+        errors = []
+        for step_name, args in [
+            ('clear-exposed-key-lock', ['--clear-exposed-key-lock']),
+            ('remove-stuck', ['--remove-stuck']),
+            ('restore-cutting', ['--restore-cutting']),
+        ]:
+            ok, err = _run_cutter_state_step(cwd, script, step_name, args)
+            if not ok:
+                errors.append(err)
+        if errors:
+            return {'success': False, 'errors': errors}
+        return {'success': True, 'data': {}}
+    except Exception as e:
+        keyme.log.exception('fleet_restore_cutting failed')
+        return {'success': False, 'errors': [str(e)]}

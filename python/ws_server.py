@@ -29,6 +29,7 @@ FLEET_EVENT_NAMES = frozenset((
     "fleet_reboot_kiosk",
     "fleet_clear_cutter_stuck",
     "fleet_load_mom",
+    "fleet_restore_cutting",
     "fleet_restart_process",
     "fleet_reset_device",
     "fleet_switch_process_list",
@@ -148,6 +149,7 @@ def _dispatch_request(client_id, request_id, event, data, connection_count, conn
         'fleet_reboot_kiosk': lambda: handlers.fleet_reboot_kiosk(data or {}),
         'fleet_clear_cutter_stuck': lambda: handlers.fleet_clear_cutter_stuck(data or {}),
         'fleet_load_mom': lambda: handlers.fleet_load_mom(data or {}),
+        'fleet_restore_cutting': lambda: handlers.fleet_restore_cutting(data or {}),
         'get_roi': lambda: handlers.get_roi(data or {}),
         'save_roi': lambda: handlers.save_roi(data or {}),
     }

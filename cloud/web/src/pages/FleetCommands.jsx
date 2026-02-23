@@ -180,6 +180,8 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
         return { event: 'fleet_clear_cutter_stuck', data: {} };
       case 'load_mom':
         return { event: 'fleet_load_mom', data: { reason: momReason || 'Fleet command' } };
+      case 'restore_cutting':
+        return { event: 'fleet_restore_cutting', data: {} };
       default:
         return null;
     }
@@ -584,6 +586,24 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
                   'Load MOM'
                 )}
               </button>
+              <button
+                type="button"
+                className={btnPrimary}
+                disabled={isDisabled || loading}
+                onClick={() =>
+                  openConfirm(
+                    'restore_cutting',
+                    'Restore cutting',
+                    'Re-enable cutting and take the kiosk out of mail order only mode?'
+                  )
+                }
+              >
+                {loading && confirmAction?.action === 'restore_cutting' ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                ) : (
+                  'Restore cutting'
+                )}
+              </button>
             </div>
           </CardContent>
         </Card>
@@ -714,6 +734,11 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
                 <DialogTitle>{confirmAction?.title}</DialogTitle>
                 <DialogDescription>{confirmAction?.description}</DialogDescription>
               </DialogHeader>
+              {confirmAction?.action === 'restore_cutting' && (
+                <p className="text-sm text-muted-foreground">
+                  Before confirming, check the overhead and gripper camera images for any obstructions for carousel, exposed key in magazine, dangling keys, etc.
+                </p>
+              )}
               {isKioskActive && (
                 <div className="space-y-2">
                   <p className="text-sm text-muted-foreground">

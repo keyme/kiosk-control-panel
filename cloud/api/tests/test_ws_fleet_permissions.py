@@ -19,6 +19,9 @@ class TestRequiredPermission:
     def test_fleet_load_mom_returns_load_mail_order_only(self):
         assert required_permission("fleet_load_mom") == "switch_processes"
 
+    def test_fleet_restore_cutting_returns_switch_processes(self):
+        assert required_permission("fleet_restore_cutting") == "switch_processes"
+
     def test_fleet_restart_process_returns_restart_restart_all_process(self):
         assert required_permission("fleet_restart_process") == "restart_restart_all_process"
 

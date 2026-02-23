@@ -6,6 +6,7 @@ EVENT_TO_PERMISSION: Dict[str, str] = {
     "fleet_reboot_kiosk": "reboot_kiosk",
     "fleet_clear_cutter_stuck": "clear_cutter_stuck",
     "fleet_load_mom": "switch_processes",
+    "fleet_restore_cutting": "switch_processes",
     "fleet_restart_process": "restart_restart_all_process",
     "fleet_reset_device": "reset_all_cameras_device",
     "fleet_switch_process_list": "switch_processes",
