@@ -40,11 +40,11 @@ def check_fleet_command_allowed(data=None):
 def require_fleet_allowed(f):
     """Decorator: run check_fleet_command_allowed(data); if not allowed return error dict, else call f."""
     @wraps(f)
-    def wrapper(data):
+    def wrapper(data, *args, **kwargs):
         allowed, errors = check_fleet_command_allowed(data)
         if not allowed:
             return {'success': False, 'errors': errors}
-        return f(data)
+        return f(data, *args, **kwargs)
     return wrapper
 
 
@@ -75,11 +75,32 @@ def deliver_reset_result(request):
 
 
 
+def _restart_all_stream_reader(proc, send_line, send_done):
+    """Daemon thread: read proc.stdout line by line, send_line each, then send_done(exit_code)."""
+    try:
+        for raw in iter(proc.stdout.readline, b''):
+            line = raw.decode('utf-8', errors='replace').rstrip()
+            if line:
+                try:
+                    send_line(line)
+                except Exception as e:
+                    keyme.log.warning('restart_all send_line: %s', e)
+        proc.wait()
+    except Exception as e:
+        keyme.log.warning('restart_all stream reader: %s', e)
+    finally:
+        try:
+            send_done(proc.returncode if proc.returncode is not None else None)
+        except Exception as e:
+            keyme.log.warning('restart_all send_done: %s', e)
+
+
 @require_fleet_allowed
-def fleet_restart_process(data):
+def fleet_restart_process(data, send_line=None, send_done=None):
     """Restart a single process or all. data['process'] e.g. 'gui' or 'restart_all'.
     Single process: MANAGER RESTART_PROCESS (sync). Restart all: run restart_all.sh in background.
     Control panel (WS) runs as a separate systemd service and is not restarted.
+    When send_line/send_done are provided for restart_all, stdout/stderr are streamed to the client.
     """
     data = data if isinstance(data, dict) else {}
     process = (data.get('process') or '').strip()
@@ -87,6 +108,21 @@ def fleet_restart_process(data):
         return {'success': False, 'errors': ['Missing process']}
     try:
         if process == 'restart_all':
+            if send_line is not None and send_done is not None:
+                proc = subprocess.Popen(
+                    [_RESTART_ALL_SCRIPT],
+                    cwd=_KIOSK_CWD,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                )
+                t = threading.Thread(
+                    target=_restart_all_stream_reader,
+                    args=(proc, send_line, send_done),
+                    daemon=True,
+                )
+                t.start()
+                return {'success': True, 'data': {}}
             subprocess.Popen(
                 [_RESTART_ALL_SCRIPT],
                 cwd=_KIOSK_CWD,

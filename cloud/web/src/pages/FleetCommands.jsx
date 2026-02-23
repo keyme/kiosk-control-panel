@@ -107,6 +107,8 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
   const timeoutRef = useRef(null);
   const stoppedHandlerRef = useRef(null);
   const startedHandlerRef = useRef(null);
+  const restartAllLineRef = useRef(null);
+  const restartAllDoneRef = useRef(null);
   const logEndRef = useRef(null);
 
   // Reset device progress: log tail + no close until done.
@@ -135,6 +137,14 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
       if (startedHandlerRef.current) {
         socket.off('async.PROCESS_STARTED', startedHandlerRef.current);
         startedHandlerRef.current = null;
+      }
+      if (restartAllLineRef.current) {
+        socket.off('restart_all_line', restartAllLineRef.current);
+        restartAllLineRef.current = null;
+      }
+      if (restartAllDoneRef.current) {
+        socket.off('restart_all_done', restartAllDoneRef.current);
+        restartAllDoneRef.current = null;
       }
     }
   }
@@ -204,19 +214,47 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
         done: false,
       });
       setLoading(true);
+      if (isRestartAll && socket) {
+        const handlerLine = (data) => {
+          setRestartProgress((prev) =>
+            prev && prev.isRestartAll
+              ? { ...prev, logLines: [...prev.logLines, data?.line ?? ''] }
+              : prev
+          );
+        };
+        const handlerDone = (data) => {
+          setRestartProgress((prev) => {
+            if (!prev || !prev.isRestartAll) return prev;
+            const extra =
+              data?.exit_code != null ? [`Exit code: ${data.exit_code}`] : [];
+            return {
+              ...prev,
+              done: true,
+              logLines: [...prev.logLines, ...extra],
+            };
+          });
+          setLoading(false);
+        };
+        restartAllLineRef.current = handlerLine;
+        restartAllDoneRef.current = handlerDone;
+        socket.on('restart_all_line', handlerLine);
+        socket.on('restart_all_done', handlerDone);
+      }
       socket
         .requestIfSupported('fleet_restart_process', payloadWithForce({ process: processName }))
         .then((res) => {
           setRestartProgress((prev) => {
             if (!prev) return prev;
             const next = { ...prev, logLines: [...prev.logLines, 'Accepted.'] };
-            if (prev.isRestartAll) next.done = true;
+          if (prev.isRestartAll) {
             return next;
-          });
-          if (isRestartAll) {
-            setLoading(false);
-            return;
           }
+          next.done = true;
+          return next;
+        });
+        if (isRestartAll) {
+          return;
+        }
           const handlerStopped = (data) => {
             setRestartProgress((prev) =>
               prev ? { ...prev, logLines: [...prev.logLines, `PROCESS_STOPPED: ${data?.process ?? '?'}`] } : prev
@@ -666,7 +704,10 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
               </DialogHeader>
               <div className="space-y-3">
                 <div
-                  className="max-h-32 overflow-y-auto rounded border bg-muted/30 p-2 font-mono text-xs"
+                  className={cn(
+                    'overflow-y-auto rounded border bg-muted/30 p-2 font-mono text-xs',
+                    restartProgress.isRestartAll ? 'max-h-64' : 'max-h-32'
+                  )}
                   role="log"
                   aria-live="polite"
                 >

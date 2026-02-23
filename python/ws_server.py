@@ -143,7 +143,17 @@ def _dispatch_request(client_id, request_id, event, data, connection_count, conn
             ws_protocol.PUSH_LOG_TAIL_LINE,
         ),
         'log_tail_stop': lambda: handlers.log_tail_stop(client_id),
-        'fleet_restart_process': lambda: handlers.fleet_restart_process(data or {}),
+        'fleet_restart_process': lambda: handlers.fleet_restart_process(
+            data or {},
+            **(
+                {
+                    'send_line': lambda line: _schedule_send(client_id, {'event': ws_protocol.PUSH_RESTART_ALL_LINE, 'data': {'line': line}}),
+                    'send_done': lambda exit_code=None: _schedule_send(client_id, {'event': ws_protocol.PUSH_RESTART_ALL_DONE, 'data': {'exit_code': exit_code}}),
+                }
+                if (data or {}).get('process') == 'restart_all'
+                else {}
+            ),
+        ),
         'fleet_reset_device': lambda: handlers.fleet_reset_device(data or {}),
         'fleet_switch_process_list': lambda: handlers.fleet_switch_process_list(data or {}),
         'fleet_reboot_kiosk': lambda: handlers.fleet_reboot_kiosk(data or {}),

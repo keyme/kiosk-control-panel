@@ -66,6 +66,8 @@ EVENTS_WITH_DATA = frozenset(('take_image', 'log_tail_start', 'get_roi', 'save_r
 PUSH_HELLO = 'hello'
 PUSH_WELLNESS_PROGRESS = 'wellness_progress'
 PUSH_LOG_TAIL_LINE = 'log_tail_line'
+PUSH_RESTART_ALL_LINE = 'restart_all_line'
+PUSH_RESTART_ALL_DONE = 'restart_all_done'
 PUSH_ASYNC_PREFIX = 'async.'
 
 # Response: success shape has "success": True and "data"; error has "success": False and "errors".
