@@ -20,6 +20,9 @@ const PREVIEW_RESIZE_FACTOR = 0.3;
 const STAGE_MAX = { width: 800, height: 600 };
 const STAGE_MAX_SIDE = { width: 480, height: 360 };
 const PREVIEW_MAX_SIZE = { width: 400, height: 300 };
+const MIN_CANVAS_WIDTH = 480;
+const MIN_CANVAS_HEIGHT = 360;
+const MIN_PANEL_WIDTH = 520;
 
 const RESTART_PROCESS_OPTIONS = [
   { value: 'det', label: 'DETs (DET, DET_BITTING_LEFT, DET_BITTING_RIGHT)' },
@@ -647,7 +650,7 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
     const isFullscreen = fullscreen === s;
     const loading = loadingImageBySide[s];
     return (
-      <div className="flex flex-1 min-w-0 flex-col rounded-lg border border-border bg-muted/20 p-3">
+      <div className="flex min-w-0 flex-1 flex-col rounded-lg border border-border bg-muted/20 p-3" style={{ minWidth: MIN_PANEL_WIDTH }}>
         <div className="mb-2 flex items-center justify-between">
           <span className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{s} camera</span>
           <div className="flex items-center gap-2">
@@ -679,14 +682,18 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
             )}
           </div>
         </div>
-        <div ref={containerRef} className="relative min-h-[240px] w-full overflow-hidden rounded-md bg-muted/50">
+        <div
+          ref={containerRef}
+          className="relative w-full overflow-hidden rounded-md bg-muted/50"
+          style={{ minWidth: MIN_CANVAS_WIDTH, minHeight: MIN_CANVAS_HEIGHT }}
+        >
           {!src && !loading && (
-            <div className="flex h-[240px] w-full items-center justify-center text-sm text-muted-foreground">
+            <div className="flex w-full items-center justify-center text-sm text-muted-foreground" style={{ minHeight: MIN_CANVAS_HEIGHT }}>
               Load image to draw ROI
             </div>
           )}
           {loading && (
-            <div className="flex h-[240px] w-full flex-col items-center justify-center gap-2">
+            <div className="flex w-full flex-col items-center justify-center gap-2" style={{ minHeight: MIN_CANVAS_HEIGHT }}>
               <Loader2 className="size-8 animate-spin text-muted-foreground" />
               <span className="text-sm text-muted-foreground">Loading {s}…</span>
             </div>
@@ -848,33 +855,6 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
             )}
           </section>
 
-          <section className="space-y-2 rounded-lg border border-border bg-muted/10 p-3" aria-label="Example good crops">
-            <h3 className="text-sm font-semibold text-foreground">Example good crops</h3>
-            <p className="text-sm text-muted-foreground">
-              Reference images for how the ROI crop should look. Gate side is most critical; right side must be maxed out.
-            </p>
-            <div className="flex flex-wrap items-center gap-3">
-              <a
-                href={leftGoodCropUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-primary underline underline-offset-2 hover:no-underline"
-              >
-                <ImageIcon className="size-4 shrink-0" />
-                Left side example
-              </a>
-              <a
-                href={rightGoodCropUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-primary underline underline-offset-2 hover:no-underline"
-              >
-                <ImageIcon className="size-4 shrink-0" />
-                Right side example
-              </a>
-            </div>
-          </section>
-
           {previewFullscreen && previewBySide[previewFullscreen] && (
             <div
               className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/90 p-4"
@@ -917,7 +897,7 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
             <p className="text-sm text-muted-foreground">
               Load an image per side, then adjust the blue rectangle (drag or resize). Submit to save. Reset reloads from server; Clear removes the box; New ROI draws a full-image box to adjust.
             </p>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="flex flex-wrap gap-4">
               <SidePanel side="left" />
               <SidePanel side="right" />
             </div>
@@ -951,6 +931,33 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
               {restarting ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
               Restart
             </button>
+          </section>
+
+          <section className="space-y-2 rounded-lg border border-border bg-muted/10 p-3" aria-label="Example good crops">
+            <h3 className="text-sm font-semibold text-foreground">Example good crops</h3>
+            <p className="text-sm text-muted-foreground">
+              Reference images for how the ROI crop should look. Gate side is most critical; right side must be maxed out.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <a
+                href={leftGoodCropUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-primary underline underline-offset-2 hover:no-underline"
+              >
+                <ImageIcon className="size-4 shrink-0" />
+                Left side example
+              </a>
+              <a
+                href={rightGoodCropUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-primary underline underline-offset-2 hover:no-underline"
+              >
+                <ImageIcon className="size-4 shrink-0" />
+                Right side example
+              </a>
+            </div>
           </section>
         </CardContent>
       </Card>
@@ -1063,7 +1070,7 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
               Exit fullscreen (Esc)
             </button>
           </div>
-          <div ref={fullscreenContainerRef} className="min-h-0 flex-1">
+          <div ref={fullscreenContainerRef} className="flex min-h-0 flex-1 items-center justify-center">
             {imagesBySide[fullscreen] && (
               <RoiCanvas
                 imageSrc={`data:image/jpeg;base64,${imagesBySide[fullscreen].base64}`}
