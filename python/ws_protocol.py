@@ -57,10 +57,18 @@ SUPPORTED_REQUEST_EVENTS = (
     'fleet_restore_cutting',
     'get_roi',
     'save_roi',
+    'get_inventory_list',
+    'get_inventory_disabled_reasons',
+    'inventory_enable_magazine',
+    'inventory_disable_magazine',
+    'inventory_set_key_count',
 )
 
 # Events that accept optional "data" in the request.
-EVENTS_WITH_DATA = frozenset(('take_image', 'log_tail_start', 'get_roi', 'save_roi'))
+EVENTS_WITH_DATA = frozenset((
+    'take_image', 'log_tail_start', 'get_roi', 'save_roi',
+    'inventory_enable_magazine', 'inventory_disable_magazine', 'inventory_set_key_count',
+))
 
 # Push events (server -> client, no id).
 PUSH_HELLO = 'hello'

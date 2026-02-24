@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, NavLink, useNavigate } from 'react-router-dom';
-import { Activity, Camera, Crop, Flag, Heart, MapPin, Radio, Wrench, ChevronDown, ChevronRight, FileText, Video, Search, BarChart3, ScrollText } from 'lucide-react';
+import { Activity, Camera, Crop, Flag, Heart, MapPin, Radio, Wrench, ChevronDown, ChevronRight, FileText, Video, Search, BarChart3, ScrollText, Package } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { CALIBRATION_REPORT_SECTIONS, formatSectionLabel } from '@/pages/calibrationReportSections';
 
@@ -16,6 +16,7 @@ const QUICK_OPEN_PAGES = [
   { path: '/wellness', label: 'Wellness Check' },
   { path: '/data-usage', label: 'Data Usage' },
   { path: '/fleet', label: 'Fleet Commands' },
+  { path: '/inventory', label: 'Inventory' },
   { path: '/logs', label: 'Device logs' },
 ];
 
@@ -367,6 +368,10 @@ export function AppSidebar({ panelInfo }) {
         <NavLink to={prefix ? `${prefix}/fleet` : '/fleet'} className={linkClass}>
           <Radio className="size-4 shrink-0" aria-hidden />
           Fleet Commands
+        </NavLink>
+        <NavLink to={prefix ? `${prefix}/inventory` : '/inventory'} className={linkClass}>
+          <Package className="size-4 shrink-0" aria-hidden />
+          Inventory
         </NavLink>
         <NavLink to={prefix ? `${prefix}/logs` : '/logs'} className={linkClass}>
           <ScrollText className="size-4 shrink-0" aria-hidden />
