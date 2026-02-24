@@ -116,7 +116,7 @@ export default function CameraImagesPage({ socket }) {
     : null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageTitle icon={Camera}>Camera images</PageTitle>
 
       <p className="text-sm text-muted-foreground">
@@ -143,62 +143,62 @@ export default function CameraImagesPage({ socket }) {
         </span>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {CAMERAS.map((camera) => (
-          <Card key={camera}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">
-                {CAMERA_LABELS[camera] ?? camera}
-              </CardTitle>
+          <Card key={camera} className="py-3">
+            <CardHeader className="space-y-1.5 px-4 pb-0 pt-0">
+              <div className="flex items-start justify-between gap-2">
+                <CardTitle className="text-sm font-medium shrink-0">
+                  {CAMERA_LABELS[camera] ?? camera}
+                </CardTitle>
+                <button
+                  type="button"
+                  onClick={() => takeImage(camera)}
+                  disabled={!socket?.connected || loadingCamera !== null}
+                  className={cn(
+                    'shrink-0 inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                    'bg-primary text-primary-foreground hover:bg-primary/90',
+                    'disabled:opacity-50 disabled:pointer-events-none'
+                  )}
+                >
+                  {loadingCamera === camera ? (
+                    <>
+                      <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+                      Capturing…
+                    </>
+                  ) : (
+                    'Take image'
+                  )}
+                </button>
+              </div>
               {CAMERA_DESCRIPTIONS[camera] && (
                 <p className="text-xs text-muted-foreground font-normal leading-snug">
                   {CAMERA_DESCRIPTIONS[camera]}
                 </p>
               )}
             </CardHeader>
-            <CardContent className="space-y-3">
-              <button
-                type="button"
-                onClick={() => takeImage(camera)}
-                disabled={!socket?.connected || loadingCamera !== null}
-                className={cn(
-                  'inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                  'bg-primary text-primary-foreground hover:bg-primary/90',
-                  'disabled:opacity-50 disabled:pointer-events-none'
-                )}
-              >
-                {loadingCamera === camera ? (
-                  <>
-                    <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
-                    Capturing…
-                  </>
-                ) : (
-                  'Take image'
-                )}
-              </button>
-            </CardContent>
           </Card>
         ))}
       </div>
 
       {error && (
-        <Card className="border-destructive/50">
-          <CardContent className="pt-4">
+        <Card className="border-destructive/50 py-3">
+          <CardContent className="px-4 pt-0">
             <p className="text-sm text-destructive">{error}</p>
           </CardContent>
         </Card>
       )}
 
       {results.length > 0 && (
-        <div className="space-y-4">
+        <div className="space-y-3">
           {results.map((result) => (
-            <Card key={result.id}>
-              <CardHeader className="pb-2">
+            <Card key={result.id} className="py-3">
+              <CardHeader className="pb-1 px-4 pt-0">
                 <CardTitle className="text-base">
                   {result.camera ? CAMERA_LABELS[result.camera] ?? result.camera : 'Image'}
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="space-y-2 px-4 pt-0">
                 <div className="relative">
                   <img
                     src={`data:image/jpeg;base64,${result.imageBase64}`}
