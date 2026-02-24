@@ -246,12 +246,8 @@ export default function FleetCommands({ connected, socket, panelInfo }) {
           setRestartProgress((prev) => {
             if (!prev) return prev;
             const next = { ...prev, logLines: [...prev.logLines, 'Accepted.'] };
-          if (prev.isRestartAll) {
             return next;
-          }
-          next.done = true;
-          return next;
-        });
+          });
         if (isRestartAll) {
           return;
         }
