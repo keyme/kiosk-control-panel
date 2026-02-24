@@ -690,7 +690,7 @@ def _take_image_on_device(camera, resize_factor=0.5):
                     cwd=kiosk_path,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    timeout=20,
+                    timeout=60,
                 )
             else:
                 r = None  # success in-process
