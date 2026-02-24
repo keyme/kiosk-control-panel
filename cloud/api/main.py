@@ -624,7 +624,7 @@ class WSProxySession:
                         and msg["data"].get("deployed") is True
                     ):
                         log.info(
-                            f"User {self.user_identifier}: WS deployed false, closing connection"
+                            f"User {self.user_identifier}: WS deployed true (kiosk deployed), closing connection"
                         )
                         await self.websocket.close(
                             code=STG_DEPLOYED_CLOSE_CODE,
