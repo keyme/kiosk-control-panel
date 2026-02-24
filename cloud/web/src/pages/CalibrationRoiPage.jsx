@@ -780,7 +780,7 @@ export default function CalibrationRoiPage({ socket, kioskName }) {
               ) : (
                 <ChevronRight className="size-4 shrink-0" />
               )}
-              What the kiosk sees (ROI + dewarp). Check these before adjusting RIO . Click a preview for fullscreen (Esc to close).
+              What the kiosk sees (ROI + dewarp). Check these before adjusting ROI. Click a preview for fullscreen (Esc to close).
             </button>
             {previewSectionOpen && (
             <div className="flex flex-wrap items-end gap-4 border-t border-border px-3 pb-3 pt-1">
