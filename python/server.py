@@ -643,6 +643,7 @@ def _take_image_on_device(camera, resize_factor=0.5):
     temp_path = '/tmp/{}.jpg'.format(random.randrange(2 ** 31))
     kiosk_path = keyme.config.PATH
     scripts_dir = os.path.join(kiosk_path, 'scripts')
+    take_image_script = os.path.join(scripts_dir, 'take_image.py')
     draw_roi_script = os.path.join(scripts_dir, 'draw_roi_crop_box.py')
 
     # Resolve ROI variants to base camera + roi_side
@@ -668,27 +669,38 @@ def _take_image_on_device(camera, resize_factor=0.5):
                 env=env,
             )
         else:
-            # In-process: request camera process to save frame via IPC (no subprocess).
+            # In-process first; on IPC timeout or process unavailable fall back to external script (handles save_frame fallback).
             from lib.save_image import request_save_frame, got_response, success
             device_name = 'keyme_{}'.format(base_camera)
             got_response.clear()
             success.clear()
+            use_script = False
             try:
                 request_save_frame(device_name, temp_path, show_timestamp=False,
                                   resize_factor=resize_factor, upload_data=None)
-            except keyme.ipc.exceptions.IPCException:
-                return None, 'Camera process not responding'
-            if not got_response.wait(15):
-                return None, 'Capture timed out'
-            if not success.is_set():
-                return None, 'Capture failed'
-            r = None  # no subprocess for camera path
+                if not got_response.wait(15) or not success.is_set():
+                    use_script = True
+            except (keyme.ipc.exceptions.TimeoutException, keyme.ipc.exceptions.IPCException):
+                use_script = True
+            if use_script:
+                keyme.log.info("take_image IPC timeout or failure, falling back to take_image.py script")
+                r = subprocess.run(
+                    [sys.executable, take_image_script, device_name, temp_path,
+                     '--resize_factor', resize_factor_str],
+                    cwd=kiosk_path,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=20,
+                )
+            else:
+                r = None  # success in-process
 
         if r is not None and r.returncode != 0:
             err = (r.stderr or b'').decode(errors='replace') or (r.stdout or b'').decode(errors='replace')
             return None, 'Capture failed: {}'.format(err.strip() or 'exit {}'.format(r.returncode))
 
         if roi_side is not None:
+            keyme.log.info(f"Calling cmd: {draw_roi_script} {roi_side} {temp_path} {temp_path} {resize_factor_str}")
             r_roi = subprocess.run(
                 [sys.executable, draw_roi_script, roi_side, temp_path,
                  temp_path, resize_factor_str],
