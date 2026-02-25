@@ -879,34 +879,83 @@ def inventory_set_key_count(data):
         return WebsocketError([SocketErrors.OTHER.value, str(e)]).to_json()
 
 
-_ADVANCED_ACTIONS = frozenset(('add_magazine', 'replace_keys', 'replace_magazine'))
+_ADVANCED_ACTIONS = frozenset((
+    'add_magazine', 'replace_keys', 'replace_magazine',
+    'remove_magazine', 'fix_magazine', 'mark_reviewed',
+))
 
 
 def inventory_advanced_action(data):
-    """Add / Replace Keys / Replace Magazine. Mirrors update_inventory.py via IPC."""
+    """Add / Replace / Remove / Fix / Mark reviewed. Mirrors update_inventory.py via IPC."""
     magazine = data.get("magazine")
     action = data.get("action")
-    milling = (data.get("milling") or "").strip()
-    style = (data.get("style") or "").strip()
-    count = data.get("count")
 
     if magazine is None or not (1 <= int(magazine) <= 20):
         return WebsocketError([SocketErrors.INVALID_INPUT.value, "magazine must be 1-20"]).to_json()
     magazine = int(magazine)
     if action not in _ADVANCED_ACTIONS:
-        return WebsocketError([SocketErrors.INVALID_INPUT.value, "action must be add_magazine, replace_keys, or replace_magazine"]).to_json()
-    if not milling or not style:
-        return WebsocketError([SocketErrors.INVALID_INPUT.value, "milling and style are required"]).to_json()
-    try:
-        count = int(count)
-        if count < 0:
-            raise ValueError("count must be non-negative")
-    except (TypeError, ValueError) as e:
-        return WebsocketError([SocketErrors.INVALID_INPUT.value, str(e)]).to_json()
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "invalid action"]).to_json()
 
     try:
         interface = _inventory_interface()
         mag_stock = interface.get_magazine_stock(magazine)
+
+        if action == 'mark_reviewed':
+            success = interface.mark_as_reviewed(magazine)
+            if not success:
+                return WebsocketError([SocketErrors.OTHER.value, "Mark reviewed failed"]).to_json()
+            return WebsocketSuccess({}).to_json()
+
+        if action == 'remove_magazine':
+            if not mag_stock:
+                return WebsocketError([SocketErrors.INVALID_INPUT.value, "Slot is empty; nothing to remove."]).to_json()
+            interface.export_stock(backup=True)
+            success = interface.change_magazine(magazine, None)
+            if not success:
+                return WebsocketError([SocketErrors.OTHER.value, "Remove failed"]).to_json()
+            if getattr(keyme.config, "IS_KIOSK", False):
+                from util.update_pricing import update_pricing
+                if update_pricing() != 0:
+                    interface.restore_backup(do_full_update=False)
+                    return WebsocketError([SocketErrors.OTHER.value, "Update pricing failed"]).to_json()
+            return WebsocketSuccess({}).to_json()
+
+        if action == 'fix_magazine':
+            fix_field = (data.get("fix_field") or "").strip().lower()
+            fix_value = (data.get("fix_value") or "").strip()
+            if fix_field not in ('milling', 'style'):
+                return WebsocketError([SocketErrors.INVALID_INPUT.value, "fix_field must be milling or style"]).to_json()
+            if not fix_value:
+                return WebsocketError([SocketErrors.INVALID_INPUT.value, "fix_value is required"]).to_json()
+            if not mag_stock:
+                return WebsocketError([SocketErrors.INVALID_INPUT.value, "Slot is empty; nothing to fix."]).to_json()
+            attribute = "milling" if fix_field == "milling" else "name"
+            key_data = {"magazine": magazine, attribute: fix_value}
+            from inventory.magazine_actions import MagazineAction
+            interface.export_stock(backup=True)
+            success = interface.update_magazine_data(magazine, key_data, reason=MagazineAction.FIX_DATA)
+            if not success:
+                return WebsocketError([SocketErrors.OTHER.value, "Fix failed"]).to_json()
+            if getattr(keyme.config, "IS_KIOSK", False):
+                from util.update_pricing import update_pricing
+                if update_pricing() != 0:
+                    interface.restore_backup(do_full_update=False)
+                    return WebsocketError([SocketErrors.OTHER.value, "Update pricing failed"]).to_json()
+            return WebsocketSuccess({}).to_json()
+
+        # add_magazine, replace_keys, replace_magazine
+        milling = (data.get("milling") or "").strip()
+        style = (data.get("style") or "").strip()
+        count = data.get("count")
+        if not milling or not style:
+            return WebsocketError([SocketErrors.INVALID_INPUT.value, "milling and style are required"]).to_json()
+        try:
+            count = int(count)
+            if count < 0:
+                raise ValueError("count must be non-negative")
+        except (TypeError, ValueError) as e:
+            return WebsocketError([SocketErrors.INVALID_INPUT.value, str(e)]).to_json()
+
         if action == 'add_magazine':
             if mag_stock:
                 return WebsocketError([SocketErrors.INVALID_INPUT.value, "Cannot add magazine: slot already has key data. Use Replace Keys or Replace Magazine."]).to_json()
@@ -944,6 +993,7 @@ def inventory_advanced_action(data):
                 interface.restore_backup(do_full_update=False)
                 return WebsocketError([SocketErrors.OTHER.value, "Update pricing failed"]).to_json()
         return WebsocketSuccess({}).to_json()
+
     except keyme.ipc.exceptions.TimeoutException:
         return WebsocketError([SocketErrors.IPC_TIMED_OUT.value, "Inventory not responding"]).to_json()
     except Exception as e:

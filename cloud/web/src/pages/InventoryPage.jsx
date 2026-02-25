@@ -58,6 +58,8 @@ export default function InventoryPage({ connected, socket }) {
   const [advancedMilling, setAdvancedMilling] = useState('');
   const [advancedStyle, setAdvancedStyle] = useState('');
   const [advancedCount, setAdvancedCount] = useState('');
+  const [advancedFixField, setAdvancedFixField] = useState('milling');
+  const [advancedFixValue, setAdvancedFixValue] = useState('');
 
   const isSocketDisabled = !connected || !socket?.connected;
   const isDisabled = isSocketDisabled || !hasLoaded;
@@ -161,25 +163,54 @@ export default function InventoryPage({ connected, socket }) {
 
   const handleExecuteAdvanced = () => {
     if (!socket?.requestIfSupported || actionLoading || isDisabled || selectedMagazine == null) return;
-    if (!advancedAction || !advancedMilling || !advancedStyle) {
-      showActionMessage('Select action, milling, and style.', true);
-      return;
+    const selectedMag = selectedMagazine != null ? magazines[selectedMagazine - 1] : null;
+
+    if (advancedAction === 'remove_magazine') {
+      if (isEmptySlot(selectedMag)) {
+        showActionMessage('Slot is empty; nothing to remove.', true);
+        return;
+      }
+    } else if (advancedAction === 'fix_magazine') {
+      if (isEmptySlot(selectedMag)) {
+        showActionMessage('Slot is empty; nothing to fix.', true);
+        return;
+      }
+      if (!advancedFixValue) {
+        showActionMessage('Select a value to fix.', true);
+        return;
+      }
+    } else if (advancedAction === 'mark_reviewed') {
+      if (selectedMag?.in_stock !== false && !selectedMag?.disabled_reason) {
+        showActionMessage('Only disabled keys can be marked as reviewed.', true);
+        return;
+      }
+    } else {
+      if (!advancedAction || !advancedMilling || !advancedStyle) {
+        showActionMessage('Select action, milling, and style.', true);
+        return;
+      }
+      const countNum = parseInt(advancedCount, 10);
+      if (advancedCount === '' || isNaN(countNum) || countNum < 0) {
+        showActionMessage('Enter a non-negative count.', true);
+        return;
+      }
     }
-    const countNum = parseInt(advancedCount, 10);
-    if (advancedCount === '' || isNaN(countNum) || countNum < 0) {
-      showActionMessage('Enter a non-negative count.', true);
-      return;
-    }
+
     setActionMessage(null);
     setActionLoading(true);
+
+    let payload = { magazine: selectedMagazine, action: advancedAction };
+    if (advancedAction === 'fix_magazine') {
+      payload = { magazine: selectedMagazine, action: 'fix_magazine', fix_field: advancedFixField, fix_value: advancedFixValue };
+    } else if (advancedAction === 'remove_magazine' || advancedAction === 'mark_reviewed') {
+      payload = { magazine: selectedMagazine, action: advancedAction };
+    } else {
+      const countNum = parseInt(advancedCount, 10);
+      payload = { magazine: selectedMagazine, action: advancedAction, milling: advancedMilling, style: advancedStyle, count: countNum };
+    }
+
     socket
-      .requestIfSupported('inventory_advanced_action', {
-        magazine: selectedMagazine,
-        action: advancedAction,
-        milling: advancedMilling,
-        style: advancedStyle,
-        count: countNum,
-      })
+      .requestIfSupported('inventory_advanced_action', payload)
       .then((res) => {
         if (res?.success) {
           showActionMessage('Success.');
@@ -187,6 +218,7 @@ export default function InventoryPage({ connected, socket }) {
           setAdvancedMilling('');
           setAdvancedStyle('');
           setAdvancedCount('');
+          setAdvancedFixValue('');
         } else {
           showActionMessage((res?.errors || ['Request failed']).join('; '), true);
         }
@@ -202,6 +234,7 @@ export default function InventoryPage({ connected, socket }) {
 
   const selectedMag = selectedMagazine != null ? magazines[selectedMagazine - 1] : null;
   const selectedIsEmpty = isEmptySlot(selectedMag);
+  const selectedIsDisabled = selectedMag && (selectedMag.in_stock === false || !!selectedMag.disabled_reason);
   const btnLabel = loading ? 'Fetching…' : hasLoaded ? 'Refresh' : 'Fetch Data';
   const hoverEnabled = selectedMagazine == null;
   const highlightMag = selectedMagazine != null ? selectedMagazine : hoveredMagazine;
@@ -643,6 +676,9 @@ export default function InventoryPage({ connected, socket }) {
                                 { value: 'add_magazine', label: 'Add Magazine' },
                                 { value: 'replace_keys', label: 'Replace Keys' },
                                 { value: 'replace_magazine', label: 'Replace Magazine' },
+                                { value: 'remove_magazine', label: 'Remove Magazine' },
+                                { value: 'fix_magazine', label: 'Fix Milling/Style' },
+                                { value: 'mark_reviewed', label: 'Mark Reviewed' },
                               ].map(({ value, label }) => (
                                 <label key={value} className="flex items-center gap-2 text-sm">
                                   <input
@@ -650,7 +686,10 @@ export default function InventoryPage({ connected, socket }) {
                                     name="advanced-action"
                                     value={value}
                                     checked={advancedAction === value}
-                                    onChange={() => setAdvancedAction(value)}
+                                    onChange={() => {
+                                      setAdvancedAction(value);
+                                      if (value !== 'fix_magazine') setAdvancedFixValue('');
+                                    }}
                                     disabled={isDisabled || actionLoading}
                                     className="rounded-full border-input"
                                   />
@@ -659,78 +698,138 @@ export default function InventoryPage({ connected, socket }) {
                               ))}
                             </div>
                           </div>
-                          <div className="flex flex-col gap-1">
-                            <label htmlFor="inv-advanced-milling" className="text-xs font-medium">
-                              Milling
-                            </label>
-                            <select
-                              id="inv-advanced-milling"
-                              value={advancedMilling}
-                              onChange={(e) => {
-                                setAdvancedMilling(e.target.value);
-                                setAdvancedStyle('');
-                              }}
-                              disabled={isDisabled || actionLoading}
-                              className="rounded-md border border-input bg-background px-3 py-2 text-sm"
-                            >
-                              <option value="">Select milling</option>
-                              {millings.map((m) => (
-                                <option key={m} value={m}>
-                                  {m}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            <label htmlFor="inv-advanced-style" className="text-xs font-medium">
-                              Style
-                            </label>
-                            <select
-                              id="inv-advanced-style"
-                              value={advancedStyle}
-                              onChange={(e) => setAdvancedStyle(e.target.value)}
-                              disabled={isDisabled || actionLoading || !advancedMilling}
-                              className="rounded-md border border-input bg-background px-3 py-2 text-sm"
-                            >
-                              <option value="">Select style</option>
-                              {(stylesByMilling[advancedMilling] || []).map((s) => (
-                                <option key={s} value={s}>
-                                  {s}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            <label htmlFor="inv-advanced-count" className="text-xs font-medium">
-                              Count
-                            </label>
-                            <input
-                              id="inv-advanced-count"
-                              type="number"
-                              min={0}
-                              value={advancedCount}
-                              onChange={(e) => setAdvancedCount(e.target.value)}
-                              disabled={isDisabled || actionLoading}
-                              className="rounded-md border border-input bg-background px-3 py-2 text-sm"
-                            />
-                          </div>
+                          {(advancedAction === 'add_magazine' || advancedAction === 'replace_keys' || advancedAction === 'replace_magazine') && (
+                            <>
+                              <div className="flex flex-col gap-1">
+                                <label htmlFor="inv-advanced-milling" className="text-xs font-medium">
+                                  Milling
+                                </label>
+                                <select
+                                  id="inv-advanced-milling"
+                                  value={advancedMilling}
+                                  onChange={(e) => {
+                                    setAdvancedMilling(e.target.value);
+                                    setAdvancedStyle('');
+                                  }}
+                                  disabled={isDisabled || actionLoading}
+                                  className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                >
+                                  <option value="">Select milling</option>
+                                  {millings.map((m) => (
+                                    <option key={m} value={m}>
+                                      {m}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="flex flex-col gap-1">
+                                <label htmlFor="inv-advanced-style" className="text-xs font-medium">
+                                  Style
+                                </label>
+                                <select
+                                  id="inv-advanced-style"
+                                  value={advancedStyle}
+                                  onChange={(e) => setAdvancedStyle(e.target.value)}
+                                  disabled={isDisabled || actionLoading || !advancedMilling}
+                                  className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                >
+                                  <option value="">Select style</option>
+                                  {(stylesByMilling[advancedMilling] || []).map((s) => (
+                                    <option key={s} value={s}>
+                                      {s}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="flex flex-col gap-1">
+                                <label htmlFor="inv-advanced-count" className="text-xs font-medium">
+                                  Count
+                                </label>
+                                <input
+                                  id="inv-advanced-count"
+                                  type="number"
+                                  min={0}
+                                  value={advancedCount}
+                                  onChange={(e) => setAdvancedCount(e.target.value)}
+                                  disabled={isDisabled || actionLoading}
+                                  className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                />
+                              </div>
+                            </>
+                          )}
+                          {advancedAction === 'fix_magazine' && (
+                            <>
+                              <div className="flex flex-col gap-2">
+                                <span className="text-xs font-medium">Fix</span>
+                                <div className="flex flex-col gap-1">
+                                  {[
+                                    { value: 'milling', label: 'Milling' },
+                                    { value: 'style', label: 'Style' },
+                                  ].map(({ value, label }) => (
+                                    <label key={value} className="flex items-center gap-2 text-sm">
+                                      <input
+                                        type="radio"
+                                        name="advanced-fix-field"
+                                        value={value}
+                                        checked={advancedFixField === value}
+                                        onChange={() => {
+                                          setAdvancedFixField(value);
+                                          setAdvancedFixValue('');
+                                        }}
+                                        disabled={isDisabled || actionLoading}
+                                        className="rounded-full border-input"
+                                      />
+                                      {label}
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+                              <div className="flex flex-col gap-1">
+                                <label htmlFor="inv-advanced-fix-value" className="text-xs font-medium">
+                                  New value
+                                </label>
+                                <select
+                                  id="inv-advanced-fix-value"
+                                  value={advancedFixValue}
+                                  onChange={(e) => setAdvancedFixValue(e.target.value)}
+                                  disabled={isDisabled || actionLoading}
+                                  className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                >
+                                  <option value="">Select {advancedFixField === 'milling' ? 'milling' : 'style'}</option>
+                                  {advancedFixField === 'milling'
+                                    ? millings.map((m) => (
+                                        <option key={m} value={m}>
+                                          {m}
+                                        </option>
+                                      ))
+                                    : (stylesByMilling[selectedMag?.milling] || []).map((s) => (
+                                        <option key={s} value={s}>
+                                          {s}
+                                        </option>
+                                      ))}
+                                </select>
+                              </div>
+                            </>
+                          )}
+                          {advancedAction === 'mark_reviewed' && (
+                            <p className="text-xs text-muted-foreground">Only for disabled keys.</p>
+                          )}
                           <button
                             type="button"
                             disabled={
                               isDisabled ||
                               actionLoading ||
                               !selectedMagazine ||
-                              !advancedAction ||
-                              !advancedMilling ||
-                              !advancedStyle ||
-                              advancedCount === '' ||
-                              Number(advancedCount) < 0 ||
-                              !Number.isInteger(Number(advancedCount))
+                              (advancedAction === 'add_magazine' || advancedAction === 'replace_keys' || advancedAction === 'replace_magazine') &&
+                                (!advancedMilling || !advancedStyle || advancedCount === '' || Number(advancedCount) < 0 || !Number.isInteger(Number(advancedCount))) ||
+                              (advancedAction === 'remove_magazine' && selectedIsEmpty) ||
+                              (advancedAction === 'fix_magazine' && (selectedIsEmpty || !advancedFixValue)) ||
+                              (advancedAction === 'mark_reviewed' && !selectedIsDisabled)
                             }
                             onClick={handleExecuteAdvanced}
                             className="rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50"
                           >
-                            Execute Action
+                            {advancedAction === 'remove_magazine' ? 'Remove Magazine' : 'Execute Action'}
                           </button>
                         </div>
                       )}
