@@ -631,7 +631,6 @@ from control_panel.python.inventory_handlers import (
     inventory_set_key_count,
     inventory_advanced_action,
     inventory_update_api_pricing,
-    inventory_restore_from_payload,
 )
 
 

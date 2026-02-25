@@ -1,5 +1,6 @@
 import logging
 import os
+from re import A
 
 import boto3
 import httpx
@@ -104,60 +105,6 @@ def create_router():
     def ping():
         _log.info("api ping")
         return {"status": "ok", "source": "cloud"}
-
-    @router.get("/kiosks/{source_kiosk}/stock.json")
-    def get_kiosk_stock_for_restore(source_kiosk: str):
-        """Proxy stock.json from Admin for Restore Inventory. Requires ADMIN_ACCESS_TOKEN in env."""
-        raw = (source_kiosk or "").strip().lower()
-        if not raw:
-            return JSONResponse(
-                {"error": "Missing or invalid source_kiosk"},
-                status_code=400,
-            )
-        token = os.environ.get("ADMIN_ACCESS_TOKEN")
-        if not token:
-            _log.warning("ADMIN_ACCESS_TOKEN not set; restore from admin unavailable")
-            return JSONResponse(
-                {"error": "Restore from admin is not configured"},
-                status_code=503,
-            )
-        url = f"https://admin.key.me/kiosks/{raw}/stock.json?access_token={token}"
-        try:
-            resp = httpx.get(url, timeout=30.0)
-        except httpx.TimeoutException:
-            _log.warning("Admin stock.json request timed out")
-            return JSONResponse(
-                {"error": "Request to admin timed out"},
-                status_code=504,
-            )
-        except httpx.HTTPError as e:
-            _log.warning("Admin stock.json request failed: %s", e)
-            return JSONResponse(
-                {"error": str(e) or "Request to admin failed"},
-                status_code=502,
-            )
-        if resp.status_code < 200 or resp.status_code >= 300:
-            try:
-                body = resp.json()
-                err = body.get("error") or body.get("message") or resp.text or f"Admin returned {resp.status_code}"
-            except Exception:
-                err = resp.text or f"Admin returned {resp.status_code}"
-            return JSONResponse(
-                {"error": err},
-                status_code=502 if resp.status_code >= 500 else 502,
-            )
-        try:
-            data = resp.json()
-        except Exception as e:
-            _log.warning("Admin stock.json response not JSON: %s", e)
-            return JSONResponse(
-                {"error": "Invalid response from admin"},
-                status_code=502,
-            )
-        if isinstance(data, dict) and data.get("success") is False:
-            err = data.get("error") or data.get("message") or "Admin returned an error"
-            return JSONResponse({"error": err}, status_code=502)
-        return JSONResponse(data)
 
     @router.get("/calibration/testcuts/ids")
     def calibration_testcuts_ids(kiosk: str = Query(None)):
