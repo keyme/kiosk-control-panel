@@ -3,15 +3,21 @@ import { Card, CardContent } from '@/components/ui/card';
 import { PageTitle } from '@/components/PageTitle';
 import { cn } from '@/lib/utils';
 import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
-import { Package, Loader2, X } from 'lucide-react';
+import { Package, Loader2, RefreshCw, X } from 'lucide-react';
 
 const SEGMENT_COUNT = 20;
 const DEG_PER_SEG = 360 / SEGMENT_COUNT;
+const LOW_STOCK_THRESHOLD = 25;
 
 function segmentState(mag, lowThreshold) {
+  // Empty slot / no key config loaded.
   if (!mag || mag.milling == null || mag.style == null || String(mag.milling) === 'None') return 'empty';
+  // Disabled magazines: mark as disabled (color-coded in legend).
   if (!mag.in_stock) return 'disabled';
-  if (mag.count < lowThreshold) return 'low';
+  const c = typeof mag.count === 'number' ? mag.count : Number(mag.count);
+  if (!Number.isFinite(c)) return 'enabled';
+  if (c <= 0) return 'zero';
+  if (c < LOW_STOCK_THRESHOLD) return 'low';
   return 'enabled';
 }
 
@@ -20,6 +26,7 @@ function segmentColor(state) {
     case 'empty': return '#94a3b8';
     case 'disabled': return '#ef4444';
     case 'low': return '#eab308';
+    case 'zero': return '#ef4444';
     case 'enabled': return '#22c55e';
     default: return '#94a3b8';
   }
@@ -29,7 +36,8 @@ export default function InventoryPage({ connected, socket }) {
   const [magazines, setMagazines] = useState([]);
   const [lowInventoryThreshold, setLowInventoryThreshold] = useState(10);
   const [disabledReasons, setDisabledReasons] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedMagazine, setSelectedMagazine] = useState(null);
   const [hoveredMagazine, setHoveredMagazine] = useState(null);
@@ -39,7 +47,8 @@ export default function InventoryPage({ connected, socket }) {
   const [disableReason, setDisableReason] = useState('');
   const [newCount, setNewCount] = useState('');
 
-  const isDisabled = !connected || !socket?.connected;
+  const isSocketDisabled = !connected || !socket?.connected;
+  const isDisabled = isSocketDisabled || !hasLoaded;
 
   const fetchInventory = useCallback(() => {
     if (!socket?.requestIfSupported) return;
@@ -53,24 +62,25 @@ export default function InventoryPage({ connected, socket }) {
         if (listRes?.success && listRes.data) {
           setMagazines(listRes.data.magazines || []);
           setLowInventoryThreshold(listRes.data.low_inventory_threshold ?? 10);
+          setHasLoaded(true);
         }
         if (reasonsRes?.success && reasonsRes.data?.reasons) {
           setDisabledReasons(reasonsRes.data.reasons);
         }
       })
       .catch((err) => {
+        setHasLoaded(false);
         const msg = err?.code === ERROR_UNSUPPORTED_COMMAND ? UNSUPPORTED_FEATURE_MESSAGE : (err?.message || 'Failed to load inventory');
         setError(msg);
       })
       .finally(() => setLoading(false));
   }, [socket]);
 
-  useEffect(() => {
-    fetchInventory();
-  }, [fetchInventory]);
-
-  const handleSelect = (magNum) => {
+  const handleSelect = (magNumRaw) => {
+    const magNum = Number(magNumRaw);
+    if (!Number.isFinite(magNum) || magNum < 1) return;
     setSelectedMagazine(magNum);
+    setHoveredMagazine(null);
     setDrawerOpen(true);
     setActionMessage(null);
     const mag = magazines[magNum - 1];
@@ -80,6 +90,9 @@ export default function InventoryPage({ connected, socket }) {
 
   const handleCloseDrawer = () => {
     setDrawerOpen(false);
+    setSelectedMagazine(null);
+    setHoveredMagazine(null);
+    setActionMessage(null);
   };
 
   const showActionMessage = (message, isError = false) => {
@@ -130,10 +143,46 @@ export default function InventoryPage({ connected, socket }) {
   };
 
   const selectedMag = selectedMagazine != null ? magazines[selectedMagazine - 1] : null;
+  const btnLabel = loading ? 'Fetching…' : hasLoaded ? 'Refresh' : 'Fetch Data';
+  const hoverEnabled = selectedMagazine == null;
+  const highlightMag = selectedMagazine != null ? selectedMagazine : hoveredMagazine;
 
   return (
     <div className="flex flex-1 flex-col gap-4 p-4">
       <PageTitle icon={Package}>Inventory</PageTitle>
+      <p className="text-sm text-muted-foreground leading-relaxed -mt-4 mb-2">
+        Load inventory from the device, then click a <span className="font-medium text-foreground/80">donut segment</span> or a{' '}
+        <span className="font-medium text-foreground/80">table row</span> to open controls. Hover to highlight.
+      </p>
+
+      {/* Fetch button (match Data Usage style) */}
+      <Card>
+        <CardContent className="flex flex-wrap items-center gap-4 pt-1">
+          <button
+            type="button"
+            onClick={fetchInventory}
+            disabled={loading || isSocketDisabled}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors',
+              'bg-primary text-primary-foreground hover:bg-primary/90',
+              'disabled:opacity-50 disabled:pointer-events-none'
+            )}
+          >
+            {loading ? (
+              <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+            ) : (
+              <RefreshCw className="size-4 shrink-0" aria-hidden />
+            )}
+            {btnLabel}
+          </button>
+          {hasLoaded && !loading && (
+            <span className="text-xs text-muted-foreground">Inventory loaded. Click Refresh to update.</span>
+          )}
+          {!hasLoaded && !loading && (
+            <span className="text-xs text-muted-foreground">Click to load inventory from the device.</span>
+          )}
+        </CardContent>
+      </Card>
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -141,18 +190,31 @@ export default function InventoryPage({ connected, socket }) {
         </div>
       )}
 
+      {!hasLoaded && !loading && !error && (
+        <Card>
+          <CardContent className="py-12 text-center text-muted-foreground text-sm">
+            Click <strong>Fetch Data</strong> to load inventory from the device.
+          </CardContent>
+        </Card>
+      )}
+
       {loading ? (
         <div className="flex items-center gap-2 text-muted-foreground">
           <Loader2 className="size-4 animate-spin" aria-hidden />
           <span>Loading inventory…</span>
         </div>
-      ) : (
+      ) : hasLoaded ? (
         <div className="flex flex-1 gap-8 items-start">
           {/* Donut - larger, with segment gap and clearer labels */}
           <Card className="shrink-0 overflow-visible">
             <CardContent className="p-6">
               <div className="relative h-[420px] w-[420px]">
-                <svg viewBox="0 0 100 100" className="size-full drop-shadow-md" aria-label="Magazine donut">
+                <svg
+                  viewBox="0 0 100 100"
+                  className="size-full drop-shadow-md select-none"
+                  aria-label="Magazine donut"
+                  onMouseDown={(e) => e.preventDefault()}
+                >
                   <defs>
                     <filter id="donut-shadow" x="-20%" y="-20%" width="140%" height="140%">
                       <feDropShadow dx="0" dy="1" stdDeviation="0.5" floodOpacity="0.15" />
@@ -190,8 +252,12 @@ export default function InventoryPage({ connected, socket }) {
                     const labelR = (r1 + r2) / 2;
                     const lx = cx + labelR * Math.cos(rad(midAngle));
                     const ly = cy + labelR * Math.sin(rad(midAngle));
+
                     const isSelected = selectedMagazine === magNum;
                     const isHovered = hoveredMagazine === magNum;
+                    const isActive = highlightMag === magNum;
+                    const opacity = highlightMag != null ? (isActive ? 1 : 0.55) : (isHovered ? 1 : 0.75);
+
                     return (
                       <g key={magNum} filter="url(#donut-shadow)">
                         <path
@@ -200,53 +266,109 @@ export default function InventoryPage({ connected, socket }) {
                           stroke="hsl(var(--card))"
                           strokeWidth={0.4}
                           className="cursor-pointer transition-all duration-150"
-                          style={{ opacity: isSelected || isHovered ? 1 : 0.92 }}
+                          style={{ opacity }}
                           onClick={() => handleSelect(magNum)}
-                          onMouseEnter={() => setHoveredMagazine(magNum)}
-                          onMouseLeave={() => setHoveredMagazine(null)}
+                          onMouseEnter={() => {
+                            if (!hoverEnabled) return;
+                            setHoveredMagazine(magNum);
+                          }}
+                          onMouseLeave={() => {
+                            if (!hoverEnabled) return;
+                            setHoveredMagazine(null);
+                          }}
                           onKeyDown={(e) => e.key === 'Enter' && handleSelect(magNum)}
                           role="button"
                           tabIndex={0}
                           aria-label={`Magazine ${magNum}, ${mag?.count ?? 0} keys`}
                         />
-                        {(isSelected || isHovered) && (
-                          <path
-                            d={d}
-                            fill="none"
-                            stroke="hsl(var(--primary))"
-                            strokeWidth={isSelected ? 1.2 : 1}
-                            className="pointer-events-none"
-                            style={{ opacity: isHovered && !isSelected ? 0.7 : 1 }}
-                          />
-                        )}
                         <text
                           x={lx}
-                          y={ly - 3}
+                          y={ly + 1}
                           textAnchor="middle"
                           dominantBaseline="middle"
                           fill="white"
-                          fontSize="3.2"
-                          fontWeight="600"
+                          fontSize="4.1"
+                          fontWeight="700"
+                          className="pointer-events-none select-none"
                           style={{ textShadow: '0 0 2px rgba(0,0,0,0.5)' }}
                         >
                           #{String(magNum).padStart(2, '0')}
                         </text>
-                        <text
-                          x={lx}
-                          y={ly + 4.5}
-                          textAnchor="middle"
-                          dominantBaseline="middle"
-                          fill="white"
-                          fontSize="4"
-                          fontWeight="700"
-                          style={{ textShadow: '0 0 2px rgba(0,0,0,0.5)' }}
-                        >
-                          {mag?.count ?? '—'}
-                        </text>
                       </g>
                     );
                   })}
+
+                  {/* Overlay outline on top of all segments (prevents uneven edges). */}
+                  {highlightMag != null && (() => {
+                    const i = highlightMag - 1;
+                    if (i < 0 || i >= SEGMENT_COUNT) return null;
+                    const magNum = highlightMag;
+                    const startAngle = -90 + i * DEG_PER_SEG;
+                    const endAngle = startAngle + DEG_PER_SEG;
+                    const rad = (deg) => (deg * Math.PI) / 180;
+                    const r1 = 24;
+                    const r2 = 42;
+                    const cx = 50;
+                    const cy = 50;
+                    const x1 = cx + r2 * Math.cos(rad(startAngle));
+                    const y1 = cy + r2 * Math.sin(rad(startAngle));
+                    const x2 = cx + r2 * Math.cos(rad(endAngle));
+                    const y2 = cy + r2 * Math.sin(rad(endAngle));
+                    const x3 = cx + r1 * Math.cos(rad(endAngle));
+                    const y3 = cy + r1 * Math.sin(rad(endAngle));
+                    const x4 = cx + r1 * Math.cos(rad(startAngle));
+                    const y4 = cy + r1 * Math.sin(rad(startAngle));
+                    const large = DEG_PER_SEG > 180 ? 1 : 0;
+                    const d = `M ${x1} ${y1} A ${r2} ${r2} 0 ${large} 1 ${x2} ${y2} L ${x3} ${y3} A ${r1} ${r1} 0 ${large} 0 ${x4} ${y4} Z`;
+                    const isSelected = selectedMagazine === magNum;
+                    const isHovered = hoverEnabled && hoveredMagazine === magNum && !isSelected;
+                    return (
+                      <>
+                        <path
+                          d={d}
+                          fill="none"
+                          stroke="rgba(255,255,255,0.92)"
+                          strokeWidth={isSelected ? 3.8 : 3.2}
+                          strokeLinejoin="round"
+                          strokeLinecap="round"
+                          className="pointer-events-none"
+                          style={{ opacity: isHovered ? 0.75 : 1 }}
+                        />
+                        <path
+                          d={d}
+                          fill="none"
+                          stroke="hsl(var(--primary))"
+                          strokeWidth={isSelected ? 2.4 : 2.0}
+                          strokeLinejoin="round"
+                          strokeLinecap="round"
+                          className="pointer-events-none"
+                          style={{ opacity: isHovered ? 0.85 : 1 }}
+                        />
+                      </>
+                    );
+                  })()}
                 </svg>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-muted-foreground">
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-sm" style={{ background: '#22c55e' }} />
+                  <span>good (≥ {LOW_STOCK_THRESHOLD})</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-sm" style={{ background: '#eab308' }} />
+                  <span>low (1–{LOW_STOCK_THRESHOLD - 1})</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-sm" style={{ background: '#ef4444' }} />
+                  <span>disabled or 0</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-sm" style={{ background: '#94a3b8' }} />
+                  <span>empty / unconfigured</span>
+                </div>
+                <div className="col-span-2 text-[11px] text-muted-foreground/90">
+                  Disabled reason is shown in the table and in the drawer.
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -266,12 +388,11 @@ export default function InventoryPage({ connected, socket }) {
                       <th className="px-3 py-2 text-left font-medium">Manufacturer</th>
                       <th className="px-3 py-2 text-right font-medium">Enabled Days</th>
                       <th className="px-3 py-2 text-right font-medium">Disabled Days</th>
-                      <th className="px-3 py-2 text-left font-medium">QR Code</th>
                     </tr>
                   </thead>
                   <tbody>
                     {(magazines.length ? magazines : Array.from({ length: 20 }, (_, i) => ({ magazine: i + 1, count: 0, in_stock: false }))).map((mag) => {
-                      const magNum = mag.magazine ?? 0;
+                      const magNum = Number(mag.magazine ?? 0);
                       const isSelected = selectedMagazine === magNum;
                       const isHovered = hoveredMagazine === magNum;
                       return (
@@ -299,7 +420,6 @@ export default function InventoryPage({ connected, socket }) {
                           <td className="px-3 py-1.5">{mag.manufacturer ?? '—'}</td>
                           <td className="px-3 py-1.5 text-right">{mag.enabled_days ?? 0}</td>
                           <td className="px-3 py-1.5 text-right">{mag.disabled_days ?? 0}</td>
-                          <td className="px-3 py-1.5 font-mono text-xs">{mag.qr_code ?? '—'}</td>
                         </tr>
                       );
                     })}
@@ -309,7 +429,7 @@ export default function InventoryPage({ connected, socket }) {
             </CardContent>
           </Card>
         </div>
-      )}
+      ) : null}
 
       {/* Right-side drawer */}
       {drawerOpen && (
@@ -320,7 +440,7 @@ export default function InventoryPage({ connected, socket }) {
             onClick={handleCloseDrawer}
           />
           <aside
-            className="fixed right-0 top-0 z-50 flex h-full w-[320px] flex-col border-l border-border bg-card shadow-lg"
+            className="fixed right-0 top-0 z-50 flex h-full w-[380px] flex-col border-l border-border bg-card shadow-lg"
             role="dialog"
             aria-label="Magazine controls"
           >
@@ -343,9 +463,38 @@ export default function InventoryPage({ connected, socket }) {
               ) : (
                 <>
                   {selectedMag && (
-                    <p className="text-xs text-muted-foreground">
-                      {selectedMag.milling ?? '—'} / {selectedMag.display_name ?? selectedMag.style ?? '—'} · {selectedMag.count ?? 0} keys · {selectedMag.in_stock ? 'enabled' : 'disabled'}
-                    </p>
+                    <div className="rounded-md border bg-muted/20 p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-baseline gap-2">
+                            <div className="text-2xl font-semibold leading-none tabular-nums">
+                              {selectedMag.count ?? 0}
+                            </div>
+                            <div className="text-sm text-muted-foreground">keys</div>
+                          </div>
+                          <div className="mt-1 truncate text-sm text-muted-foreground">
+                            {selectedMag.milling ?? '—'} / {selectedMag.display_name ?? selectedMag.style ?? '—'}
+                          </div>
+                        </div>
+                        <div className="shrink-0">
+                          <div
+                            className={cn(
+                              'rounded-full px-2 py-0.5 text-sm font-medium',
+                              selectedMag.in_stock
+                                ? 'bg-emerald-500/15 text-emerald-700'
+                                : 'bg-red-500/15 text-red-700'
+                            )}
+                          >
+                            {selectedMag.in_stock ? 'enabled' : 'disabled'}
+                          </div>
+                        </div>
+                      </div>
+                      {!selectedMag.in_stock && selectedMag.disabled_reason && (
+                        <div className="mt-2 text-sm text-muted-foreground">
+                          Reason: <span className="font-medium text-foreground/80">{selectedMag.disabled_reason}</span>
+                        </div>
+                      )}
+                    </div>
                   )}
                   {actionMessage && (
                     <p className={cn('text-sm', actionMessage.isError ? 'text-destructive' : 'text-emerald-600')}>
