@@ -447,8 +447,9 @@ def inventory_restore_from_payload(data, send_progress=None):
     """Restore inventory from a stock JSON payload: backup, stop INVENTORY, write file, start INVENTORY, verify; revert on failure."""
     keyme.log.info("WS: requesting inventory_restore_from_payload")
     stock = data.get("stock")
-    if not stock or not isinstance(stock, dict):
-        return WebsocketError([SocketErrors.INVALID_INPUT.value, "stock payload required"]).to_json()
+    # Admin (and device stock.json) use an array of {type, styles[]}; accept list.
+    if not stock or not isinstance(stock, list):
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "stock payload must be an array (from Admin)"]).to_json()
 
     from inventory.keys import STOCK_FILENAME, STOCK_STATUS
     timestamp_suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
