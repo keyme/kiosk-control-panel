@@ -404,7 +404,6 @@ def inventory_advanced_action(data):
             "milling": milling,
             "name": style,
             "count": count,
-            "cost": 3.99,
             "display_name": "Test",
             "magazine": magazine,
         }

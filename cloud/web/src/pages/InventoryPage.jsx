@@ -1,9 +1,22 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useParams } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageTitle } from '@/components/PageTitle';
 import { cn } from '@/lib/utils';
 import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
 import { ChevronDown, ChevronRight, Package, Loader2, RefreshCw, X } from 'lucide-react';
+
+/** Gen 3 kiosks: strip leading zeros after "ns" (e.g. NS003512 -> NS3512). */
+function normalizeKioskName(name) {
+  if (name == null || typeof name !== 'string') return '';
+  return name.replace(/^(ns)0+/i, '$1');
+}
+
+function escapeCsvCell(val) {
+  const s = val == null ? '' : String(val);
+  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
 
 const SEGMENT_COUNT = 20;
 const DEG_PER_SEG = 360 / SEGMENT_COUNT;
@@ -44,6 +57,7 @@ function formatCost(cost) {
 }
 
 export default function InventoryPage({ connected, socket }) {
+  const { kiosk } = useParams();
   const [magazines, setMagazines] = useState([]);
   const [lowInventoryThreshold, setLowInventoryThreshold] = useState(10);
   const [disabledReasons, setDisabledReasons] = useState([]);
@@ -202,6 +216,27 @@ export default function InventoryPage({ connected, socket }) {
     runAction('inventory_update_api_pricing', {});
   };
 
+  const handleExportCsv = useCallback(() => {
+    const kioskCol = normalizeKioskName(kiosk);
+    const header = ['Kiosk name', 'Mag number', 'Milling', 'Style', 'Count'].map(escapeCsvCell).join(',');
+    const rows = (magazines.length ? magazines : Array.from({ length: 20 }, (_, i) => ({ magazine: i + 1, count: 0, milling: null, style: null })))
+      .map((mag, i) => {
+        const magNum = mag.magazine ?? i + 1;
+        const milling = mag.milling != null && String(mag.milling) !== 'None' ? mag.milling : '';
+        const style = mag.style != null && String(mag.style) !== 'None' ? (mag.display_name ?? mag.style) : '';
+        const count = typeof mag.count === 'number' ? mag.count : (Number(mag.count) || 0);
+        return [kioskCol, magNum, milling, style, count].map(escapeCsvCell).join(',');
+      });
+    const csv = [header, ...rows].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `inventory-${kioskCol || 'kiosk'}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [kiosk, magazines]);
+
   const handleExecuteAdvanced = () => {
     if (!socket?.requestIfSupported || actionLoading || isDisabled || selectedMagazine == null) return;
     const selectedMag = selectedMagazine != null ? magazines[selectedMagazine - 1] : null;
@@ -349,7 +384,10 @@ export default function InventoryPage({ connected, socket }) {
                   type="button"
                   role="menuitem"
                   className="w-full px-4 py-2 text-left text-sm hover:bg-accent"
-                  onClick={() => setBulkMenuOpen(false)}
+                  onClick={() => {
+                    setBulkMenuOpen(false);
+                    handleExportCsv();
+                  }}
                 >
                   Export CSV
                 </button>
