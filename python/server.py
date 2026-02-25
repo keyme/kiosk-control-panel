@@ -635,6 +635,7 @@ def _inventory_days_since(ts_str):
 
 def get_inventory_list():
     """Return magazine list (1-20) with full fields and enabled/disabled days. IPC to INVENTORY only."""
+    keyme.log.info("WS: requesting get_inventory_list")
     try:
         from inventory.interface_ipc_only import InventoryInterface
         interface = InventoryInterface()
@@ -728,6 +729,7 @@ def get_inventory_list():
 
 def get_inventory_disabled_reasons():
     """Return list of allowed disable reasons (no IPC)."""
+    keyme.log.info("WS: requesting get_inventory_disabled_reasons")
     try:
         from inventory.disabled_reasons import get_disabled_reasons
         reasons = get_disabled_reasons()
@@ -739,6 +741,7 @@ def get_inventory_disabled_reasons():
 
 def get_inventory_millings_styles():
     """Return millings list and styles_by_milling from inventory/key_style_data.json (no IPC)."""
+    keyme.log.info("WS: requesting get_inventory_millings_styles")
     try:
         path = os.path.join(keyme.config.PATH, "inventory", "key_style_data.json")
         style_data = keyme.config.load(path, logging=False)
@@ -798,6 +801,7 @@ def _inventory_run_update_pricing_if_needed(interface, data):
 
 def inventory_enable_magazine(data):
     """Enable a magazine. Mirror script -e path; backup, enable, update_pricing on kiosk."""
+    keyme.log.info("WS: requesting inventory_enable_magazine")
     magazine, err = _inventory_parse_magazine(data)
     if err:
         return err
@@ -820,6 +824,7 @@ def inventory_enable_magazine(data):
 
 def inventory_disable_magazine(data):
     """Disable a magazine with reason. Mirror script -d path."""
+    keyme.log.info("WS: requesting inventory_disable_magazine")
     magazine, err = _inventory_parse_magazine(data)
     if err:
         return err
@@ -857,6 +862,7 @@ def inventory_disable_magazine(data):
 
 def inventory_set_key_count(data):
     """Set key count for a magazine. Mirror script -cc path; sanity check capacity."""
+    keyme.log.info("WS: requesting inventory_set_key_count")
     magazine, err = _inventory_parse_magazine(data)
     if err:
         return err
@@ -915,6 +921,7 @@ _ADVANCED_ACTIONS = frozenset((
 
 def inventory_advanced_action(data):
     """Add / Replace / Remove / Fix / Mark reviewed. Mirrors update_inventory.py via IPC."""
+    keyme.log.info("WS: requesting inventory_advanced_action")
     magazine, err = _inventory_parse_magazine(data)
     if err:
         return err
@@ -1033,6 +1040,7 @@ def inventory_advanced_action(data):
 
 def inventory_update_api_pricing(data):
     """Run API and pricing update (same as after inventory edits). Only on kiosk."""
+    keyme.log.info("WS: requesting inventory_update_api_pricing")
     if not getattr(keyme.config, "IS_KIOSK", False):
         return WebsocketSuccess({"message": "Only runs on kiosk"}).to_json()
     try:

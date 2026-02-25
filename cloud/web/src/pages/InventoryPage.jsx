@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageTitle } from '@/components/PageTitle';
 import { cn } from '@/lib/utils';
@@ -62,6 +62,8 @@ export default function InventoryPage({ connected, socket }) {
   const [advancedFixValue, setAdvancedFixValue] = useState('');
   const [noApiUpdate, setNoApiUpdate] = useState(false);
   const [hasPendingPricingUpdate, setHasPendingPricingUpdate] = useState(false);
+  const [bulkMenuOpen, setBulkMenuOpen] = useState(false);
+  const bulkMenuRef = useRef(null);
 
   useEffect(() => {
     if (!hasPendingPricingUpdate) return;
@@ -71,6 +73,17 @@ export default function InventoryPage({ connected, socket }) {
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [hasPendingPricingUpdate]);
+
+  useEffect(() => {
+    if (!bulkMenuOpen) return;
+    const handleClickOutside = (e) => {
+      if (bulkMenuRef.current && !bulkMenuRef.current.contains(e.target)) {
+        setBulkMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [bulkMenuOpen]);
 
   const isSocketDisabled = !connected || !socket?.connected;
   const isDisabled = isSocketDisabled || !hasLoaded;
@@ -263,15 +276,16 @@ export default function InventoryPage({ connected, socket }) {
 
   return (
     <div className="space-y-6">
-      <PageTitle icon={Package}>Inventory</PageTitle>
-      <p className="text-sm text-muted-foreground leading-relaxed -mt-2 mb-1">
-        Load inventory from the device, then click a <span className="font-medium text-foreground/80">donut segment</span> or a{' '}
-        <span className="font-medium text-foreground/80">table row</span> to open controls. Hover to highlight.
-      </p>
-
-      {/* Actions: Refresh + Download CSV + Bulk Update */}
-      <Card className="py-2">
-        <CardContent className="flex flex-wrap items-center gap-3 px-4 py-1">
+      {/* Header row: title + subtitle left; Refresh + Fast edit + Bulk Actions right */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <PageTitle icon={Package}>Inventory</PageTitle>
+          <p className="text-sm text-muted-foreground leading-relaxed -mt-2 mb-1">
+            Load inventory from the device, then click a <span className="font-medium text-foreground/80">donut segment</span> or a{' '}
+            <span className="font-medium text-foreground/80">table row</span> to open controls. Hover to highlight.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={fetchInventory}
@@ -289,44 +303,79 @@ export default function InventoryPage({ connected, socket }) {
             )}
             {btnLabel}
           </button>
-          {hasLoaded && !loading && (
-            <span className="text-xs text-muted-foreground">Inventory loaded. Click Refresh to update.</span>
-          )}
-          {!hasLoaded && !loading && (
-            <span className="text-xs text-muted-foreground">Click to load inventory from the device.</span>
-          )}
-          <div className="flex flex-col gap-2 ml-auto w-full min-w-0 sm:w-auto">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={noApiUpdate}
-                onChange={(e) => setNoApiUpdate(e.target.checked)}
-                className="rounded border-input"
-              />
-              <span className="text-sm">Fast edit: skip API update and pricing update</span>
-            </label>
-            {noApiUpdate && (
-              <div className="rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200" role="alert">
-                For fast edits only. Use &apos;Update API & pricing&apos; before leaving, or do your last edit with this unchecked, so pricing and Admin API are updated.
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={noApiUpdate}
+              onChange={(e) => setNoApiUpdate(e.target.checked)}
+              className="rounded border-input"
+            />
+            <span className="text-sm whitespace-nowrap">Fast edit</span>
+          </label>
+          <div className="relative" ref={bulkMenuRef}>
+            <button
+              type="button"
+              onClick={() => setBulkMenuOpen((o) => !o)}
+              aria-expanded={bulkMenuOpen}
+              aria-haspopup="menu"
+              className={cn(
+                'inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors',
+                'border border-input bg-background hover:bg-accent disabled:opacity-50'
+              )}
+            >
+              Bulk Actions
+              <ChevronDown className="size-4 shrink-0" aria-hidden />
+            </button>
+            {bulkMenuOpen && (
+              <div
+                className="absolute right-0 top-full z-50 mt-1 min-w-[10rem] rounded-md border border-border bg-background py-1 shadow-md"
+                role="menu"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="w-full px-4 py-2 text-left text-sm hover:bg-accent"
+                  onClick={() => setBulkMenuOpen(false)}
+                >
+                  Import CSV
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="w-full px-4 py-2 text-left text-sm hover:bg-accent"
+                  onClick={() => setBulkMenuOpen(false)}
+                >
+                  Export CSV
+                </button>
               </div>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* Fast Edit Mode Active strip — only when noApiUpdate */}
+      {noApiUpdate && (
+        <div className="rounded-md border border-amber-500/50 bg-amber-500/10 px-4 py-3 flex flex-wrap items-center gap-3" role="alert">
+          <span className="font-medium text-amber-800 dark:text-amber-200">⚡ Fast Edit Mode Active</span>
           <button
             type="button"
             onClick={handleUpdateApiPricing}
             disabled={actionLoading || isSocketDisabled}
             className={cn(
-              'inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors border border-input bg-background hover:bg-accent disabled:opacity-50 disabled:pointer-events-none'
+              'inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors',
+              'bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 disabled:pointer-events-none'
             )}
           >
             {actionLoading ? (
               <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
             ) : null}
-            Update API & pricing
+            Sync Pricing Now
           </button>
-          <span className="text-xs text-muted-foreground">Run after fast edits to sync pricing.</span>
-        </CardContent>
-      </Card>
+          <span className="text-sm text-amber-800/90 dark:text-amber-200/90">
+            Use Sync before leaving so pricing and Admin API are updated.
+          </span>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
