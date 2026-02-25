@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { PageTitle } from '@/components/PageTitle';
 import { cn } from '@/lib/utils';
 import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
-import { Package, Loader2, RefreshCw, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Package, Loader2, RefreshCw, X } from 'lucide-react';
 
 const SEGMENT_COUNT = 20;
 const DEG_PER_SEG = 360 / SEGMENT_COUNT;
@@ -32,6 +32,11 @@ function segmentColor(state) {
   }
 }
 
+/** True when slot has no key data / unconfigured (same criteria as donut "empty" state). */
+function isEmptySlot(mag) {
+  return !mag || mag.milling == null || mag.style == null || String(mag.milling) === 'None';
+}
+
 export default function InventoryPage({ connected, socket }) {
   const [magazines, setMagazines] = useState([]);
   const [lowInventoryThreshold, setLowInventoryThreshold] = useState(10);
@@ -46,6 +51,13 @@ export default function InventoryPage({ connected, socket }) {
   const [actionMessage, setActionMessage] = useState(null);
   const [disableReason, setDisableReason] = useState('');
   const [newCount, setNewCount] = useState('');
+  const [millings, setMillings] = useState([]);
+  const [stylesByMilling, setStylesByMilling] = useState({});
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedAction, setAdvancedAction] = useState('add_magazine');
+  const [advancedMilling, setAdvancedMilling] = useState('');
+  const [advancedStyle, setAdvancedStyle] = useState('');
+  const [advancedCount, setAdvancedCount] = useState('');
 
   const isSocketDisabled = !connected || !socket?.connected;
   const isDisabled = isSocketDisabled || !hasLoaded;
@@ -57,8 +69,9 @@ export default function InventoryPage({ connected, socket }) {
     Promise.all([
       socket.requestIfSupported('get_inventory_list'),
       socket.requestIfSupported('get_inventory_disabled_reasons'),
+      socket.requestIfSupported('get_inventory_millings_styles'),
     ])
-      .then(([listRes, reasonsRes]) => {
+      .then(([listRes, reasonsRes, millingsRes]) => {
         if (listRes?.success && listRes.data) {
           setMagazines(listRes.data.magazines || []);
           setLowInventoryThreshold(listRes.data.low_inventory_threshold ?? 10);
@@ -66,6 +79,10 @@ export default function InventoryPage({ connected, socket }) {
         }
         if (reasonsRes?.success && reasonsRes.data?.reasons) {
           setDisabledReasons(reasonsRes.data.reasons);
+        }
+        if (millingsRes?.success && millingsRes.data) {
+          setMillings(millingsRes.data.millings || []);
+          setStylesByMilling(millingsRes.data.styles_by_milling || {});
         }
       })
       .catch((err) => {
@@ -142,7 +159,49 @@ export default function InventoryPage({ connected, socket }) {
     runAction('inventory_set_key_count', { magazine: selectedMagazine, new_count: n });
   };
 
+  const handleExecuteAdvanced = () => {
+    if (!socket?.requestIfSupported || actionLoading || isDisabled || selectedMagazine == null) return;
+    if (!advancedAction || !advancedMilling || !advancedStyle) {
+      showActionMessage('Select action, milling, and style.', true);
+      return;
+    }
+    const countNum = parseInt(advancedCount, 10);
+    if (advancedCount === '' || isNaN(countNum) || countNum < 0) {
+      showActionMessage('Enter a non-negative count.', true);
+      return;
+    }
+    setActionMessage(null);
+    setActionLoading(true);
+    socket
+      .requestIfSupported('inventory_advanced_action', {
+        magazine: selectedMagazine,
+        action: advancedAction,
+        milling: advancedMilling,
+        style: advancedStyle,
+        count: countNum,
+      })
+      .then((res) => {
+        if (res?.success) {
+          showActionMessage('Success.');
+          fetchInventory();
+          setAdvancedMilling('');
+          setAdvancedStyle('');
+          setAdvancedCount('');
+        } else {
+          showActionMessage((res?.errors || ['Request failed']).join('; '), true);
+        }
+      })
+      .catch((err) => {
+        showActionMessage(
+          err?.code === ERROR_UNSUPPORTED_COMMAND ? UNSUPPORTED_FEATURE_MESSAGE : (err?.message || 'Request failed'),
+          true
+        );
+      })
+      .finally(() => setActionLoading(false));
+  };
+
   const selectedMag = selectedMagazine != null ? magazines[selectedMagazine - 1] : null;
+  const selectedIsEmpty = isEmptySlot(selectedMag);
   const btnLabel = loading ? 'Fetching…' : hasLoaded ? 'Refresh' : 'Fetch Data';
   const hoverEnabled = selectedMagazine == null;
   const highlightMag = selectedMagazine != null ? selectedMagazine : hoveredMagazine;
@@ -503,9 +562,14 @@ export default function InventoryPage({ connected, socket }) {
                   )}
                   <div className="flex flex-col gap-3">
                     <div>
+                      {selectedIsEmpty && (
+                        <p className="mb-2 text-xs text-muted-foreground">
+                          Cannot enable: slot is empty or unconfigured (no key data).
+                        </p>
+                      )}
                       <button
                         type="button"
-                        disabled={isDisabled || actionLoading}
+                        disabled={isDisabled || actionLoading || selectedIsEmpty}
                         onClick={handleEnable}
                         className="rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50"
                       >
@@ -560,6 +624,116 @@ export default function InventoryPage({ connected, socket }) {
                       >
                         Update count
                       </button>
+                    </div>
+                    <div className="border-t border-border pt-3">
+                      <button
+                        type="button"
+                        onClick={() => setAdvancedOpen((o) => !o)}
+                        className="flex w-full items-center gap-2 text-left text-sm font-medium"
+                      >
+                        {advancedOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+                        Advanced Actions
+                      </button>
+                      {advancedOpen && (
+                        <div className="mt-3 flex flex-col gap-3">
+                          <div className="flex flex-col gap-2">
+                            <span className="text-xs font-medium">Action</span>
+                            <div className="flex flex-col gap-1">
+                              {[
+                                { value: 'add_magazine', label: 'Add Magazine' },
+                                { value: 'replace_keys', label: 'Replace Keys' },
+                                { value: 'replace_magazine', label: 'Replace Magazine' },
+                              ].map(({ value, label }) => (
+                                <label key={value} className="flex items-center gap-2 text-sm">
+                                  <input
+                                    type="radio"
+                                    name="advanced-action"
+                                    value={value}
+                                    checked={advancedAction === value}
+                                    onChange={() => setAdvancedAction(value)}
+                                    disabled={isDisabled || actionLoading}
+                                    className="rounded-full border-input"
+                                  />
+                                  {label}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label htmlFor="inv-advanced-milling" className="text-xs font-medium">
+                              Milling
+                            </label>
+                            <select
+                              id="inv-advanced-milling"
+                              value={advancedMilling}
+                              onChange={(e) => {
+                                setAdvancedMilling(e.target.value);
+                                setAdvancedStyle('');
+                              }}
+                              disabled={isDisabled || actionLoading}
+                              className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+                            >
+                              <option value="">Select milling</option>
+                              {millings.map((m) => (
+                                <option key={m} value={m}>
+                                  {m}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label htmlFor="inv-advanced-style" className="text-xs font-medium">
+                              Style
+                            </label>
+                            <select
+                              id="inv-advanced-style"
+                              value={advancedStyle}
+                              onChange={(e) => setAdvancedStyle(e.target.value)}
+                              disabled={isDisabled || actionLoading || !advancedMilling}
+                              className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+                            >
+                              <option value="">Select style</option>
+                              {(stylesByMilling[advancedMilling] || []).map((s) => (
+                                <option key={s} value={s}>
+                                  {s}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label htmlFor="inv-advanced-count" className="text-xs font-medium">
+                              Count
+                            </label>
+                            <input
+                              id="inv-advanced-count"
+                              type="number"
+                              min={0}
+                              value={advancedCount}
+                              onChange={(e) => setAdvancedCount(e.target.value)}
+                              disabled={isDisabled || actionLoading}
+                              className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            disabled={
+                              isDisabled ||
+                              actionLoading ||
+                              !selectedMagazine ||
+                              !advancedAction ||
+                              !advancedMilling ||
+                              !advancedStyle ||
+                              advancedCount === '' ||
+                              Number(advancedCount) < 0 ||
+                              !Number.isInteger(Number(advancedCount))
+                            }
+                            onClick={handleExecuteAdvanced}
+                            className="rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50"
+                          >
+                            Execute Action
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </>
