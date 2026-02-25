@@ -1001,6 +1001,20 @@ def inventory_advanced_action(data):
         return WebsocketError([SocketErrors.OTHER.value, str(e)]).to_json()
 
 
+def inventory_update_api_pricing(data):
+    """Run API and pricing update (same as after inventory edits). Only on kiosk."""
+    if not getattr(keyme.config, "IS_KIOSK", False):
+        return WebsocketSuccess({"message": "Only runs on kiosk"}).to_json()
+    try:
+        from util.update_pricing import update_pricing
+        if update_pricing() != 0:
+            return WebsocketError([SocketErrors.OTHER.value, "Update pricing failed"]).to_json()
+        return WebsocketSuccess({}).to_json()
+    except Exception as e:
+        keyme.log.error("inventory_update_api_pricing: %s", e)
+        return WebsocketError([SocketErrors.OTHER.value, str(e)]).to_json()
+
+
 def clear_cache():
     """Clear TTL cache (e.g. when last client disconnects)."""
     with _cache_lock:
