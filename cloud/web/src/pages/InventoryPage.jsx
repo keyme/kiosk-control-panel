@@ -37,6 +37,12 @@ function isEmptySlot(mag) {
   return !mag || mag.milling == null || mag.style == null || String(mag.milling) === 'None';
 }
 
+/** Format cost as currency or return dash when missing/invalid. */
+function formatCost(cost) {
+  const n = typeof cost === 'number' ? cost : Number(cost);
+  return Number.isFinite(n) ? `$${n.toFixed(2)}` : '—';
+}
+
 export default function InventoryPage({ connected, socket }) {
   const [magazines, setMagazines] = useState([]);
   const [lowInventoryThreshold, setLowInventoryThreshold] = useState(10);
@@ -594,6 +600,7 @@ export default function InventoryPage({ connected, socket }) {
                     <tr>
                       <th className="px-3 py-2 text-left font-medium">Magazine</th>
                       <th className="px-3 py-2 text-right font-medium">Stock</th>
+                      <th className="px-3 py-2 text-right font-medium">Price</th>
                       <th className="px-3 py-2 text-left font-medium">Milling</th>
                       <th className="px-3 py-2 text-left font-medium">Paint Style</th>
                       <th className="px-3 py-2 text-left font-medium">Status</th>
@@ -627,6 +634,7 @@ export default function InventoryPage({ connected, socket }) {
                         >
                           <td className="px-3 py-1.5">{magNum}</td>
                           <td className="px-3 py-1.5 text-right">{mag.count ?? 0}</td>
+                          <td className="px-3 py-1.5 text-right">{formatCost(mag.cost)}</td>
                           <td className="px-3 py-1.5">{mag.milling ?? '—'}</td>
                           <td className="px-3 py-1.5">{mag.display_name ?? mag.style ?? '—'}</td>
                           <td className="px-3 py-1.5">
