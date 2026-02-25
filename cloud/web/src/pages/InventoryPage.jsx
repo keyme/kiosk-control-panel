@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { PageTitle } from '@/components/PageTitle';
 import { cn } from '@/lib/utils';
 import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
-import { Camera, ChevronDown, ChevronRight, Package, Loader2, RefreshCw, X } from 'lucide-react';
+import { Camera, ChevronDown, ChevronRight, Download, Loader2, Maximize2, Package, RefreshCw, X } from 'lucide-react';
 
 /** Gen 3 kiosks: strip leading zeros after "ns" (e.g. NS003512 -> NS3512). */
 function normalizeKioskName(name) {
@@ -90,6 +90,7 @@ export default function InventoryPage({ connected, socket }) {
   const [captureError, setCaptureError] = useState(null);
   const [captureImages, setCaptureImages] = useState(null);
   const [captureRunAnyway, setCaptureRunAnyway] = useState(false);
+  const [fullscreenImage, setFullscreenImage] = useState(null); // { base64, label } or null
 
   useEffect(() => {
     if (!hasPendingPricingUpdate) return;
@@ -251,7 +252,6 @@ export default function InventoryPage({ connected, socket }) {
 
   const handleConfirmCapture = useCallback(async () => {
     if (selectedMagazine == null || !socket?.requestIfSupported) return;
-    setCaptureConfirmOpen(false);
     setCaptureError(null);
     setCaptureImages(null);
     setCaptureLoading(true);
@@ -275,6 +275,29 @@ export default function InventoryPage({ connected, socket }) {
       setCaptureLoading(false);
     }
   }, [selectedMagazine, socket, captureRunAnyway]);
+
+  const handleCloseCaptureModal = useCallback(() => {
+    setCaptureConfirmOpen(false);
+    setCaptureError(null);
+    setCaptureImages(null);
+    setCaptureLoading(false);
+  }, []);
+
+  const captureImageDataUrl = (base64) => `data:image/jpeg;base64,${base64}`;
+  const handleCaptureImageFullscreen = (base64, label) => setFullscreenImage({ base64, label: label || 'Image' });
+
+  useEffect(() => {
+    if (!fullscreenImage) return;
+    const onKeyDown = (e) => { if (e.key === 'Escape') setFullscreenImage(null); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [fullscreenImage]);
+  const handleCaptureImageDownload = (base64, label) => {
+    const a = document.createElement('a');
+    a.href = captureImageDataUrl(base64);
+    a.download = `inventory-capture-${label.toLowerCase().replace(/\s+/g, '-')}-${new Date().toISOString().slice(0, 10)}.jpg`;
+    a.click();
+  };
 
   const handleExecuteAdvanced = () => {
     if (!socket?.requestIfSupported || actionLoading || isDisabled || selectedMagazine == null) return;
@@ -878,42 +901,6 @@ export default function InventoryPage({ connected, socket }) {
                     <div className="border-t border-border pt-3">
                       <button
                         type="button"
-                        disabled={isDisabled || actionLoading || captureLoading}
-                        onClick={handleOpenCaptureConfirm}
-                        className="inline-flex items-center justify-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-200"
-                      >
-                        {captureLoading ? <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden /> : <Camera className="size-5 shrink-0" aria-hidden />}
-                        Rotate to camera & capture
-                      </button>
-                      {captureLoading && (
-                        <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
-                          <Loader2 className="size-4 animate-spin" aria-hidden />
-                          Moving carousel and capturing images…
-                        </p>
-                      )}
-                      {captureError && (
-                        <p className="mt-2 text-sm text-destructive">{captureError}</p>
-                      )}
-                      {captureImages && (
-                        <div className="mt-3 flex flex-col gap-2">
-                          <p className="text-xs font-medium text-muted-foreground">Overhead</p>
-                          <img
-                            src={`data:image/jpeg;base64,${captureImages.overhead}`}
-                            alt="Overhead camera"
-                            className="max-h-40 w-full rounded border border-border object-contain"
-                          />
-                          <p className="text-xs font-medium text-muted-foreground">Inventory camera</p>
-                          <img
-                            src={`data:image/jpeg;base64,${captureImages.inventory}`}
-                            alt="Inventory camera"
-                            className="max-h-40 w-full rounded border border-border object-contain"
-                          />
-                        </div>
-                      )}
-                    </div>
-                    <div className="border-t border-border pt-3">
-                      <button
-                        type="button"
                         onClick={() => setAdvancedOpen((o) => !o)}
                         className="flex w-full items-center gap-2 text-left text-sm font-medium"
                       >
@@ -922,6 +909,15 @@ export default function InventoryPage({ connected, socket }) {
                       </button>
                       {advancedOpen && (
                         <div className="mt-3 flex flex-col gap-3">
+                          <button
+                            type="button"
+                            disabled={isDisabled || actionLoading || captureLoading}
+                            onClick={handleOpenCaptureConfirm}
+                            className="inline-flex items-center justify-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-200"
+                          >
+                            {captureLoading ? <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden /> : <Camera className="size-5 shrink-0" aria-hidden />}
+                            Rotate to camera & capture
+                          </button>
                           <div className="flex flex-col gap-2">
                             <span className="text-xs font-medium">Action</span>
                             <div className="flex flex-col gap-1">
@@ -1093,43 +1089,181 @@ export default function InventoryPage({ connected, socket }) {
               )}
             </div>
           </aside>
-          <Dialog open={captureConfirmOpen} onOpenChange={setCaptureConfirmOpen}>
-            <DialogContent showClose={true} onClose={() => setCaptureConfirmOpen(false)}>
+          <Dialog open={captureConfirmOpen} onOpenChange={(open) => !open && handleCloseCaptureModal()}>
+            <DialogContent showClose={true} onClose={handleCloseCaptureModal} className="max-w-5xl w-[92vw] max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Rotate to camera &amp; capture</DialogTitle>
-                <DialogDescription>
-                  The carousel will home, then move so magazine {selectedMagazine} faces the inventory camera. Overhead and inventory camera images will be taken. This may take a minute. Continue?
-                </DialogDescription>
+                {!captureLoading && !captureImages && !captureError && (
+                  <DialogDescription>
+                    The carousel will home, then move so magazine {selectedMagazine} faces the inventory camera. Overhead and inventory camera images will be taken. This may take a minute. Continue?
+                  </DialogDescription>
+                )}
               </DialogHeader>
               <div className="flex flex-col gap-4 pt-2">
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={captureRunAnyway}
-                    onChange={(e) => setCaptureRunAnyway(e.target.checked)}
-                    className="rounded border-input"
-                  />
-                  Run anyway (kiosk in use)
-                </label>
-                <div className="flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setCaptureConfirmOpen(false)}
-                    className="rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleConfirmCapture}
-                    className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-                  >
-                    Confirm
-                  </button>
-                </div>
+                {captureLoading && (
+                  <div className="flex flex-col items-center justify-center gap-3 py-8">
+                    <Loader2 className="size-10 animate-spin text-muted-foreground" aria-hidden />
+                    <p className="text-sm text-muted-foreground">Moving carousel and capturing images…</p>
+                    <p className="text-xs text-muted-foreground">This usually takes up to 3 minutes. Please be patient.</p>
+                  </div>
+                )}
+                {captureError && !captureLoading && (
+                  <>
+                    <p className="text-sm text-destructive">{captureError}</p>
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={handleCloseCaptureModal}
+                        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </>
+                )}
+                {captureImages && !captureLoading && (
+                  <>
+                    <div className="flex flex-col gap-4">
+                      <div className="flex flex-col gap-2">
+                        <p className="text-xs font-medium text-muted-foreground">Overhead</p>
+                        <div className="relative rounded border border-border bg-muted/30">
+                          <img
+                            src={captureImageDataUrl(captureImages.overhead)}
+                            alt="Overhead camera"
+                            className="max-h-[45vh] min-h-48 w-full cursor-pointer object-contain"
+                            role="button"
+                            tabIndex={0}
+                            title="Click to view fullscreen"
+                            onClick={() => handleCaptureImageFullscreen(captureImages.overhead, 'Overhead')}
+                            onKeyDown={(e) => e.key === 'Enter' && handleCaptureImageFullscreen(captureImages.overhead, 'Overhead')}
+                          />
+                          <div className="absolute bottom-2 right-2 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleCaptureImageFullscreen(captureImages.overhead, 'Overhead')}
+                              className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background/95 px-2.5 py-1.5 text-xs font-medium hover:bg-accent"
+                              title="Fullscreen"
+                            >
+                              <Maximize2 className="size-3.5" aria-hidden />
+                              Fullscreen
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleCaptureImageDownload(captureImages.overhead, 'Overhead')}
+                              className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background/95 px-2.5 py-1.5 text-xs font-medium hover:bg-accent"
+                              title="Download"
+                            >
+                              <Download className="size-3.5" aria-hidden />
+                              Download
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <p className="text-xs font-medium text-muted-foreground">Inventory camera</p>
+                        <div className="relative rounded border border-border bg-muted/30">
+                          <img
+                            src={captureImageDataUrl(captureImages.inventory)}
+                            alt="Inventory camera"
+                            className="max-h-[45vh] min-h-48 w-full cursor-pointer object-contain"
+                            role="button"
+                            tabIndex={0}
+                            title="Click to view fullscreen"
+                            onClick={() => handleCaptureImageFullscreen(captureImages.inventory, 'Inventory')}
+                            onKeyDown={(e) => e.key === 'Enter' && handleCaptureImageFullscreen(captureImages.inventory, 'Inventory')}
+                          />
+                          <div className="absolute bottom-2 right-2 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleCaptureImageFullscreen(captureImages.inventory, 'Inventory')}
+                              className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background/95 px-2.5 py-1.5 text-xs font-medium hover:bg-accent"
+                              title="Fullscreen"
+                            >
+                              <Maximize2 className="size-3.5" aria-hidden />
+                              Fullscreen
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleCaptureImageDownload(captureImages.inventory, 'Inventory')}
+                              className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background/95 px-2.5 py-1.5 text-xs font-medium hover:bg-accent"
+                              title="Download"
+                            >
+                              <Download className="size-3.5" aria-hidden />
+                              Download
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={handleCloseCaptureModal}
+                        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </>
+                )}
+                {!captureLoading && !captureImages && !captureError && (
+                  <>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={captureRunAnyway}
+                        onChange={(e) => setCaptureRunAnyway(e.target.checked)}
+                        className="rounded border-input"
+                      />
+                      Run anyway (kiosk in use)
+                    </label>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={handleCloseCaptureModal}
+                        className="rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleConfirmCapture}
+                        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                      >
+                        Confirm
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             </DialogContent>
           </Dialog>
+          {fullscreenImage && (
+            <div
+              className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/95 p-4"
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Fullscreen: ${fullscreenImage.label}`}
+              onClick={() => setFullscreenImage(null)}
+            >
+              <p className="absolute left-4 top-4 text-sm text-white/90">{fullscreenImage.label}</p>
+              <button
+                type="button"
+                onClick={() => setFullscreenImage(null)}
+                className="absolute right-4 top-4 rounded-md bg-white/10 p-2 text-white hover:bg-white/20"
+                aria-label="Close fullscreen"
+              >
+                <X className="size-5" />
+              </button>
+              <img
+                src={captureImageDataUrl(fullscreenImage.base64)}
+                alt={fullscreenImage.label}
+                className="max-h-[90vh] max-w-full object-contain"
+                onClick={(e) => e.stopPropagation()}
+              />
+              <p className="mt-2 text-xs text-white/70">Click outside or press Escape to close</p>
+            </div>
+          )}
         </>
       )}
     </div>
