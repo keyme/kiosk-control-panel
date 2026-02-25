@@ -779,7 +779,7 @@ def inventory_enable_magazine(data):
         success = interface.enable_magazine(magazine)
         if not success:
             return WebsocketError([SocketErrors.OTHER.value, "Enable failed"]).to_json()
-        if getattr(keyme.config, "IS_KIOSK", False):
+        if getattr(keyme.config, "IS_KIOSK", False) and not data.get("no_api_update"):
             from util.update_pricing import update_pricing
             if update_pricing() != 0:
                 interface.restore_backup(do_full_update=False)
@@ -817,7 +817,7 @@ def inventory_disable_magazine(data):
         success = interface.disable_magazine(magazine, reason, needs_review=False)
         if not success:
             return WebsocketError([SocketErrors.OTHER.value, "Disable failed"]).to_json()
-        if getattr(keyme.config, "IS_KIOSK", False):
+        if getattr(keyme.config, "IS_KIOSK", False) and not data.get("no_api_update"):
             from util.update_pricing import update_pricing
             if update_pricing() != 0:
                 interface.restore_backup(do_full_update=False)
@@ -866,7 +866,7 @@ def inventory_set_key_count(data):
         success = interface.set_key_count(magazine, new_count)
         if not success:
             return WebsocketError([SocketErrors.OTHER.value, "Set count failed"]).to_json()
-        if getattr(keyme.config, "IS_KIOSK", False):
+        if getattr(keyme.config, "IS_KIOSK", False) and not data.get("no_api_update"):
             from util.update_pricing import update_pricing
             if update_pricing() != 0:
                 interface.restore_backup(do_full_update=False)
@@ -913,7 +913,7 @@ def inventory_advanced_action(data):
             success = interface.change_magazine(magazine, None)
             if not success:
                 return WebsocketError([SocketErrors.OTHER.value, "Remove failed"]).to_json()
-            if getattr(keyme.config, "IS_KIOSK", False):
+            if getattr(keyme.config, "IS_KIOSK", False) and not data.get("no_api_update"):
                 from util.update_pricing import update_pricing
                 if update_pricing() != 0:
                     interface.restore_backup(do_full_update=False)
@@ -936,7 +936,7 @@ def inventory_advanced_action(data):
             success = interface.update_magazine_data(magazine, key_data, reason=MagazineAction.FIX_DATA)
             if not success:
                 return WebsocketError([SocketErrors.OTHER.value, "Fix failed"]).to_json()
-            if getattr(keyme.config, "IS_KIOSK", False):
+            if getattr(keyme.config, "IS_KIOSK", False) and not data.get("no_api_update"):
                 from util.update_pricing import update_pricing
                 if update_pricing() != 0:
                     interface.restore_backup(do_full_update=False)
@@ -987,7 +987,7 @@ def inventory_advanced_action(data):
         success = interface.change_magazine(magazine, key_data, keep_qr_code=keep_qr_code, update_reason=update_reason)
         if not success:
             return WebsocketError([SocketErrors.OTHER.value, "Action failed"]).to_json()
-        if getattr(keyme.config, "IS_KIOSK", False):
+        if getattr(keyme.config, "IS_KIOSK", False) and not data.get("no_api_update"):
             from util.update_pricing import update_pricing
             if update_pricing() != 0:
                 interface.restore_backup(do_full_update=False)

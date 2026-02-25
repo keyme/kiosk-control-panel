@@ -60,6 +60,7 @@ export default function InventoryPage({ connected, socket }) {
   const [advancedCount, setAdvancedCount] = useState('');
   const [advancedFixField, setAdvancedFixField] = useState('milling');
   const [advancedFixValue, setAdvancedFixValue] = useState('');
+  const [noApiUpdate, setNoApiUpdate] = useState(false);
 
   const isSocketDisabled = !connected || !socket?.connected;
   const isDisabled = isSocketDisabled || !hasLoaded;
@@ -143,12 +144,12 @@ export default function InventoryPage({ connected, socket }) {
 
   const handleEnable = () => {
     if (selectedMagazine == null) return;
-    runAction('inventory_enable_magazine', { magazine: selectedMagazine });
+    runAction('inventory_enable_magazine', { magazine: selectedMagazine, no_api_update: noApiUpdate });
   };
 
   const handleDisable = () => {
     if (selectedMagazine == null || !disableReason) return;
-    runAction('inventory_disable_magazine', { magazine: selectedMagazine, reason: disableReason });
+    runAction('inventory_disable_magazine', { magazine: selectedMagazine, reason: disableReason, no_api_update: noApiUpdate });
   };
 
   const handleSetCount = () => {
@@ -158,7 +159,7 @@ export default function InventoryPage({ connected, socket }) {
       showActionMessage('Enter a non-negative number.', true);
       return;
     }
-    runAction('inventory_set_key_count', { magazine: selectedMagazine, new_count: n });
+    runAction('inventory_set_key_count', { magazine: selectedMagazine, new_count: n, no_api_update: noApiUpdate });
   };
 
   const handleExecuteAdvanced = () => {
@@ -199,14 +200,14 @@ export default function InventoryPage({ connected, socket }) {
     setActionMessage(null);
     setActionLoading(true);
 
-    let payload = { magazine: selectedMagazine, action: advancedAction };
+    let payload = { magazine: selectedMagazine, action: advancedAction, no_api_update: noApiUpdate };
     if (advancedAction === 'fix_magazine') {
-      payload = { magazine: selectedMagazine, action: 'fix_magazine', fix_field: advancedFixField, fix_value: advancedFixValue };
+      payload = { magazine: selectedMagazine, action: 'fix_magazine', fix_field: advancedFixField, fix_value: advancedFixValue, no_api_update: noApiUpdate };
     } else if (advancedAction === 'remove_magazine' || advancedAction === 'mark_reviewed') {
-      payload = { magazine: selectedMagazine, action: advancedAction };
+      payload = { magazine: selectedMagazine, action: advancedAction, no_api_update: noApiUpdate };
     } else {
       const countNum = parseInt(advancedCount, 10);
-      payload = { magazine: selectedMagazine, action: advancedAction, milling: advancedMilling, style: advancedStyle, count: countNum };
+      payload = { magazine: selectedMagazine, action: advancedAction, milling: advancedMilling, style: advancedStyle, count: countNum, no_api_update: noApiUpdate };
     }
 
     socket
@@ -272,6 +273,18 @@ export default function InventoryPage({ connected, socket }) {
           )}
           {!hasLoaded && !loading && (
             <span className="text-xs text-muted-foreground">Click to load inventory from the device.</span>
+          )}
+          <label className="flex flex-wrap items-center gap-2 cursor-pointer ml-auto">
+            <input
+              type="checkbox"
+              checked={noApiUpdate}
+              onChange={(e) => setNoApiUpdate(e.target.checked)}
+              className="rounded border-input"
+            />
+            <span className="text-sm">Fast edit: skip API update and pricing update</span>
+          </label>
+          {noApiUpdate && (
+            <span className="text-xs text-muted-foreground w-full">For fast edits only. Turn this off for your last edit so pricing is updated.</span>
           )}
         </CardContent>
       </Card>
