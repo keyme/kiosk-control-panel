@@ -252,22 +252,20 @@ def fleet_reboot_kiosk(data):
 
 @require_fleet_allowed
 def fleet_clear_cutter_stuck(data):
-    """Run cutter_state.py --remove-stuck; return success/errors from exit code."""
+    """Run cutter_state.py --clear-exposed-key-lock then --remove-stuck; clear all stucks including exposed key lock."""
     try:
         script = os.path.join(_KIOSK_CWD, 'cutter', 'shared', 'cutter_state.py')
-        proc = subprocess.run(
-            [sys.executable, script, '--remove-stuck'],
-            cwd=_KIOSK_CWD,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=30,
-        )
-        if proc.returncode == 0:
-            return {'success': True, 'data': {}}
-        err = (proc.stderr or b'').decode('utf-8', errors='replace').strip() or proc.stdout.decode('utf-8', errors='replace').strip()
-        return {'success': False, 'errors': [err or 'Script exited with code {}'.format(proc.returncode)]}
-    except subprocess.TimeoutExpired:
-        return {'success': False, 'errors': ['Script timed out']}
+        errors = []
+        for step_name, args in [
+            ('clear-exposed-key-lock', ['--clear-exposed-key-lock']),
+            ('remove-stuck', ['--remove-stuck']),
+        ]:
+            ok, err = _run_cutter_state_step(_KIOSK_CWD, script, step_name, args)
+            if not ok:
+                errors.append(err)
+        if errors:
+            return {'success': False, 'errors': errors}
+        return {'success': True, 'data': {}}
     except Exception as e:
         keyme.log.exception('fleet_clear_cutter_stuck failed')
         return {'success': False, 'errors': [str(e)]}
