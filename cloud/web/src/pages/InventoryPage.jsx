@@ -274,18 +274,22 @@ export default function InventoryPage({ connected, socket }) {
           {!hasLoaded && !loading && (
             <span className="text-xs text-muted-foreground">Click to load inventory from the device.</span>
           )}
-          <label className="flex flex-wrap items-center gap-2 cursor-pointer ml-auto">
-            <input
-              type="checkbox"
-              checked={noApiUpdate}
-              onChange={(e) => setNoApiUpdate(e.target.checked)}
-              className="rounded border-input"
-            />
-            <span className="text-sm">Fast edit: skip API update and pricing update</span>
-          </label>
-          {noApiUpdate && (
-            <span className="text-xs text-muted-foreground w-full">For fast edits only. Turn this off for your last edit so pricing is updated.</span>
-          )}
+          <div className="flex flex-col gap-2 ml-auto w-full min-w-0 sm:w-auto">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={noApiUpdate}
+                onChange={(e) => setNoApiUpdate(e.target.checked)}
+                className="rounded border-input"
+              />
+              <span className="text-sm">Fast edit: skip API update and pricing update</span>
+            </label>
+            {noApiUpdate && (
+              <div className="rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200" role="alert">
+                For fast edits only. Do your last edit with this unchecked so pricing and Admin API are updated.
+              </div>
+            )}
+          </div>
         </CardContent>
       </Card>
 
