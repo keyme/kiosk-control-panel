@@ -240,16 +240,16 @@ export default function InventoryPage({ connected, socket }) {
   const highlightMag = selectedMagazine != null ? selectedMagazine : hoveredMagazine;
 
   return (
-    <div className="flex flex-1 flex-col gap-4 p-4">
+    <div className="space-y-6">
       <PageTitle icon={Package}>Inventory</PageTitle>
-      <p className="text-sm text-muted-foreground leading-relaxed -mt-4 mb-2">
+      <p className="text-sm text-muted-foreground leading-relaxed -mt-2 mb-1">
         Load inventory from the device, then click a <span className="font-medium text-foreground/80">donut segment</span> or a{' '}
         <span className="font-medium text-foreground/80">table row</span> to open controls. Hover to highlight.
       </p>
 
-      {/* Fetch button (match Data Usage style) */}
-      <Card>
-        <CardContent className="flex flex-wrap items-center gap-4 pt-1">
+      {/* Actions: Refresh + Download CSV + Bulk Update */}
+      <Card className="py-2">
+        <CardContent className="flex flex-wrap items-center gap-3 px-4 py-1">
           <button
             type="button"
             onClick={fetchInventory}
@@ -420,7 +420,7 @@ export default function InventoryPage({ connected, socket }) {
                           d={d}
                           fill="none"
                           stroke="rgba(255,255,255,0.92)"
-                          strokeWidth={isSelected ? 3.8 : 3.2}
+                          strokeWidth={isSelected ? 1.8 : 1.4}
                           strokeLinejoin="round"
                           strokeLinecap="round"
                           className="pointer-events-none"
@@ -430,7 +430,7 @@ export default function InventoryPage({ connected, socket }) {
                           d={d}
                           fill="none"
                           stroke="hsl(var(--primary))"
-                          strokeWidth={isSelected ? 2.4 : 2.0}
+                          strokeWidth={isSelected ? 1.2 : 1.0}
                           strokeLinejoin="round"
                           strokeLinecap="round"
                           className="pointer-events-none"
@@ -485,6 +485,8 @@ export default function InventoryPage({ connected, socket }) {
                   <tbody>
                     {(magazines.length ? magazines : Array.from({ length: 20 }, (_, i) => ({ magazine: i + 1, count: 0, in_stock: false }))).map((mag) => {
                       const magNum = Number(mag.magazine ?? 0);
+                      const state = segmentState(mag, lowInventoryThreshold);
+                      const rowColor = segmentColor(state);
                       const isSelected = selectedMagazine === magNum;
                       const isHovered = hoveredMagazine === magNum;
                       return (
@@ -495,6 +497,7 @@ export default function InventoryPage({ connected, socket }) {
                             isHovered && 'bg-muted/70',
                             isSelected && 'bg-primary/10'
                           )}
+                          style={{ borderLeftWidth: 4, borderLeftStyle: 'solid', borderLeftColor: rowColor }}
                           onClick={() => handleSelect(magNum)}
                           onMouseEnter={() => setHoveredMagazine(magNum)}
                           onMouseLeave={() => setHoveredMagazine(null)}
@@ -593,6 +596,12 @@ export default function InventoryPage({ connected, socket }) {
                       {actionMessage.text}
                     </p>
                   )}
+                  {actionLoading && (
+                    <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden />
+                      Updating…
+                    </p>
+                  )}
                   <div className="flex flex-col gap-3">
                     <div>
                       {selectedIsEmpty && (
@@ -604,9 +613,10 @@ export default function InventoryPage({ connected, socket }) {
                         type="button"
                         disabled={isDisabled || actionLoading || selectedIsEmpty}
                         onClick={handleEnable}
-                        className="rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50"
+                        className="inline-flex items-center justify-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50"
                       >
-                        {actionLoading ? <Loader2 className="size-4 animate-spin" /> : 'Enable'}
+                        {actionLoading && <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden />}
+                        Enable
                       </button>
                     </div>
                     <div className="flex flex-col gap-1">
@@ -631,8 +641,9 @@ export default function InventoryPage({ connected, socket }) {
                         type="button"
                         disabled={isDisabled || actionLoading || !disableReason}
                         onClick={handleDisable}
-                        className="rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50"
+                        className="inline-flex items-center justify-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50"
                       >
+                        {actionLoading && <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden />}
                         Disable
                       </button>
                     </div>
@@ -653,8 +664,9 @@ export default function InventoryPage({ connected, socket }) {
                         type="button"
                         disabled={isDisabled || actionLoading}
                         onClick={handleSetCount}
-                        className="rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50"
+                        className="inline-flex items-center justify-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50"
                       >
+                        {actionLoading && <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden />}
                         Update count
                       </button>
                     </div>
@@ -827,8 +839,9 @@ export default function InventoryPage({ connected, socket }) {
                               (advancedAction === 'mark_reviewed' && !selectedIsDisabled)
                             }
                             onClick={handleExecuteAdvanced}
-                            className="rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50"
+                            className="inline-flex items-center justify-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50"
                           >
+                            {actionLoading && <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden />}
                             {advancedAction === 'remove_magazine' ? 'Remove Magazine' : 'Execute Action'}
                           </button>
                         </div>
