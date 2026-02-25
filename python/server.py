@@ -621,6 +621,386 @@ def get_all_configs():
     return WebsocketSuccess({'configs': configs, 'hardware': hardware}).to_json()
 
 
+def _inventory_days_since(ts_str):
+    """Parse timestamp '%Y%m%d %H:%M' and return days since that time. Return 0 if None or invalid."""
+    if not ts_str:
+        return 0
+    try:
+        dt = datetime.strptime(ts_str, "%Y%m%d %H:%M")
+        delta = datetime.now() - dt
+        return max(0, delta.days)
+    except (ValueError, TypeError):
+        return 0
+
+
+def get_inventory_list():
+    """Return magazine list (1-20) with full fields and enabled/disabled days. IPC to INVENTORY only."""
+    try:
+        from inventory.interface_ipc_only import InventoryInterface
+        interface = InventoryInterface()
+    except Exception as e:
+        keyme.log.error("get_inventory_list: failed to get InventoryInterface: %s", e)
+        return WebsocketError([SocketErrors.OTHER.value, "Inventory not available"]).to_json()
+    try:
+        stock_list = interface.get_magazine_list(include_status_data=True)
+    except keyme.ipc.exceptions.TimeoutException:
+        return WebsocketError([SocketErrors.IPC_TIMED_OUT.value, "Inventory not responding"]).to_json()
+    except Exception as e:
+        keyme.log.error("get_inventory_list: IPC failed: %s", e)
+        return WebsocketError([SocketErrors.IPC_ERROR.value, str(e)]).to_json()
+
+    try:
+        inv_config = keyme.config.cascade_load("inventory.json", process="inventory")
+        low_threshold = int(inv_config.get("low_inventory_count", 25))
+    except Exception:
+        low_threshold = 25
+
+    magazines = []
+    for mag_num in range(1, 21):
+        key = str(mag_num)
+        tup = stock_list.get(key, ("None", 0, None, None, None, None))
+        if len(tup) == 6:
+            name, count, disabled_reason, disabled_at, enabled_at, qr_code = tup
+        else:
+            name, count = tup[0], tup[1]
+            disabled_reason = disabled_at = enabled_at = qr_code = None
+
+        if name == "None" or not name:
+            magazines.append({
+                "magazine": mag_num,
+                "count": 0,
+                "milling": None,
+                "style": None,
+                "display_name": None,
+                "cost": None,
+                "in_stock": False,
+                "manufacturer": None,
+                "disabled_reason": disabled_reason,
+                "disabled_at": disabled_at,
+                "enabled_at": enabled_at,
+                "qr_code": qr_code or None,
+                "enabled_days": 0,
+                "disabled_days": _inventory_days_since(disabled_at),
+            })
+            continue
+        try:
+            full = interface.get_magazine_stock(mag_num)
+        except Exception:
+            full = None
+        if not full:
+            magazines.append({
+                "magazine": mag_num,
+                "count": count,
+                "milling": None,
+                "style": name,
+                "display_name": None,
+                "cost": None,
+                "in_stock": disabled_reason is None,
+                "manufacturer": None,
+                "disabled_reason": disabled_reason,
+                "disabled_at": disabled_at,
+                "enabled_at": enabled_at,
+                "qr_code": qr_code,
+                "enabled_days": _inventory_days_since(enabled_at) if disabled_reason is None else 0,
+                "disabled_days": _inventory_days_since(disabled_at) if disabled_reason else 0,
+            })
+        else:
+            in_stock = full.get("in_stock", disabled_reason is None)
+            magazines.append({
+                "magazine": mag_num,
+                "count": full.get("count", count),
+                "milling": full.get("milling"),
+                "style": full.get("name") or full.get("style"),
+                "display_name": full.get("display_name"),
+                "cost": full.get("cost"),
+                "in_stock": in_stock,
+                "manufacturer": full.get("manufacturer"),
+                "disabled_reason": full.get("disabled_reason") or disabled_reason,
+                "disabled_at": full.get("disabled_at") or disabled_at,
+                "enabled_at": full.get("enabled_at") or enabled_at,
+                "qr_code": full.get("qr_code") or qr_code,
+                "enabled_days": _inventory_days_since(full.get("enabled_at")) if in_stock else 0,
+                "disabled_days": _inventory_days_since(full.get("disabled_at")) if not in_stock else 0,
+            })
+
+    return WebsocketSuccess({"magazines": magazines, "low_inventory_threshold": low_threshold}).to_json()
+
+
+def get_inventory_disabled_reasons():
+    """Return list of allowed disable reasons (no IPC)."""
+    try:
+        from inventory.disabled_reasons import get_disabled_reasons
+        reasons = get_disabled_reasons()
+        return WebsocketSuccess({"reasons": reasons}).to_json()
+    except Exception as e:
+        keyme.log.error("get_inventory_disabled_reasons: %s", e)
+        return WebsocketError([SocketErrors.OTHER.value, str(e)]).to_json()
+
+
+def get_inventory_millings_styles():
+    """Return millings list and styles_by_milling from inventory/key_style_data.json (no IPC)."""
+    try:
+        path = os.path.join(keyme.config.PATH, "inventory", "key_style_data.json")
+        style_data = keyme.config.load(path, logging=False)
+        if not style_data or not isinstance(style_data, dict):
+            return WebsocketSuccess({"millings": [], "styles_by_milling": {}}).to_json()
+        millings = sorted(style_data.keys())
+        styles_by_milling = {}
+        for milling in style_data:
+            milling_data = style_data[milling]
+            if not isinstance(milling_data, dict):
+                continue
+            styles_set = set()
+            for key_class, class_data in milling_data.items():
+                if isinstance(class_data, dict) and "styles" in class_data:
+                    for s in class_data["styles"]:
+                        styles_set.add(s)
+            styles_by_milling[milling] = sorted(styles_set)
+        return WebsocketSuccess({"millings": millings, "styles_by_milling": styles_by_milling}).to_json()
+    except Exception as e:
+        keyme.log.error("get_inventory_millings_styles: %s", e)
+        return WebsocketError([SocketErrors.OTHER.value, str(e)]).to_json()
+
+
+def _inventory_interface():
+    from inventory.interface_ipc_only import InventoryInterface
+    return InventoryInterface()
+
+
+def inventory_enable_magazine(data):
+    """Enable a magazine. Mirror script -e path; backup, enable, update_pricing on kiosk."""
+    magazine = data.get("magazine")
+    if magazine is None or not (1 <= int(magazine) <= 20):
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "magazine must be 1-20"]).to_json()
+    magazine = int(magazine)
+    try:
+        interface = _inventory_interface()
+        interface.export_stock(backup=True)
+        success = interface.enable_magazine(magazine)
+        if not success:
+            return WebsocketError([SocketErrors.OTHER.value, "Enable failed"]).to_json()
+        if getattr(keyme.config, "IS_KIOSK", False) and not data.get("no_api_update"):
+            from util.update_pricing import update_pricing
+            if update_pricing() != 0:
+                interface.restore_backup(do_full_update=False)
+                return WebsocketError([SocketErrors.OTHER.value, "Update pricing failed"]).to_json()
+        return WebsocketSuccess({}).to_json()
+    except keyme.ipc.exceptions.TimeoutException:
+        return WebsocketError([SocketErrors.IPC_TIMED_OUT.value, "Inventory not responding"]).to_json()
+    except Exception as e:
+        keyme.log.error("inventory_enable_magazine: %s", e)
+        return WebsocketError([SocketErrors.OTHER.value, str(e)]).to_json()
+
+
+def inventory_disable_magazine(data):
+    """Disable a magazine with reason. Mirror script -d path."""
+    magazine = data.get("magazine")
+    reason = data.get("reason")
+    if magazine is None or not (1 <= int(magazine) <= 20):
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "magazine must be 1-20"]).to_json()
+    if not reason:
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "reason required"]).to_json()
+    magazine = int(magazine)
+    try:
+        from inventory import disabled_reasons
+        if reason not in disabled_reasons.POSSIBLE_REASONS:
+            return WebsocketError([
+                SocketErrors.INVALID_INPUT.value,
+                "Invalid reason. Possible: {}".format(disabled_reasons.POSSIBLE_REASONS),
+            ]).to_json()
+    except Exception as e:
+        keyme.log.error("inventory_disable_magazine: %s", e)
+        return WebsocketError([SocketErrors.OTHER.value, str(e)]).to_json()
+    try:
+        interface = _inventory_interface()
+        interface.export_stock(backup=True)
+        success = interface.disable_magazine(magazine, reason, needs_review=False)
+        if not success:
+            return WebsocketError([SocketErrors.OTHER.value, "Disable failed"]).to_json()
+        if getattr(keyme.config, "IS_KIOSK", False) and not data.get("no_api_update"):
+            from util.update_pricing import update_pricing
+            if update_pricing() != 0:
+                interface.restore_backup(do_full_update=False)
+                return WebsocketError([SocketErrors.OTHER.value, "Update pricing failed"]).to_json()
+        return WebsocketSuccess({}).to_json()
+    except keyme.ipc.exceptions.TimeoutException:
+        return WebsocketError([SocketErrors.IPC_TIMED_OUT.value, "Inventory not responding"]).to_json()
+    except Exception as e:
+        keyme.log.error("inventory_disable_magazine: %s", e)
+        return WebsocketError([SocketErrors.OTHER.value, str(e)]).to_json()
+
+
+def inventory_set_key_count(data):
+    """Set key count for a magazine. Mirror script -cc path; sanity check capacity."""
+    magazine = data.get("magazine")
+    new_count = data.get("new_count")
+    if magazine is None or not (1 <= int(magazine) <= 20):
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "magazine must be 1-20"]).to_json()
+    if new_count is None:
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "new_count required"]).to_json()
+    try:
+        new_count = int(new_count)
+        if new_count < 0:
+            raise ValueError("new_count must be non-negative")
+    except (TypeError, ValueError) as e:
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, str(e)]).to_json()
+    magazine = int(magazine)
+    try:
+        interface = _inventory_interface()
+        mag_stock = interface.get_magazine_stock(magazine)
+        if not mag_stock:
+            return WebsocketError([SocketErrors.OTHER.value, "Magazine has no key data"]).to_json()
+        milling = mag_stock.get("milling")
+        style = mag_stock.get("name") or mag_stock.get("style")
+        if not milling or not style:
+            return WebsocketError([SocketErrors.OTHER.value, "Missing milling or style for magazine"]).to_json()
+        capacity = interface.get_magazine_capacity(milling, style)
+        if capacity is None:
+            return WebsocketError([SocketErrors.OTHER.value, "Missing magazine capacity for {}-{}".format(milling, style)]).to_json()
+        if new_count > capacity:
+            return WebsocketError([
+                SocketErrors.INVALID_INPUT.value,
+                "Count {} exceeds max capacity {} for {}-{}".format(new_count, capacity, milling, style),
+            ]).to_json()
+        interface.export_stock(backup=True)
+        success = interface.set_key_count(magazine, new_count)
+        if not success:
+            return WebsocketError([SocketErrors.OTHER.value, "Set count failed"]).to_json()
+        if getattr(keyme.config, "IS_KIOSK", False) and not data.get("no_api_update"):
+            from util.update_pricing import update_pricing
+            if update_pricing() != 0:
+                interface.restore_backup(do_full_update=False)
+                return WebsocketError([SocketErrors.OTHER.value, "Update pricing failed"]).to_json()
+        return WebsocketSuccess({}).to_json()
+    except keyme.ipc.exceptions.TimeoutException:
+        return WebsocketError([SocketErrors.IPC_TIMED_OUT.value, "Inventory not responding"]).to_json()
+    except Exception as e:
+        keyme.log.error("inventory_set_key_count: %s", e)
+        return WebsocketError([SocketErrors.OTHER.value, str(e)]).to_json()
+
+
+_ADVANCED_ACTIONS = frozenset((
+    'add_magazine', 'replace_keys', 'replace_magazine',
+    'remove_magazine', 'fix_magazine', 'mark_reviewed',
+))
+
+
+def inventory_advanced_action(data):
+    """Add / Replace / Remove / Fix / Mark reviewed. Mirrors update_inventory.py via IPC."""
+    magazine = data.get("magazine")
+    action = data.get("action")
+
+    if magazine is None or not (1 <= int(magazine) <= 20):
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "magazine must be 1-20"]).to_json()
+    magazine = int(magazine)
+    if action not in _ADVANCED_ACTIONS:
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "invalid action"]).to_json()
+
+    try:
+        interface = _inventory_interface()
+        mag_stock = interface.get_magazine_stock(magazine)
+
+        if action == 'mark_reviewed':
+            success = interface.mark_as_reviewed(magazine)
+            if not success:
+                return WebsocketError([SocketErrors.OTHER.value, "Mark reviewed failed"]).to_json()
+            return WebsocketSuccess({}).to_json()
+
+        if action == 'remove_magazine':
+            if not mag_stock:
+                return WebsocketError([SocketErrors.INVALID_INPUT.value, "Slot is empty; nothing to remove."]).to_json()
+            interface.export_stock(backup=True)
+            success = interface.change_magazine(magazine, None)
+            if not success:
+                return WebsocketError([SocketErrors.OTHER.value, "Remove failed"]).to_json()
+            if getattr(keyme.config, "IS_KIOSK", False) and not data.get("no_api_update"):
+                from util.update_pricing import update_pricing
+                if update_pricing() != 0:
+                    interface.restore_backup(do_full_update=False)
+                    return WebsocketError([SocketErrors.OTHER.value, "Update pricing failed"]).to_json()
+            return WebsocketSuccess({}).to_json()
+
+        if action == 'fix_magazine':
+            fix_field = (data.get("fix_field") or "").strip().lower()
+            fix_value = (data.get("fix_value") or "").strip()
+            if fix_field not in ('milling', 'style'):
+                return WebsocketError([SocketErrors.INVALID_INPUT.value, "fix_field must be milling or style"]).to_json()
+            if not fix_value:
+                return WebsocketError([SocketErrors.INVALID_INPUT.value, "fix_value is required"]).to_json()
+            if not mag_stock:
+                return WebsocketError([SocketErrors.INVALID_INPUT.value, "Slot is empty; nothing to fix."]).to_json()
+            attribute = "milling" if fix_field == "milling" else "name"
+            key_data = {"magazine": magazine, attribute: fix_value}
+            from inventory.magazine_actions import MagazineAction
+            interface.export_stock(backup=True)
+            success = interface.update_magazine_data(magazine, key_data, reason=MagazineAction.FIX_DATA)
+            if not success:
+                return WebsocketError([SocketErrors.OTHER.value, "Fix failed"]).to_json()
+            if getattr(keyme.config, "IS_KIOSK", False) and not data.get("no_api_update"):
+                from util.update_pricing import update_pricing
+                if update_pricing() != 0:
+                    interface.restore_backup(do_full_update=False)
+                    return WebsocketError([SocketErrors.OTHER.value, "Update pricing failed"]).to_json()
+            return WebsocketSuccess({}).to_json()
+
+        # add_magazine, replace_keys, replace_magazine
+        milling = (data.get("milling") or "").strip()
+        style = (data.get("style") or "").strip()
+        count = data.get("count")
+        if not milling or not style:
+            return WebsocketError([SocketErrors.INVALID_INPUT.value, "milling and style are required"]).to_json()
+        try:
+            count = int(count)
+            if count < 0:
+                raise ValueError("count must be non-negative")
+        except (TypeError, ValueError) as e:
+            return WebsocketError([SocketErrors.INVALID_INPUT.value, str(e)]).to_json()
+
+        if action == 'add_magazine':
+            if mag_stock:
+                return WebsocketError([SocketErrors.INVALID_INPUT.value, "Cannot add magazine: slot already has key data. Use Replace Keys or Replace Magazine."]).to_json()
+        else:
+            if not mag_stock:
+                return WebsocketError([SocketErrors.INVALID_INPUT.value, "Slot is empty. Use Add Magazine."]).to_json()
+
+        capacity = interface.get_magazine_capacity(milling, style)
+        if capacity is None:
+            return WebsocketError([SocketErrors.OTHER.value, "Missing magazine capacity for {}-{}".format(milling, style)]).to_json()
+        if count > capacity:
+            return WebsocketError([
+                SocketErrors.INVALID_INPUT.value,
+                "Count {} exceeds max capacity {} for {}-{}".format(count, capacity, milling, style),
+            ]).to_json()
+
+        interface.export_stock(backup=True)
+        key_data = {
+            "milling": milling,
+            "name": style,
+            "count": count,
+            "cost": 3.99,
+            "display_name": "Test",
+            "magazine": magazine,
+        }
+        from inventory.magazine_actions import MagazineAction
+        keep_qr_code = (action == 'replace_keys')
+        update_reason = MagazineAction.REFILL if action == 'replace_keys' else None
+        success = interface.change_magazine(magazine, key_data, keep_qr_code=keep_qr_code, update_reason=update_reason)
+        if not success:
+            return WebsocketError([SocketErrors.OTHER.value, "Action failed"]).to_json()
+        if getattr(keyme.config, "IS_KIOSK", False) and not data.get("no_api_update"):
+            from util.update_pricing import update_pricing
+            if update_pricing() != 0:
+                interface.restore_backup(do_full_update=False)
+                return WebsocketError([SocketErrors.OTHER.value, "Update pricing failed"]).to_json()
+        return WebsocketSuccess({}).to_json()
+
+    except keyme.ipc.exceptions.TimeoutException:
+        return WebsocketError([SocketErrors.IPC_TIMED_OUT.value, "Inventory not responding"]).to_json()
+    except Exception as e:
+        keyme.log.error("inventory_advanced_action: %s", e)
+        return WebsocketError([SocketErrors.OTHER.value, str(e)]).to_json()
+
+
 def clear_cache():
     """Clear TTL cache (e.g. when last client disconnects)."""
     with _cache_lock:

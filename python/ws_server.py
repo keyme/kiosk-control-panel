@@ -162,6 +162,13 @@ def _dispatch_request(client_id, request_id, event, data, connection_count, conn
         'fleet_restore_cutting': lambda: handlers.fleet_restore_cutting(data or {}),
         'get_roi': lambda: handlers.get_roi(data or {}),
         'save_roi': lambda: handlers.save_roi(data or {}),
+        'get_inventory_list': lambda: handlers.get_inventory_list(),
+        'get_inventory_disabled_reasons': lambda: handlers.get_inventory_disabled_reasons(),
+        'get_inventory_millings_styles': lambda: handlers.get_inventory_millings_styles(),
+        'inventory_enable_magazine': lambda: handlers.inventory_enable_magazine(data or {}),
+        'inventory_disable_magazine': lambda: handlers.inventory_disable_magazine(data or {}),
+        'inventory_set_key_count': lambda: handlers.inventory_set_key_count(data or {}),
+        'inventory_advanced_action': lambda: handlers.inventory_advanced_action(data or {}),
     }
     if event not in ws_protocol.SUPPORTED_REQUEST_EVENTS:
         return {'id': request_id, 'success': False, 'errors': [ws_protocol.ERROR_UNSUPPORTED_COMMAND]}
