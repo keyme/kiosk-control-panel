@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useBlocker } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageTitle } from '@/components/PageTitle';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
 import { ChevronDown, ChevronRight, Package, Loader2, RefreshCw, X } from 'lucide-react';
@@ -64,9 +62,6 @@ export default function InventoryPage({ connected, socket }) {
   const [advancedFixValue, setAdvancedFixValue] = useState('');
   const [noApiUpdate, setNoApiUpdate] = useState(false);
   const [hasPendingPricingUpdate, setHasPendingPricingUpdate] = useState(false);
-  const [leaveDialogUpdating, setLeaveDialogUpdating] = useState(false);
-
-  const blocker = useBlocker(hasPendingPricingUpdate);
 
   useEffect(() => {
     if (!hasPendingPricingUpdate) return;
@@ -332,69 +327,6 @@ export default function InventoryPage({ connected, socket }) {
           <span className="text-xs text-muted-foreground">Run after fast edits to sync pricing.</span>
         </CardContent>
       </Card>
-
-      <Dialog
-        open={blocker.state === 'blocked'}
-        onOpenChange={(open) => {
-          if (!open && blocker.state === 'blocked') blocker.reset?.();
-        }}
-      >
-        <DialogContent showClose={true} onClose={() => blocker.reset?.()}>
-          <DialogHeader>
-            <DialogTitle>Fast edits not synced</DialogTitle>
-            <DialogDescription>
-              You have fast edits that haven&apos;t been synced. Run &apos;Update API & pricing&apos; before leaving, or leave anyway?
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-wrap gap-2 pt-2">
-            <button
-              type="button"
-              disabled={leaveDialogUpdating || !socket?.requestIfSupported}
-              className="inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-              onClick={() => {
-                setLeaveDialogUpdating(true);
-                socket
-                  .requestIfSupported('inventory_update_api_pricing', {})
-                  .then((res) => {
-                    setLeaveDialogUpdating(false);
-                    if (res?.success) {
-                      setHasPendingPricingUpdate(false);
-                      blocker.reset?.();
-                      showActionMessage('Success.');
-                      fetchInventory();
-                    } else {
-                      showActionMessage((res?.errors || ['Update pricing failed']).join('; '), true);
-                    }
-                  })
-                  .catch((err) => {
-                    setLeaveDialogUpdating(false);
-                    showActionMessage(err?.message || 'Request failed', true);
-                  });
-              }}
-            >
-              {leaveDialogUpdating ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-              Update API & pricing
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium border border-input bg-background hover:bg-accent"
-              onClick={() => {
-                setHasPendingPricingUpdate(false);
-                blocker.proceed?.();
-              }}
-            >
-              Leave anyway
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium border border-input bg-background hover:bg-accent"
-              onClick={() => blocker.reset?.()}
-            >
-              Cancel
-            </button>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
