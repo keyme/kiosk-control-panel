@@ -636,7 +636,7 @@ def _inventory_days_since(ts_str):
 def get_inventory_list():
     """Return magazine list (1-20) with full fields and enabled/disabled days. IPC to INVENTORY only."""
     try:
-        from inventory.interface import InventoryInterface
+        from inventory.interface_ipc_only import InventoryInterface
         interface = InventoryInterface()
     except Exception as e:
         keyme.log.error("get_inventory_list: failed to get InventoryInterface: %s", e)
@@ -763,7 +763,7 @@ def get_inventory_millings_styles():
 
 
 def _inventory_interface():
-    from inventory.interface import InventoryInterface
+    from inventory.interface_ipc_only import InventoryInterface
     return InventoryInterface()
 
 

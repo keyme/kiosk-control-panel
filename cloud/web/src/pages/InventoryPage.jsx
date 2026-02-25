@@ -341,9 +341,12 @@ export default function InventoryPage({ connected, socket }) {
                     const large = DEG_PER_SEG > 180 ? 1 : 0;
                     const d = `M ${x1} ${y1} A ${r2} ${r2} 0 ${large} 1 ${x2} ${y2} L ${x3} ${y3} A ${r1} ${r1} 0 ${large} 0 ${x4} ${y4} Z`;
                     const midAngle = (startAngle + endAngle) / 2;
-                    const labelR = (r1 + r2) / 2;
-                    const lx = cx + labelR * Math.cos(rad(midAngle));
-                    const ly = cy + labelR * Math.sin(rad(midAngle));
+                    const numberR = 27;
+                    const countR = 37;
+                    const numberX = cx + numberR * Math.cos(rad(midAngle));
+                    const numberY = cy + numberR * Math.sin(rad(midAngle));
+                    const countX = cx + countR * Math.cos(rad(midAngle));
+                    const countY = cy + countR * Math.sin(rad(midAngle));
 
                     const isSelected = selectedMagazine === magNum;
                     const isHovered = hoveredMagazine === magNum;
@@ -374,21 +377,37 @@ export default function InventoryPage({ connected, socket }) {
                           aria-label={`Magazine ${magNum}, ${mag?.count ?? 0} keys`}
                         />
                         <text
-                          x={lx}
-                          y={ly + 1}
+                          x={numberX}
+                          y={numberY + 0.5}
                           textAnchor="middle"
                           dominantBaseline="middle"
                           fill="white"
-                          fontSize="4.1"
+                          fontSize="2.8"
                           fontWeight="700"
                           className="pointer-events-none select-none"
                           style={{ textShadow: '0 0 2px rgba(0,0,0,0.5)' }}
                         >
                           #{String(magNum).padStart(2, '0')}
                         </text>
+                        <text
+                          x={countX}
+                          y={countY + 0.5}
+                          textAnchor="middle"
+                          dominantBaseline="middle"
+                          fill="white"
+                          fontSize="3.8"
+                          fontWeight="700"
+                          className="pointer-events-none select-none"
+                          style={{ textShadow: '0 0 2px rgba(0,0,0,0.5)' }}
+                        >
+                          {Number(mag?.count ?? 0)}
+                        </text>
                       </g>
                     );
                   })}
+
+                  {/* Separator circle between number (inner) and count (outer) bands */}
+                  <circle cx="50" cy="50" r="30" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="0.3" className="pointer-events-none" />
 
                   {/* Overlay outline on top of all segments (prevents uneven edges). */}
                   {highlightMag != null && (() => {
