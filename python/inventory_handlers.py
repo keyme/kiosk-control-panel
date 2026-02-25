@@ -207,7 +207,7 @@ def inventory_enable_magazine(data):
         keyme.log.error("inventory_enable_magazine: Inventory not responding (timeout)")
         return WebsocketError([SocketErrors.IPC_TIMED_OUT.value, "Inventory not responding"]).to_json()
     except Exception as e:
-        keyme.log.error(f"inventory_enable_magazine: {e}", exc_info=True)
+        keyme.log.error(f"inventory_enable_magazine: {e}")
         return WebsocketError([SocketErrors.OTHER.value, "Operation failed"]).to_json()
 
 
@@ -230,7 +230,7 @@ def inventory_disable_magazine(data):
                 f"Invalid reason. Possible: {disabled_reasons.POSSIBLE_REASONS}",
             ]).to_json()
     except Exception as e:
-        keyme.log.error(f"inventory_disable_magazine: {e}", exc_info=True)
+        keyme.log.error(f"inventory_disable_magazine: {e}")
         return WebsocketError([SocketErrors.OTHER.value, "Operation failed"]).to_json()
     try:
         interface = _inventory_interface()
@@ -245,7 +245,7 @@ def inventory_disable_magazine(data):
         keyme.log.error("inventory_disable_magazine: Inventory not responding (timeout)")
         return WebsocketError([SocketErrors.IPC_TIMED_OUT.value, "Inventory not responding"]).to_json()
     except Exception as e:
-        keyme.log.error(f"inventory_disable_magazine: {e}", exc_info=True)
+        keyme.log.error(f"inventory_disable_magazine: {e}")
         return WebsocketError([SocketErrors.OTHER.value, "Operation failed"]).to_json()
 
 
@@ -298,7 +298,7 @@ def inventory_set_key_count(data):
         keyme.log.error("inventory_set_key_count: Inventory not responding (timeout)")
         return WebsocketError([SocketErrors.IPC_TIMED_OUT.value, "Inventory not responding"]).to_json()
     except Exception as e:
-        keyme.log.error(f"inventory_set_key_count: {e}", exc_info=True)
+        keyme.log.error(f"inventory_set_key_count: {e}")
         return WebsocketError([SocketErrors.OTHER.value, "Operation failed"]).to_json()
 
 
@@ -423,7 +423,7 @@ def inventory_advanced_action(data):
         keyme.log.error("inventory_advanced_action: Inventory not responding (timeout)")
         return WebsocketError([SocketErrors.IPC_TIMED_OUT.value, "Inventory not responding"]).to_json()
     except Exception as e:
-        keyme.log.error(f"inventory_advanced_action: {e}", exc_info=True)
+        keyme.log.error(f"inventory_advanced_action: {e}")
         return WebsocketError([SocketErrors.OTHER.value, "Operation failed"]).to_json()
 
 
@@ -439,7 +439,7 @@ def inventory_update_api_pricing(data):
             return WebsocketError([SocketErrors.OTHER.value, "Update pricing failed"]).to_json()
         return WebsocketSuccess({}).to_json()
     except Exception as e:
-        keyme.log.error(f"inventory_update_api_pricing: {e}", exc_info=True)
+        keyme.log.error(f"inventory_update_api_pricing: {e}")
         return WebsocketError([SocketErrors.OTHER.value, "Operation failed"]).to_json()
 
 
@@ -526,7 +526,7 @@ def inventory_restore_from_payload(data, send_progress=None):
         return WebsocketSuccess({}).to_json()
 
     except Exception as e:
-        keyme.log.error(f"inventory_restore_from_payload: {e}", exc_info=True)
+        keyme.log.error(f"inventory_restore_from_payload: {e}")
         # Revert: restore backup (stock.json and stock_status.json) and restart INVENTORY
         progress("reverted", "Restoring previous inventory…")
         try:
@@ -537,7 +537,7 @@ def inventory_restore_from_payload(data, send_progress=None):
             keyme.ipc.send_sync("MANAGER", "RESTART_PROCESS", {"process": "INVENTORY"})
             progress("reverted", "Reverted to previous inventory.", "ok")
         except Exception as revert_e:
-            keyme.log.error(f"inventory_restore_from_payload: revert failed: {revert_e}", exc_info=True)
+            keyme.log.error(f"inventory_restore_from_payload: revert failed: {revert_e}")
             progress("reverted", "Revert failed: " + str(revert_e), "failed")
         err_msg = "Restore failed; reverted to previous inventory."
         if str(e):
