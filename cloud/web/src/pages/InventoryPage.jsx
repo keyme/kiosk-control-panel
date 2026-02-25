@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageTitle } from '@/components/PageTitle';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+import { apiFetch } from '@/lib/apiFetch';
 import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
-import { ChevronDown, ChevronRight, Package, Loader2, RefreshCw, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Package, Loader2, RefreshCw, X, CheckCircle, XCircle, Circle } from 'lucide-react';
 
 const SEGMENT_COUNT = 20;
 const DEG_PER_SEG = 360 / SEGMENT_COUNT;
@@ -43,6 +45,26 @@ function formatCost(cost) {
   return Number.isFinite(n) ? `$${n.toFixed(2)}` : '—';
 }
 
+const RESTORE_STEP_ORDER = ['backup', 'stop_inventory', 'write_stock', 'start_inventory', 'verify'];
+const RESTORE_STEP_LABELS = {
+  backup: 'Back up current inventory',
+  stop_inventory: 'Stop INVENTORY process',
+  write_stock: 'Write new stock',
+  start_inventory: 'Start INVENTORY process',
+  verify: 'Verify inventory',
+  reverted: 'Reverted',
+  done: 'Done',
+};
+
+function getInitialRestoreSteps() {
+  return RESTORE_STEP_ORDER.map((stepId) => ({
+    stepId,
+    label: RESTORE_STEP_LABELS[stepId] || stepId,
+    message: null,
+    status: 'pending',
+  }));
+}
+
 export default function InventoryPage({ connected, socket }) {
   const [magazines, setMagazines] = useState([]);
   const [lowInventoryThreshold, setLowInventoryThreshold] = useState(10);
@@ -70,6 +92,13 @@ export default function InventoryPage({ connected, socket }) {
   const [hasPendingPricingUpdate, setHasPendingPricingUpdate] = useState(false);
   const [bulkMenuOpen, setBulkMenuOpen] = useState(false);
   const bulkMenuRef = useRef(null);
+  const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+  const [restoreSourceKiosk, setRestoreSourceKiosk] = useState('');
+  const [restoreFetching, setRestoreFetching] = useState(false);
+  const [restoreInProgress, setRestoreInProgress] = useState(false);
+  const [restoreSteps, setRestoreSteps] = useState(() => getInitialRestoreSteps());
+  const [restoreError, setRestoreError] = useState(null);
+  const [restoreSuccessMessage, setRestoreSuccessMessage] = useState(null);
 
   useEffect(() => {
     if (!hasPendingPricingUpdate) return;
@@ -201,6 +230,75 @@ export default function InventoryPage({ connected, socket }) {
   const handleUpdateApiPricing = () => {
     runAction('inventory_update_api_pricing', {});
   };
+
+  const handleRestoreInventory = useCallback(async () => {
+    const sourceKiosk = (restoreSourceKiosk || '').trim().toLowerCase();
+    if (!sourceKiosk) {
+      setRestoreError('Enter source kiosk');
+      return;
+    }
+    if (!socket?.requestIfSupported || isSocketDisabled) {
+      setRestoreError('Not connected to device');
+      return;
+    }
+    setRestoreError(null);
+    setRestoreSuccessMessage(null);
+    setRestoreSteps(getInitialRestoreSteps());
+
+    setRestoreFetching(true);
+    let json;
+    try {
+      const res = await apiFetch(`/api/kiosks/${encodeURIComponent(sourceKiosk)}/stock.json`);
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        const msg = errBody?.error || errBody?.message || res.statusText;
+        setRestoreError('Failed to fetch inventory from admin' + (msg ? ': ' + msg : ''));
+        setRestoreFetching(false);
+        return;
+      }
+      json = await res.json();
+      if (json && json.success === false) {
+        setRestoreError('Admin returned an error' + (json.error ? ': ' + json.error : ''));
+        setRestoreFetching(false);
+        return;
+      }
+    } catch (e) {
+      setRestoreError(e?.message || 'Could not load inventory from admin. Try again.');
+      setRestoreFetching(false);
+      return;
+    }
+    setRestoreFetching(false);
+    setRestoreInProgress(true);
+
+    const progressHandler = (data) => {
+      if (!data || typeof data.step !== 'string') return;
+      const stepId = data.step;
+      const message = data.message ?? null;
+      const status = data.status === 'ok' || data.status === 'failed' ? data.status : 'running';
+      setRestoreSteps((prev) => {
+        const idx = prev.findIndex((s) => s.stepId === stepId);
+        const entry = { stepId, label: RESTORE_STEP_LABELS[stepId] || stepId, message, status };
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = { ...next[idx], message: message ?? next[idx].message, status };
+          return next;
+        }
+        return [...prev, entry];
+      });
+    };
+
+    socket.on('inventory_restore_progress', progressHandler);
+    try {
+      await socket.requestIfSupported('inventory_restore_from_payload', { stock: json });
+      setRestoreSuccessMessage(`Inventory restored from ${sourceKiosk}`);
+      fetchInventory();
+    } catch (err) {
+      setRestoreError(err?.message || 'Restore failed');
+    } finally {
+      setRestoreInProgress(false);
+      socket.off('inventory_restore_progress', progressHandler);
+    }
+  }, [restoreSourceKiosk, socket, isSocketDisabled, fetchInventory]);
 
   const handleExecuteAdvanced = () => {
     if (!socket?.requestIfSupported || actionLoading || isDisabled || selectedMagazine == null) return;
@@ -341,9 +439,15 @@ export default function InventoryPage({ connected, socket }) {
                   type="button"
                   role="menuitem"
                   className="w-full px-4 py-2 text-left text-sm hover:bg-accent"
-                  onClick={() => setBulkMenuOpen(false)}
+                  onClick={() => {
+                    setBulkMenuOpen(false);
+                    setRestoreDialogOpen(true);
+                    setRestoreError(null);
+                    setRestoreSuccessMessage(null);
+                    setRestoreSteps(getInitialRestoreSteps());
+                  }}
                 >
-                  Import CSV
+                  Restore Inventory
                 </button>
                 <button
                   type="button"
@@ -358,6 +462,87 @@ export default function InventoryPage({ connected, socket }) {
           </div>
         </div>
       </div>
+
+      {/* Restore Inventory dialog */}
+      <Dialog open={restoreDialogOpen} onOpenChange={setRestoreDialogOpen}>
+        <DialogContent showClose={true} onClose={() => setRestoreDialogOpen(false)}>
+          <DialogHeader>
+            <DialogTitle>Restore Inventory</DialogTitle>
+            <DialogDescription>
+              Fetch inventory stock from an admin kiosk and replace this device&apos;s inventory. You must be connected to the device.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div>
+              <label htmlFor="restore-source-kiosk" className="block text-sm font-medium mb-1">
+                Source kiosk (admin)
+              </label>
+              <input
+                id="restore-source-kiosk"
+                type="text"
+                value={restoreSourceKiosk}
+                onChange={(e) => setRestoreSourceKiosk(e.target.value)}
+                placeholder="e.g. admin_kiosk_slug"
+                disabled={restoreFetching || restoreInProgress}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              />
+            </div>
+            {restoreFetching && (
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+                Fetching from admin…
+              </p>
+            )}
+            {(restoreInProgress || restoreSteps.some((s) => s.status !== 'pending' || s.message)) && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Steps</p>
+                <ul className="space-y-2">
+                  {restoreSteps.map((step) => (
+                    <li key={step.stepId} className="flex items-start gap-2 text-sm">
+                      <span className="shrink-0 mt-0.5" aria-hidden>
+                        {step.status === 'pending' && <Circle className="size-4 text-muted-foreground" />}
+                        {step.status === 'running' && <Loader2 className="size-4 animate-spin text-primary" />}
+                        {step.status === 'ok' && <CheckCircle className="size-4 text-green-600" />}
+                        {step.status === 'failed' && <XCircle className="size-4 text-destructive" />}
+                      </span>
+                      <span>
+                        <span className="font-medium">{step.label}</span>
+                        {step.message && <span className="block text-muted-foreground">{step.message}</span>}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {restoreError && (
+              <p className="text-sm text-destructive">{restoreError}</p>
+            )}
+            {restoreSuccessMessage && (
+              <p className="text-sm text-green-600">{restoreSuccessMessage}</p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleRestoreInventory}
+                disabled={restoreFetching || restoreInProgress || !restoreSourceKiosk.trim() || isSocketDisabled}
+                className={cn(
+                  'inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium',
+                  'bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none'
+                )}
+              >
+                {restoreInProgress ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" aria-hidden />
+                    Restoring…
+                  </>
+                ) : (
+                  'Restore'
+                )}
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Fast Edit Mode Active strip — only when noApiUpdate */}
       {noApiUpdate && (

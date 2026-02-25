@@ -65,6 +65,7 @@ SUPPORTED_REQUEST_EVENTS = (
     'inventory_set_key_count',
     'inventory_advanced_action',
     'inventory_update_api_pricing',
+    'inventory_restore_from_payload',
 )
 
 # Events that accept optional "data" in the request.
@@ -72,6 +73,7 @@ EVENTS_WITH_DATA = frozenset((
     'take_image', 'log_tail_start', 'get_roi', 'save_roi',
     'inventory_enable_magazine', 'inventory_disable_magazine', 'inventory_set_key_count',
     'inventory_advanced_action',
+    'inventory_restore_from_payload',
 ))
 
 # Push events (server -> client, no id).
@@ -80,6 +82,7 @@ PUSH_WELLNESS_PROGRESS = 'wellness_progress'
 PUSH_LOG_TAIL_LINE = 'log_tail_line'
 PUSH_RESTART_ALL_LINE = 'restart_all_line'
 PUSH_RESTART_ALL_DONE = 'restart_all_done'
+PUSH_INVENTORY_RESTORE_PROGRESS = 'inventory_restore_progress'
 PUSH_ASYNC_PREFIX = 'async.'
 
 # Response: success shape has "success": True and "data"; error has "success": False and "errors".
