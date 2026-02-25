@@ -909,15 +909,6 @@ export default function InventoryPage({ connected, socket }) {
                       </button>
                       {advancedOpen && (
                         <div className="mt-3 flex flex-col gap-3">
-                          <button
-                            type="button"
-                            disabled={isDisabled || actionLoading || captureLoading}
-                            onClick={handleOpenCaptureConfirm}
-                            className="inline-flex items-center justify-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-200"
-                          >
-                            {captureLoading ? <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden /> : <Camera className="size-5 shrink-0" aria-hidden />}
-                            Rotate to camera & capture
-                          </button>
                           <div className="flex flex-col gap-2">
                             <span className="text-xs font-medium">Action</span>
                             <div className="flex flex-col gap-1">
@@ -1080,6 +1071,15 @@ export default function InventoryPage({ connected, socket }) {
                           >
                             {actionLoading && <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden />}
                             {advancedAction === 'remove_magazine' ? 'Remove Magazine' : 'Execute Action'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isDisabled || actionLoading || captureLoading}
+                            onClick={handleOpenCaptureConfirm}
+                            className="inline-flex items-center justify-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-200"
+                          >
+                            {captureLoading ? <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden /> : <Camera className="size-5 shrink-0" aria-hidden />}
+                            Rotate to this magazine & capture
                           </button>
                         </div>
                       )}
