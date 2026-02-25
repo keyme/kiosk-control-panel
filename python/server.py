@@ -633,6 +633,74 @@ from control_panel.python.inventory_handlers import (
     inventory_update_api_pricing,
 )
 
+# Motion waiter and IPC message for inventory_rotate_and_capture (carousel HOME/GOTO wait).
+from control_panel.python import motion_waiter as _motion_waiter
+from control_panel.python.fleet_commands import check_fleet_command_allowed
+
+_MOTION_WAIT_TIMEOUT = 60
+
+
+def _send_motion_async(action, data):
+    """Send async MOTION request and return request id. Caller must register waiter before and wait after."""
+    from pylib.ipc import message
+    channel = keyme.ipc.shared.default_channel
+    req = message.Request(keyme.process.name, "MOTION", action, data)
+    req_id = req["id"]
+    _motion_waiter.register(req_id)
+    channel._tx_q.put("{} {}".format(req["to"], req.to_json()))
+    return req_id
+
+
+def inventory_rotate_and_capture(data):
+    """Rotate carousel to magazine (for inventory camera view), then take overhead and inventory camera images.
+    Gate: same as fleet (kiosk in use / remote session). Waits on MOVE_FINISHED (no fixed sleeps)."""
+    data = data if isinstance(data, dict) else {}
+    keyme.log.info("WS: requesting inventory_rotate_and_capture")
+    allowed, errors = check_fleet_command_allowed(data)
+    if not allowed:
+        return WebsocketError([SocketErrors.OTHER.value, (errors or ["Not allowed"])[0]]).to_json()
+    magazine = data.get("magazine")
+    if magazine is None:
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "magazine required"]).to_json()
+    try:
+        magazine = int(magazine)
+    except (TypeError, ValueError):
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "magazine must be 1-20"]).to_json()
+    if not (1 <= magazine <= 20):
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "magazine must be 1-20"]).to_json()
+
+    # HOME carousel
+    req_id = _send_motion_async("HOME", {"axis": "carousel", "direction": "negative"})
+    ok, err = _motion_waiter.wait(req_id, _MOTION_WAIT_TIMEOUT)
+    if not ok:
+        keyme.log.warning("inventory_rotate_and_capture: HOME failed: %s", err)
+        return WebsocketError([SocketErrors.OTHER.value, err or "Carousel move timed out"]).to_json()
+
+    # GOTO carousel (magazine + 3 for inventory camera view)
+    position = (magazine + 3 - 1) % 20 + 1
+    position_name = "magazine{}".format(position)
+    req_id = _send_motion_async("GOTO", {"axis": "carousel", "position": position_name})
+    ok, err = _motion_waiter.wait(req_id, _MOTION_WAIT_TIMEOUT)
+    if not ok:
+        keyme.log.warning("inventory_rotate_and_capture: GOTO failed: %s", err)
+        return WebsocketError([SocketErrors.OTHER.value, err or "Carousel move timed out"]).to_json()
+
+    # Take images
+    resize = 1.0
+    overhead_b64, overhead_err = _take_image_on_device("overhead_camera", resize)
+    if overhead_err:
+        keyme.log.warning("inventory_rotate_and_capture: overhead_camera failed: %s", overhead_err)
+        return WebsocketError([SocketErrors.OTHER.value, "Overhead camera: " + overhead_err]).to_json()
+    inv_b64, inv_err = _take_image_on_device("inventory_camera", resize)
+    if inv_err:
+        keyme.log.warning("inventory_rotate_and_capture: inventory_camera failed: %s", inv_err)
+        return WebsocketError([SocketErrors.OTHER.value, "Inventory camera: " + inv_err]).to_json()
+
+    return WebsocketSuccess({
+        "overheadImageBase64": overhead_b64,
+        "inventoryImageBase64": inv_b64,
+    }).to_json()
+
 
 def clear_cache():
     """Clear TTL cache (e.g. when last client disconnects)."""

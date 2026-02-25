@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { PageTitle } from '@/components/PageTitle';
 import { cn } from '@/lib/utils';
 import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
-import { ChevronDown, ChevronRight, Package, Loader2, RefreshCw, X } from 'lucide-react';
+import { Camera, ChevronDown, ChevronRight, Package, Loader2, RefreshCw, X } from 'lucide-react';
 
 /** Gen 3 kiosks: strip leading zeros after "ns" (e.g. NS003512 -> NS3512). */
 function normalizeKioskName(name) {
@@ -84,6 +85,11 @@ export default function InventoryPage({ connected, socket }) {
   const [hasPendingPricingUpdate, setHasPendingPricingUpdate] = useState(false);
   const [bulkMenuOpen, setBulkMenuOpen] = useState(false);
   const bulkMenuRef = useRef(null);
+  const [captureConfirmOpen, setCaptureConfirmOpen] = useState(false);
+  const [captureLoading, setCaptureLoading] = useState(false);
+  const [captureError, setCaptureError] = useState(null);
+  const [captureImages, setCaptureImages] = useState(null);
+  const [captureRunAnyway, setCaptureRunAnyway] = useState(false);
 
   useEffect(() => {
     if (!hasPendingPricingUpdate) return;
@@ -236,6 +242,39 @@ export default function InventoryPage({ connected, socket }) {
     a.click();
     URL.revokeObjectURL(url);
   }, [kiosk, magazines]);
+
+  const handleOpenCaptureConfirm = () => {
+    setCaptureError(null);
+    setCaptureImages(null);
+    setCaptureConfirmOpen(true);
+  };
+
+  const handleConfirmCapture = useCallback(async () => {
+    if (selectedMagazine == null || !socket?.requestIfSupported) return;
+    setCaptureConfirmOpen(false);
+    setCaptureError(null);
+    setCaptureImages(null);
+    setCaptureLoading(true);
+    try {
+      const res = await socket.requestIfSupported('inventory_rotate_and_capture', {
+        magazine: selectedMagazine,
+        force: captureRunAnyway,
+      });
+      if (res?.success && res?.data) {
+        setCaptureImages({
+          overhead: res.data.overheadImageBase64,
+          inventory: res.data.inventoryImageBase64,
+        });
+      } else {
+        const msg = (res?.errors && res.errors[0]) || 'Capture failed';
+        setCaptureError(msg);
+      }
+    } catch (err) {
+      setCaptureError(err?.message || 'Capture failed');
+    } finally {
+      setCaptureLoading(false);
+    }
+  }, [selectedMagazine, socket, captureRunAnyway]);
 
   const handleExecuteAdvanced = () => {
     if (!socket?.requestIfSupported || actionLoading || isDisabled || selectedMagazine == null) return;
@@ -839,6 +878,42 @@ export default function InventoryPage({ connected, socket }) {
                     <div className="border-t border-border pt-3">
                       <button
                         type="button"
+                        disabled={isDisabled || actionLoading || captureLoading}
+                        onClick={handleOpenCaptureConfirm}
+                        className="inline-flex items-center justify-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-200"
+                      >
+                        {captureLoading ? <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden /> : <Camera className="size-5 shrink-0" aria-hidden />}
+                        Rotate to camera & capture
+                      </button>
+                      {captureLoading && (
+                        <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+                          <Loader2 className="size-4 animate-spin" aria-hidden />
+                          Moving carousel and capturing images…
+                        </p>
+                      )}
+                      {captureError && (
+                        <p className="mt-2 text-sm text-destructive">{captureError}</p>
+                      )}
+                      {captureImages && (
+                        <div className="mt-3 flex flex-col gap-2">
+                          <p className="text-xs font-medium text-muted-foreground">Overhead</p>
+                          <img
+                            src={`data:image/jpeg;base64,${captureImages.overhead}`}
+                            alt="Overhead camera"
+                            className="max-h-40 w-full rounded border border-border object-contain"
+                          />
+                          <p className="text-xs font-medium text-muted-foreground">Inventory camera</p>
+                          <img
+                            src={`data:image/jpeg;base64,${captureImages.inventory}`}
+                            alt="Inventory camera"
+                            className="max-h-40 w-full rounded border border-border object-contain"
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <div className="border-t border-border pt-3">
+                      <button
+                        type="button"
                         onClick={() => setAdvancedOpen((o) => !o)}
                         className="flex w-full items-center gap-2 text-left text-sm font-medium"
                       >
@@ -1018,6 +1093,43 @@ export default function InventoryPage({ connected, socket }) {
               )}
             </div>
           </aside>
+          <Dialog open={captureConfirmOpen} onOpenChange={setCaptureConfirmOpen}>
+            <DialogContent showClose={true} onClose={() => setCaptureConfirmOpen(false)}>
+              <DialogHeader>
+                <DialogTitle>Rotate to camera &amp; capture</DialogTitle>
+                <DialogDescription>
+                  The carousel will home, then move so magazine {selectedMagazine} faces the inventory camera. Overhead and inventory camera images will be taken. This may take a minute. Continue?
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-col gap-4 pt-2">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={captureRunAnyway}
+                    onChange={(e) => setCaptureRunAnyway(e.target.checked)}
+                    className="rounded border-input"
+                  />
+                  Run anyway (kiosk in use)
+                </label>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCaptureConfirmOpen(false)}
+                    className="rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmCapture}
+                    className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                  >
+                    Confirm
+                  </button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </>
       )}
     </div>

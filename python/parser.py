@@ -1,6 +1,7 @@
 # KeyMe imports.
 import pylib as keyme
 
+from control_panel.python.motion_waiter import notify_move_finished, notify_motor_error
 from control_panel.python.ws_server import emit_async_request
 from lib.save_image import got_response, success
 
@@ -51,3 +52,17 @@ class ControlPanelParser(keyme.ipc.Parser):
 
     def handle_async_NOT_TAKEN(self, request):
         got_response.set()
+
+    def handle_async_MOVE_FINISHED(self, request):
+        """MOTION notifies that a move completed; unblock motion_waiter if we are waiting."""
+        rid = (request.get('data') or {}).get('request_id')
+        if rid is not None:
+            notify_move_finished(rid)
+
+    def handle_async_MOTOR_ERROR(self, request):
+        """MOTION notifies that a move failed; unblock motion_waiter with error."""
+        data = request.get('data') or {}
+        rid = data.get('request_id')
+        if rid is not None:
+            msg = data.get('error') or data.get('message') or 'Motion error'
+            notify_motor_error(rid, str(msg))
