@@ -2,6 +2,7 @@
 import base64
 import os
 import platform
+import queue
 import random
 import subprocess
 import sys
@@ -633,22 +634,39 @@ from control_panel.python.inventory_handlers import (
     inventory_update_api_pricing,
 )
 
-# Motion waiter and IPC message for inventory_rotate_and_capture (carousel HOME/GOTO wait).
-from control_panel.python import motion_waiter as _motion_waiter
+# Motion result queue for inventory_rotate_and_capture (carousel HOME/GOTO). Parser puts (ok, err) on queue; handler waits with get(timeout=...).
 from control_panel.python.fleet_commands import check_fleet_command_allowed
 
 _MOTION_WAIT_TIMEOUT = 60
+_motion_result_queue = queue.Queue()
+
+
+def deliver_motion_result(request):
+    """Called from parser when MOVE_FINISHED or MOTOR_ERROR is received. Puts (True, None) or (False, error_message) on queue."""
+    action = request.get('action')
+    data = request.get('data') or {}
+    if action == 'MOVE_FINISHED':
+        _motion_result_queue.put((True, None))
+    elif action == 'MOTOR_ERROR':
+        err = data.get('error') or data.get('message') or 'Motion error'
+        _motion_result_queue.put((False, str(err)))
 
 
 def _send_motion_async(action, data):
-    """Send async MOTION request and return request id. Caller must register waiter before and wait after."""
+    """Send async MOTION request. Caller waits on _motion_result_queue.get(timeout=...) after."""
     from pylib.ipc import message
     channel = keyme.ipc.shared.default_channel
     req = message.Request(keyme.process.name, "MOTION", action, data)
-    req_id = req["id"]
-    _motion_waiter.register(req_id)
-    channel._tx_q.put("{} {}".format(req["to"], req.to_json()))
-    return req_id
+    if getattr(channel, "_tx_q", None) is not None:
+        channel._tx_q.put("{} {}".format(req["to"], req.to_json()))
+    else:
+        def _send():
+            try:
+                channel.send_request(req, logging=True)
+            except Exception:
+                pass  # MOTION does not reply to this request; we wait on queue for MOVE_FINISHED/MOTOR_ERROR
+        t = threading.Thread(target=_send, daemon=True)
+        t.start()
 
 
 def inventory_rotate_and_capture(data):
@@ -670,8 +688,12 @@ def inventory_rotate_and_capture(data):
         return WebsocketError([SocketErrors.INVALID_INPUT.value, "magazine must be 1-20"]).to_json()
 
     # HOME carousel
-    req_id = _send_motion_async("HOME", {"axis": "carousel", "direction": "negative"})
-    ok, err = _motion_waiter.wait(req_id, _MOTION_WAIT_TIMEOUT)
+    _send_motion_async("HOME", {"axis": "carousel", "direction": "negative"})
+    try:
+        ok, err = _motion_result_queue.get(timeout=_MOTION_WAIT_TIMEOUT)
+    except queue.Empty:
+        keyme.log.warning("inventory_rotate_and_capture: HOME timed out")
+        return WebsocketError([SocketErrors.OTHER.value, "Carousel move timed out"]).to_json()
     if not ok:
         keyme.log.warning("inventory_rotate_and_capture: HOME failed: %s", err)
         return WebsocketError([SocketErrors.OTHER.value, err or "Carousel move timed out"]).to_json()
@@ -679,8 +701,12 @@ def inventory_rotate_and_capture(data):
     # GOTO carousel (magazine + 3 for inventory camera view)
     position = (magazine + 3 - 1) % 20 + 1
     position_name = "magazine{}".format(position)
-    req_id = _send_motion_async("GOTO", {"axis": "carousel", "position": position_name})
-    ok, err = _motion_waiter.wait(req_id, _MOTION_WAIT_TIMEOUT)
+    _send_motion_async("GOTO", {"axis": "carousel", "position": position_name})
+    try:
+        ok, err = _motion_result_queue.get(timeout=_MOTION_WAIT_TIMEOUT)
+    except queue.Empty:
+        keyme.log.warning("inventory_rotate_and_capture: GOTO timed out")
+        return WebsocketError([SocketErrors.OTHER.value, "Carousel move timed out"]).to_json()
     if not ok:
         keyme.log.warning("inventory_rotate_and_capture: GOTO failed: %s", err)
         return WebsocketError([SocketErrors.OTHER.value, err or "Carousel move timed out"]).to_json()
