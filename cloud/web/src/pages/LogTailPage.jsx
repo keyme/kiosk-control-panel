@@ -671,14 +671,36 @@ function ViewTab({ socket }) {
   );
 }
 
-/** Per-hour summary: buckets = { "2026-02-01T00": { errors, restarts }, ... }. Chart only; no event list. */
+/** Per-hour summary: buckets = { "2026-02-01T00": { errors, restarts, byProcess: { PROCESS: { errors, restarts } } }, ... }. */
 function ErrorsAndRestartsSummaryView({ buckets }) {
+  const [processFilter, setProcessFilter] = useState('');
+  const uniqueProcesses = useMemo(() => {
+    if (!buckets || typeof buckets !== 'object') return [];
+    const set = new Set();
+    for (const v of Object.values(buckets)) {
+      const byProcess = v?.byProcess;
+      if (byProcess && typeof byProcess === 'object') {
+        Object.keys(byProcess).forEach((p) => set.add(p));
+      }
+    }
+    return Array.from(set).sort();
+  }, [buckets]);
   const chartData = useMemo(() => {
     if (!buckets || typeof buckets !== 'object') return [];
-    return Object.entries(buckets)
-      .map(([hour, v]) => ({ hour, errors: v.errors ?? 0, restarts: v.restarts ?? 0 }))
-      .sort((a, b) => a.hour.localeCompare(b.hour));
-  }, [buckets]);
+    const entries = Object.entries(buckets).map(([hour, v]) => {
+      let errors = 0;
+      let restarts = 0;
+      if (processFilter && v?.byProcess?.[processFilter]) {
+        errors = v.byProcess[processFilter].errors ?? 0;
+        restarts = v.byProcess[processFilter].restarts ?? 0;
+      } else {
+        errors = v?.errors ?? 0;
+        restarts = v?.restarts ?? 0;
+      }
+      return { hour, errors, restarts };
+    });
+    return entries.sort((a, b) => a.hour.localeCompare(b.hour));
+  }, [buckets, processFilter]);
   const totalErrors = chartData.reduce((s, d) => s + d.errors, 0);
   const totalRestarts = chartData.reduce((s, d) => s + d.restarts, 0);
 
@@ -687,6 +709,21 @@ function ErrorsAndRestartsSummaryView({ buckets }) {
       <p className="text-sm text-muted-foreground">
         Total errors: {totalErrors} · Total restarts: {totalRestarts}
       </p>
+      <div className="flex flex-wrap items-center gap-4">
+        <label className="flex items-center gap-2">
+          <span className="text-xs font-medium text-muted-foreground">Process</span>
+          <select
+            value={processFilter}
+            onChange={(e) => setProcessFilter(e.target.value)}
+            className="rounded-md border border-input bg-background px-3 py-2 text-sm min-w-[180px]"
+          >
+            <option value="">All</option>
+            {uniqueProcesses.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+        </label>
+      </div>
       {chartData.length > 0 ? (
         <div className="h-[300px] w-full">
           <ResponsiveContainer width="100%" height="100%">

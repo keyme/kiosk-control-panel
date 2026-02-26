@@ -519,18 +519,26 @@ def _run_log_analyze_summary_thread(client_id, send_callback, stream_id, files_t
             if not line:
                 continue
             parts = line.split('\t')
-            if len(parts) < 3:
+            if len(parts) < 4:
                 continue
-            hour_s, err_s, rest_s = parts[0].strip(), parts[1].strip(), parts[2].strip()
+            hour_s = parts[0].strip()
+            process_s = parts[1].strip()
+            err_s = parts[2].strip()
+            rest_s = parts[3].strip()
             try:
                 err_n = int(err_s)
                 rest_n = int(rest_s)
             except ValueError:
                 continue
             if hour_s not in buckets:
-                buckets[hour_s] = {'errors': 0, 'restarts': 0}
+                buckets[hour_s] = {'errors': 0, 'restarts': 0, 'byProcess': {}}
             buckets[hour_s]['errors'] += err_n
             buckets[hour_s]['restarts'] += rest_n
+            if process_s:
+                if process_s not in buckets[hour_s]['byProcess']:
+                    buckets[hour_s]['byProcess'][process_s] = {'errors': 0, 'restarts': 0}
+                buckets[hour_s]['byProcess'][process_s]['errors'] += err_n
+                buckets[hour_s]['byProcess'][process_s]['restarts'] += rest_n
 
     send_callback(client_id, {
         'event': ws_protocol.PUSH_LOG_ANALYZE_RESULT,
