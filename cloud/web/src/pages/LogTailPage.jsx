@@ -96,11 +96,10 @@ function isNearBottom(el) {
   return distance <= SCROLL_BOTTOM_EPS_PX;
 }
 
-function getDaysBetween(startStr, endStr) {
+function getRangeDays(startStr, endStr) {
   const start = new Date(startStr);
   const end = new Date(endStr);
-  const diff = (end - start) / (1000 * 60 * 60 * 24);
-  return Math.floor(diff) + 1;
+  return (end - start) / (1000 * 60 * 60 * 24);
 }
 
 const RANGE_MAX_DAYS = 4;
@@ -110,8 +109,8 @@ const CONTEXT_CAP = 50;
 function ViewTab({ socket }) {
   const [logs, setLogs] = useState([]);
   const [viewLogId, setViewLogId] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [startDatetime, setStartDatetime] = useState('');
+  const [endDatetime, setEndDatetime] = useState('');
   const [fetchedLines, setFetchedLines] = useState([]);
   const [fetchLoading, setFetchLoading] = useState(false);
   const [fetchError, setFetchError] = useState(null);
@@ -216,15 +215,19 @@ function ViewTab({ socket }) {
 
   const handleFetch = useCallback(() => {
     if (!socket?.connected || !viewLogId) return;
-    const start = startDate.trim();
-    const end = endDate.trim();
+    const start = startDatetime.trim();
+    const end = endDatetime.trim();
     if (!start || !end) {
-      setFetchError('Enter start and end date (YYYY-MM-DD)');
+      setFetchError('Enter start and end date/time');
       return;
     }
-    const days = getDaysBetween(start, end);
-    if (days < 1 || days > RANGE_MAX_DAYS) {
-      setFetchError(`Date range must be 1–${RANGE_MAX_DAYS} days`);
+    const rangeDays = getRangeDays(start, end);
+    if (rangeDays <= 0) {
+      setFetchError('End must be after start');
+      return;
+    }
+    if (rangeDays > RANGE_MAX_DAYS) {
+      setFetchError(`Range must be at most ${RANGE_MAX_DAYS} days`);
       return;
     }
     setFetchError(null);
@@ -252,8 +255,8 @@ function ViewTab({ socket }) {
 
     socket.requestIfSupported('get_log_range', {
       log_id: viewLogId,
-      start_date: start,
-      end_date: end,
+      start_datetime: start,
+      end_datetime: end,
       stream_id: streamId,
     }).then((res) => {
       if (!res?.success || !res?.data?.started) {
@@ -273,7 +276,7 @@ function ViewTab({ socket }) {
       socket.off('log_range_batch', onBatch);
       socket.off('log_range_done', onDone);
     });
-  }, [socket, viewLogId, startDate, endDate]);
+  }, [socket, viewLogId, startDatetime, endDatetime]);
 
   const jumpToError = useCallback((direction) => {
     if (errorIndices.length === 0) return;
@@ -338,20 +341,20 @@ function ViewTab({ socket }) {
               </select>
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-muted-foreground">Start date</span>
+              <span className="text-xs font-medium text-muted-foreground">Start date/time</span>
               <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
+                type="datetime-local"
+                value={startDatetime}
+                onChange={(e) => setStartDatetime(e.target.value)}
                 className="rounded-md border border-input bg-background px-3 py-2 text-sm"
               />
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-muted-foreground">End date</span>
+              <span className="text-xs font-medium text-muted-foreground">End date/time</span>
               <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
+                type="datetime-local"
+                value={endDatetime}
+                onChange={(e) => setEndDatetime(e.target.value)}
                 className="rounded-md border border-input bg-background px-3 py-2 text-sm"
               />
             </label>

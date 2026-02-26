@@ -407,28 +407,42 @@ def get_log_range(data, client_id, send_callback):
         return {'success': False, 'errors': ['Invalid or missing log_id']}
     path = allowlist[log_id]
 
-    start_s = (data or {}).get('start_date')
-    end_s = (data or {}).get('end_date')
-    if not start_s or not end_s:
-        keyme.log.warning(f"log_tail get_log_range missing dates start_date={start_s!r} end_date={end_s!r}")
-        return {'success': False, 'errors': ['Missing start_date or end_date']}
-    # Normalize: allow "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM:SS..." (take first 10 chars only)
-    start_s = str(start_s).strip()[:10]
-    end_s = str(end_s).strip()[:10]
-    try:
-        start_dt = datetime.strptime(start_s, '%Y-%m-%d').date()
-        end_dt = datetime.strptime(end_s, '%Y-%m-%d').date()
-    except ValueError as e:
-        keyme.log.warning(f"log_tail get_log_range invalid date format start_s={start_s!r} end_s={end_s!r} err={e}")
-        return {'success': False, 'errors': ['Invalid date format; use YYYY-MM-DD']}
-    if start_dt > end_dt:
-        keyme.log.warning(f"log_tail get_log_range start > end start_dt={start_dt} end_dt={end_dt}")
-        return {'success': False, 'errors': ['start_date must be <= end_date']}
+    data = data or {}
+    start_raw = data.get('start_datetime') or data.get('start_date')
+    end_raw = data.get('end_datetime') or data.get('end_date')
+    if not start_raw or not end_raw:
+        keyme.log.warning(f"log_tail get_log_range missing start/end start_raw={start_raw!r} end_raw={end_raw!r}")
+        return {'success': False, 'errors': ['Missing start_datetime and end_datetime (or start_date and end_date)']}
+
+    def parse_datetime(s):
+        s = str(s).strip()
+        if not s:
+            return None
+        for fmt, size in (('%Y-%m-%dT%H:%M:%S', 19), ('%Y-%m-%dT%H:%M', 16), ('%Y-%m-%d', 10)):
+            if len(s) >= size:
+                try:
+                    return datetime.strptime(s[:size], fmt)
+                except ValueError:
+                    pass
+        return None
+
+    start_dt_parsed = parse_datetime(start_raw)
+    end_dt_parsed = parse_datetime(end_raw)
+    if start_dt_parsed is None or end_dt_parsed is None:
+        keyme.log.warning(f"log_tail get_log_range invalid datetime start_raw={start_raw!r} end_raw={end_raw!r}")
+        return {'success': False, 'errors': ['Invalid datetime format; use YYYY-MM-DD or YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS']}
+    start_dt = start_dt_parsed.date()
+    end_dt = end_dt_parsed.date()
+    if start_dt_parsed >= end_dt_parsed:
+        keyme.log.warning(f"log_tail get_log_range start >= end start={start_dt_parsed} end={end_dt_parsed}")
+        return {'success': False, 'errors': ['start must be before end']}
     if (end_dt - start_dt).days >= _RANGE_MAX_DAYS:
         keyme.log.warning(f"log_tail get_log_range range exceeds max days start_dt={start_dt} end_dt={end_dt} max_days={_RANGE_MAX_DAYS}")
         return {'success': False, 'errors': [f'Date range exceeds {_RANGE_MAX_DAYS} days']}
 
-    keyme.log.info(f"log_tail get_log_range requested start_date={start_s} end_date={end_s} parsed start_dt={start_dt} end_dt={end_dt}")
+    start_ts = start_dt_parsed.strftime('%Y-%m-%dT%H:%M:%S')
+    end_ts = end_dt_parsed.strftime('%Y-%m-%dT%H:%M:%S')
+    keyme.log.info(f"log_tail get_log_range requested start_ts={start_ts!r} end_ts={end_ts!r} start_dt={start_dt} end_dt={end_dt}")
 
     max_lines = data.get('max_lines', _RANGE_MAX_LINES_DEFAULT)
     try:
@@ -466,10 +480,7 @@ def get_log_range(data, client_id, send_callback):
         keyme.log.warning(f"log_tail get_log_range no files found for range start_dt={start_dt} end_dt={end_dt} missing_dates={missing_dates}")
         return {'success': False, 'errors': ['No log files found for the selected range']}
 
-    # Timestamp bounds for awk filtering (log line first field is ISO timestamp e.g. 2026-02-22T14:44:16.257483-05:00)
-    start_ts = f"{start_dt.isoformat()}T00:00:00"
-    end_dt_exclusive = end_dt + timedelta(days=1)
-    end_ts = f"{end_dt_exclusive.isoformat()}T00:00:00"
+    # start_ts/end_ts already set above from parsed datetime; awk uses $1 >= start_ts && $1 < end_ts (exclusive end)
     keyme.log.info(f"log_tail get_log_range timestamp filter start_ts={start_ts!r} end_ts={end_ts!r} (exclusive)")
 
     stream_id = (data or {}).get('stream_id') or str(time.time())
