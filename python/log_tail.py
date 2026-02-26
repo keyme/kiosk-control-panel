@@ -247,26 +247,14 @@ def _archived_files_overlapping_range(log_dir, base_name, start_dt, end_dt):
 
 
 def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_read, max_lines, start_ts, end_ts, process_filter=None):
-    """Background thread: read each file, filter by timestamp (awk), optionally by process (KEYMELOG|NAME[), send batches via send_callback.
-    process_filter: optional list of process names; only used for all.log. Lines must match KEYMELOG|NAME[ for one of them.
+    """Background thread: read each file, filter by timestamp (awk), optionally by process (grep KEYMELOG|NAME[), send batches via send_callback.
+    process_filter: optional list of process names; only used for all.log. Lines must match KEYMELOG|NAME[ for one of them (grep -F -e ...).
     """
     total_emitted = 0
     truncated = False
     start_time = time.time()
-    process_list = process_filter if process_filter else []
-    if process_list:
-        procs_str = ','.join(str(p).strip() for p in process_list if str(p).strip())
-        # awk: timestamp in range and (no filter or line contains KEYMELOG|PROCESS[)
-        awk_script = (
-            r'BEGIN { n = split(procs, p, ",") } '
-            r'$1 >= start && $1 < end { '
-            r'if (n == 0) { print; next } '
-            r'for (i = 1; i <= n; i++) if (index($0, "KEYMELOG|" p[i] "[") > 0) { print; next } '
-            r'}'
-        )
-    else:
-        procs_str = ''
-        awk_script = r'$1 >= start && $1 < end'
+    process_list = [str(p).strip() for p in (process_filter or []) if str(p).strip()]
+    awk_script = r'$1 >= start && $1 < end'
 
     def send_batch(batch):
         if not batch:
@@ -301,18 +289,31 @@ def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_r
                     stderr=subprocess.PIPE,
                     universal_newlines=True,
                 )
-            # Pipe through awk: timestamp in [start_ts, end_ts) and optionally process match (KEYMELOG|NAME[)
-            awk_args = ['awk', '-v', f'start={start_ts}', '-v', f'end={end_ts}', '-v', f'procs={procs_str}', awk_script]
+            # Pipe through awk: timestamp in [start_ts, end_ts)
             awk_proc = subprocess.Popen(
-                awk_args,
+                ['awk', '-v', f'start={start_ts}', '-v', f'end={end_ts}', awk_script],
                 stdin=reader.stdout,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
             )
             reader.stdout.close()
-            proc = awk_proc
-            reader_stderr = reader.stderr
+            if process_list:
+                # grep -F -e 'KEYMELOG|GUI[' -e 'KEYMELOG|CUTTER[' ... (match any of the processes)
+                grep_args = ['grep', '-F'] + [arg for p in process_list for arg in ('-e', f'KEYMELOG|{p}[')]
+                grep_proc = subprocess.Popen(
+                    grep_args,
+                    stdin=awk_proc.stdout,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                )
+                awk_proc.stdout.close()
+                proc = grep_proc
+                reader_stderr = awk_proc.stderr
+            else:
+                proc = awk_proc
+                reader_stderr = reader.stderr
         except OSError as e:
             keyme.log.warning(f"log_tail get_log_range Popen failed path={filepath!r}: {e}")
             continue
@@ -356,6 +357,14 @@ def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_r
                         proc.kill()
                     except OSError:
                         pass
+                if process_list:
+                    try:
+                        awk_proc.wait(timeout=1)
+                    except (OSError, subprocess.TimeoutExpired):
+                        try:
+                            awk_proc.kill()
+                        except OSError:
+                            pass
                 try:
                     reader.wait(timeout=1)
                 except subprocess.TimeoutExpired:
@@ -373,6 +382,14 @@ def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_r
                 except (OSError, subprocess.TimeoutExpired):
                     try:
                         proc.kill()
+                    except OSError:
+                        pass
+            if process_list:
+                try:
+                    awk_proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    try:
+                        awk_proc.kill()
                     except OSError:
                         pass
             try:
@@ -395,6 +412,15 @@ def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_r
                     proc.kill()
                 except OSError:
                     pass
+            if process_list:
+                try:
+                    awk_proc.terminate()
+                    awk_proc.wait(timeout=1)
+                except (OSError, subprocess.TimeoutExpired):
+                    try:
+                        awk_proc.kill()
+                    except OSError:
+                        pass
             try:
                 reader.terminate()
                 reader.wait(timeout=1)
