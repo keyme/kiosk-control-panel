@@ -50,6 +50,7 @@ SUPPORTED_REQUEST_EVENTS = (
     'log_tail_start',
     'log_tail_stop',
     'get_log_range',
+    'run_log_analyze',
     'fleet_restart_process',
     'fleet_reset_device',
     'fleet_switch_process_list',
@@ -72,7 +73,7 @@ SUPPORTED_REQUEST_EVENTS = (
 
 # Events that accept optional "data" in the request.
 EVENTS_WITH_DATA = frozenset((
-    'take_image', 'log_tail_start', 'get_log_range', 'get_roi', 'save_roi',
+    'take_image', 'log_tail_start', 'get_log_range', 'run_log_analyze', 'get_roi', 'save_roi',
     'inventory_enable_magazine', 'inventory_disable_magazine', 'inventory_set_key_count',
     'inventory_advanced_action',
     'inventory_rotate_and_capture',

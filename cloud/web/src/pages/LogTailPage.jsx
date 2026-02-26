@@ -677,6 +677,13 @@ export default function LogTailPage({ socket }) {
   const [selectedProcesses, setSelectedProcesses] = useState(null);
   const [processFilterOpen, setProcessFilterOpen] = useState(false);
 
+  const [analyzeStartDatetime, setAnalyzeStartDatetime] = useState('');
+  const [analyzeEndDatetime, setAnalyzeEndDatetime] = useState('');
+  const [analyzeId, setAnalyzeId] = useState('errors_and_restarts');
+  const [analyzeOutput, setAnalyzeOutput] = useState('');
+  const [analyzeLoading, setAnalyzeLoading] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState(null);
+
   const linesRef = useRef([]);
   const onTailLineRef = useRef(null);
   const fetchLogListRef = useRef(() => {});
@@ -1489,11 +1496,103 @@ export default function LogTailPage({ socket }) {
       )}
 
       {activeTab === 'analyze' && (
-        <Card>
-          <CardContent className="py-12">
-            <p className="text-center text-muted-foreground">Insights – Coming soon</p>
-          </CardContent>
-        </Card>
+        <div className="space-y-4">
+          <Card>
+            <CardContent className="space-y-4 pt-4">
+              <p className="text-sm text-muted-foreground">
+                Run an analysis on all.log for the selected datetime range. Only aggregated output is shown.
+              </p>
+              <div className="flex flex-wrap items-end gap-4">
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs font-medium text-muted-foreground">Start date/time</span>
+                  <input
+                    type="datetime-local"
+                    value={analyzeStartDatetime}
+                    onChange={(e) => setAnalyzeStartDatetime(e.target.value)}
+                    className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs font-medium text-muted-foreground">End date/time</span>
+                  <input
+                    type="datetime-local"
+                    value={analyzeEndDatetime}
+                    onChange={(e) => setAnalyzeEndDatetime(e.target.value)}
+                    className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs font-medium text-muted-foreground">Analysis</span>
+                  <select
+                    value={analyzeId}
+                    onChange={(e) => setAnalyzeId(e.target.value)}
+                    className="min-w-[200px] rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="errors_and_restarts">Errors and restarts</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const start = analyzeStartDatetime.trim();
+                    const end = analyzeEndDatetime.trim();
+                    if (!start || !end) {
+                      setAnalyzeError('Enter start and end date/time');
+                      return;
+                    }
+                    setAnalyzeError(null);
+                    setAnalyzeOutput('');
+                    setAnalyzeLoading(true);
+                    socket.requestIfSupported('run_log_analyze', {
+                      start_datetime: start,
+                      end_datetime: end,
+                      analysis_id: analyzeId,
+                    }).then((res) => {
+                      setAnalyzeLoading(false);
+                      if (res?.success && res?.data?.output != null) {
+                        setAnalyzeOutput(res.data.output);
+                      } else {
+                        setAnalyzeError(res?.errors?.join(', ') || 'Analysis failed');
+                      }
+                    }).catch((err) => {
+                      setAnalyzeLoading(false);
+                      setAnalyzeError(err?.message || 'Analysis failed');
+                    });
+                  }}
+                  disabled={!socket?.connected || analyzeLoading || !analyzeStartDatetime.trim() || !analyzeEndDatetime.trim()}
+                  className={cn(
+                    'inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium',
+                    'bg-primary text-primary-foreground hover:bg-primary/90',
+                    'disabled:opacity-50 disabled:pointer-events-none'
+                  )}
+                >
+                  {analyzeLoading ? <Loader2 className="size-4 animate-spin" /> : null}
+                  Run
+                </button>
+              </div>
+              {analyzeError && <p className="text-sm text-destructive" role="alert">{analyzeError}</p>}
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Result</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {analyzeLoading ? (
+                <p className="text-sm text-muted-foreground flex items-center gap-2">
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                  Running…
+                </p>
+              ) : analyzeOutput !== '' ? (
+                <pre className="rounded-md border border-input bg-muted/30 p-4 text-xs font-mono overflow-auto max-h-[60vh] whitespace-pre-wrap break-all">
+                  {analyzeOutput}
+                </pre>
+              ) : (
+                <p className="text-sm text-muted-foreground">Run an analysis to see output.</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       )}
     </div>
   );

@@ -31,6 +31,12 @@ _RANGE_MAX_LINES_CAP = 50000
 _RANGE_READ_CHUNK_SIZE = 65536
 _RANGE_BATCH_SIZE_BYTES = 120 * 1024
 
+# Log analyze: allowlisted awk scripts (analysis_id -> .awk filename).
+_LOG_ANALYZE_SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'log_analyze_scripts')
+ANALYZE_SCRIPTS = {
+    'errors_and_restarts': 'errors_and_restarts.awk',
+}
+
 # Archived logs: {base_name}-{YYYYMMDD}.gz or {base_name}-{YYYYMMDD} (unarchived).
 # Period covered by a file is (previous_archive_date, this_archive_date].
 
@@ -454,3 +460,95 @@ def get_log_range(data, client_id, send_callback):
             'missing_dates': [] if files_to_read else [f"{start_dt.isoformat()}..{end_dt.isoformat()}"],
         },
     }
+
+
+# -----------------------------------------------------------------------------
+# Log analyze: run awk script on all.log for date range (one-shot)
+# -----------------------------------------------------------------------------
+
+def run_log_analyze(data):
+    """Run an allowlisted awk analysis on all.log for the given datetime range.
+    data: start_datetime, end_datetime, analysis_id.
+    Returns { success: True, data: { output: str } } or { success: False, errors: list }.
+    No day limit (analyze only).
+    """
+    data = data or {}
+    start_raw = data.get('start_datetime') or data.get('start_date')
+    end_raw = data.get('end_datetime') or data.get('end_date')
+    if not start_raw or not end_raw:
+        return {'success': False, 'errors': ['Missing start_datetime and end_datetime']}
+    start_dt_parsed = _parse_datetime(start_raw)
+    end_dt_parsed = _parse_datetime(end_raw)
+    if start_dt_parsed is None or end_dt_parsed is None:
+        return {'success': False, 'errors': ['Invalid datetime; use YYYY-MM-DD or YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS']}
+    if start_dt_parsed >= end_dt_parsed:
+        return {'success': False, 'errors': ['start must be before end']}
+
+    analysis_id = (data.get('analysis_id') or '').strip()
+    if not analysis_id or analysis_id not in ANALYZE_SCRIPTS:
+        return {'success': False, 'errors': [f'Invalid or unknown analysis_id; allowed: {list(ANALYZE_SCRIPTS.keys())}']}
+    script_filename = ANALYZE_SCRIPTS[analysis_id]
+    script_path = os.path.join(_LOG_ANALYZE_SCRIPTS_DIR, script_filename)
+    if not os.path.isfile(script_path):
+        return {'success': False, 'errors': [f'Script not found: {script_filename}']}
+
+    start_dt = start_dt_parsed.date()
+    end_dt = end_dt_parsed.date()
+    start_ts = start_dt_parsed.strftime('%Y-%m-%dT%H:%M:%S')
+    end_ts = end_dt_parsed.strftime('%Y-%m-%dT%H:%M:%S')
+
+    log_dir = os.path.dirname(_ALL_LOG_PATH)
+    base_name = 'all.log'
+    files_to_read, last_archive_date = _archived_files_overlapping_range(log_dir, base_name, start_dt, end_dt)
+    today = datetime.utcnow().date()
+    if start_dt <= today and (last_archive_date is None or end_dt > last_archive_date):
+        current_path = os.path.join(log_dir, base_name)
+        if os.path.isfile(current_path):
+            files_to_read.append((today, current_path, False))
+
+    if not files_to_read:
+        keyme.log.warning(f"log_tail run_log_analyze no files for range {start_dt}..{end_dt}")
+        return {'success': False, 'errors': ['No log files found for the selected range']}
+
+    keyme.log.info(f"log_tail run_log_analyze analysis_id={analysis_id!r} files={len(files_to_read)}")
+
+    try:
+        awk_proc = subprocess.Popen(
+            ['nice', '-n', '100', 'awk', '-v', f'start={start_ts}', '-v', f'end={end_ts}', '-f', script_path],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+        )
+    except OSError as e:
+        keyme.log.warning(f"log_tail run_log_analyze awk Popen failed: {e}")
+        return {'success': False, 'errors': [f'Failed to run awk: {e}']}
+
+    try:
+        for _day, filepath, is_gz in files_to_read:
+            cmd = ['nice', '-n', '100', 'zcat', filepath] if is_gz else ['nice', '-n', '100', 'cat', filepath]
+            reader = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True,
+            )
+            for line in reader.stdout:
+                awk_proc.stdin.write(line)
+            reader.stdout.close()
+            reader.wait()
+        awk_proc.stdin.close()
+        stdout = awk_proc.stdout.read()
+        stderr = awk_proc.stderr.read()
+        ret = awk_proc.wait()
+    except OSError as e:
+        keyme.log.warning(f"log_tail run_log_analyze read/pipe failed: {e}")
+        _terminate_and_wait(awk_proc)
+        return {'success': False, 'errors': [str(e)]}
+
+    if ret != 0:
+        keyme.log.warning(f"log_tail run_log_analyze awk exit {ret} stderr={stderr!r}")
+        err_msg = stderr.strip() if stderr else f'awk exited with code {ret}'
+        return {'success': False, 'errors': [err_msg]}
+
+    return {'success': True, 'data': {'output': stdout or ''}}
