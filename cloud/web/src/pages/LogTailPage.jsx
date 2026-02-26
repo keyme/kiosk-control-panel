@@ -123,10 +123,12 @@ function ViewTab({ socket }) {
   const [processFilterOpen, setProcessFilterOpen] = useState(false);
   const [expandedTracebacks, setExpandedTracebacks] = useState(new Set());
   const [fetchTruncated, setFetchTruncated] = useState(false);
+  const [fetchMissingDates, setFetchMissingDates] = useState([]);
+  const [logStreamFullscreen, setLogStreamFullscreen] = useState(false);
   const viewStreamRef = useRef(null);
   const rangeStreamIdRef = useRef(null);
 
-  const mainLogs = useMemo(() => logs.filter((l) => l.type === 'main'), [logs]);
+  const mainLogs = useMemo(() => logs.filter((l) => l.type === 'main' || l.id === 'all'), [logs]);
 
   useEffect(() => {
     if (!socket?.connected) return;
@@ -181,7 +183,7 @@ function ViewTab({ socket }) {
     const out = [];
     let lastEnd = -1;
     for (const [lo, hi] of merged) {
-      if (lo <= lastEnd + 1) {
+      if (out.length > 0 && lo <= lastEnd + 1) {
         out[out.length - 1][1] = Math.max(out[out.length - 1][1], hi);
       } else {
         out.push([lo, hi]);
@@ -227,6 +229,7 @@ function ViewTab({ socket }) {
     }
     setFetchError(null);
     setFetchTruncated(false);
+    setFetchMissingDates([]);
     setFetchedLines([]);
     setFetchLoading(true);
     const streamId = Date.now();
@@ -256,12 +259,17 @@ function ViewTab({ socket }) {
       if (!res?.success || !res?.data?.started) {
         setFetchLoading(false);
         setFetchError(res?.errors?.join(', ') || 'Failed to fetch range');
+        setFetchMissingDates([]);
         socket.off('log_range_batch', onBatch);
         socket.off('log_range_done', onDone);
+      } else {
+        const missing = res?.data?.missing_dates;
+        setFetchMissingDates(Array.isArray(missing) ? missing : []);
       }
     }).catch((err) => {
       setFetchLoading(false);
       setFetchError(err?.message || 'Failed to fetch range');
+      setFetchMissingDates([]);
       socket.off('log_range_batch', onBatch);
       socket.off('log_range_done', onDone);
     });
@@ -361,8 +369,47 @@ function ViewTab({ socket }) {
               Fetch
             </button>
           </div>
+          {fetchError && <p className="text-sm text-destructive" role="alert">{fetchError}</p>}
+          {fetchTruncated && !fetchError && (
+            <p className="text-sm text-muted-foreground">Results truncated to max lines.</p>
+          )}
+          {fetchMissingDates.length > 0 && !fetchError && (
+            <p className="text-sm text-amber-600 dark:text-amber-400" role="status">
+              No log files found for: {fetchMissingDates.join(', ')}. Data shown is only for dates that had files.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
-          <div className="flex flex-wrap items-center gap-2">
+      <Card className={logStreamFullscreen ? 'fixed inset-0 z-50 rounded-none flex flex-col' : ''}>
+        <CardHeader className="pb-2 flex-shrink-0 flex flex-row items-center justify-between gap-2">
+          <CardTitle className="text-base">Log stream</CardTitle>
+          <div className="flex items-center gap-2">
+            {logStreamFullscreen ? (
+              <button
+                type="button"
+                onClick={() => setLogStreamFullscreen(false)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-input px-3 py-1.5 text-sm hover:bg-accent"
+                title="Exit full screen"
+              >
+                <X className="size-4" />
+                Exit full screen
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setLogStreamFullscreen(true)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-input px-3 py-1.5 text-sm hover:bg-accent"
+                title="Full screen"
+              >
+                <Maximize2 className="size-4" />
+                Full screen
+              </button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className={cn('flex flex-col gap-3 flex-1 min-h-0', logStreamFullscreen && 'flex-1 overflow-hidden')}>
+          <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
             <span className="text-xs font-medium text-muted-foreground">Filters:</span>
             <button type="button" onClick={() => toggleLevel('e')} className={levelButtonClass('e')}>Errors</button>
             <button type="button" onClick={() => toggleLevel('w')} className={levelButtonClass('w')}>Warnings</button>
@@ -440,14 +487,6 @@ function ViewTab({ socket }) {
                 )}
               </div>
             )}
-          </div>
-
-          {fetchError && <p className="text-sm text-destructive" role="alert">{fetchError}</p>}
-          {fetchTruncated && !fetchError && (
-            <p className="text-sm text-muted-foreground">Results truncated to max lines.</p>
-          )}
-
-          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => jumpToError('prev')}
@@ -471,20 +510,14 @@ function ViewTab({ socket }) {
               </span>
             )}
           </div>
-        </CardContent>
-      </Card>
-
-      {viewEntries.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Log stream</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div
-              ref={viewStreamRef}
-              className="rounded-md border border-input bg-muted/30 h-[60vh] overflow-auto"
-              data-view-entries-container
-            >
+          <div
+            ref={viewStreamRef}
+            className={cn(
+              'rounded-md border border-input bg-muted/30 overflow-auto flex-1 min-h-[200px]',
+              logStreamFullscreen ? 'h-full' : 'h-[60vh]'
+            )}
+            data-view-entries-container
+          >
               <div className="font-mono text-xs leading-relaxed" data-view-entries>
                 {viewEntries.map((entry, i) => {
                   const { line, parsed } = entry;
@@ -565,7 +598,6 @@ function ViewTab({ socket }) {
             </div>
           </CardContent>
         </Card>
-      )}
     </div>
   );
 }

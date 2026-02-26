@@ -12,6 +12,7 @@ import pylib as keyme
 from control_panel.python import ws_protocol
 
 _LOG_DIR = '/var/log/keyme/processes'
+# Archived process logs: {pname}.log-{YYYYMMDD}.gz e.g. ABILITIES_MANAGER.log-20251109.gz
 _ALL_LOG_PATH = '/var/log/keyme/all.log'
 _TMP_DIR = '/tmp'
 _INITIAL_LINES_DEFAULT = 50
@@ -205,11 +206,13 @@ def _is_process_main_log(log_id, path):
     return path.endswith('.log')
 
 
-def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_read, max_lines):
-    """Background thread: read each file in chunks, send batches (~120 KB) and done via send_callback."""
+def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_read, max_lines, start_ts, end_ts):
+    """Background thread: read each file, filter by timestamp (awk), send batches (~120 KB) and done via send_callback."""
     total_emitted = 0
     truncated = False
     start_time = time.time()
+    # awk: first field $1 is the log timestamp; only output lines in [start_ts, end_ts)
+    awk_condition = r'$1 >= start && $1 < end'
 
     def send_batch(batch):
         if not batch:
@@ -231,21 +234,32 @@ def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_r
             break
         try:
             if is_gz:
-                proc = subprocess.Popen(
+                reader = subprocess.Popen(
                     ['zcat', filepath],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     universal_newlines=True,
                 )
             else:
-                proc = subprocess.Popen(
+                reader = subprocess.Popen(
                     ['cat', filepath],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     universal_newlines=True,
                 )
+            # Pipe through awk to only pass lines whose first field (timestamp) is in [start_ts, end_ts)
+            awk_proc = subprocess.Popen(
+                ['awk', '-v', f'start={start_ts}', '-v', f'end={end_ts}', awk_condition],
+                stdin=reader.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+            )
+            reader.stdout.close()
+            proc = awk_proc
+            reader_stderr = reader.stderr
         except OSError as e:
-            keyme.log.warning('log_tail get_log_range Popen failed path=%s: %s', filepath, e)
+            keyme.log.warning(f"log_tail get_log_range Popen failed path={filepath!r}: {e}")
             continue
 
         try:
@@ -287,6 +301,13 @@ def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_r
                         proc.kill()
                     except OSError:
                         pass
+                try:
+                    reader.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    try:
+                        reader.kill()
+                    except OSError:
+                        pass
                 break
             try:
                 proc.wait(timeout=2)
@@ -299,11 +320,18 @@ def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_r
                         proc.kill()
                     except OSError:
                         pass
-            err = proc.stderr.read() if proc.stderr else ''
+            try:
+                reader.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                try:
+                    reader.kill()
+                except OSError:
+                    pass
+            err = (proc.stderr.read() if proc.stderr else '') or (reader_stderr.read() if reader_stderr else '')
             if err and proc.returncode != 0:
-                keyme.log.warning('log_tail get_log_range read failed path=%s: %s', filepath, err)
+                keyme.log.warning(f"log_tail get_log_range read failed path={filepath!r}: {err}")
         except (OSError, ValueError) as e:
-            keyme.log.warning('log_tail get_log_range failed path=%s: %s', filepath, e)
+            keyme.log.warning(f"log_tail get_log_range failed path={filepath!r}: {e}")
             try:
                 proc.terminate()
                 proc.wait(timeout=2)
@@ -312,9 +340,17 @@ def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_r
                     proc.kill()
                 except OSError:
                     pass
+            try:
+                reader.terminate()
+                reader.wait(timeout=1)
+            except (OSError, subprocess.TimeoutExpired):
+                try:
+                    reader.kill()
+                except OSError:
+                    pass
 
     send_done(truncated)
-    keyme.log.info('log_tail get_log_range stream done stream_id=%s emitted=%s truncated=%s', stream_id, total_emitted, truncated)
+    keyme.log.info(f"log_tail get_log_range stream done stream_id={stream_id!r} emitted={total_emitted} truncated={truncated}")
 
 
 def get_log_range(data, client_id, send_callback):
@@ -323,27 +359,39 @@ def get_log_range(data, client_id, send_callback):
     Returns immediately { started: True, stream_id, log_id, path }; batches and done are pushed via send_callback.
     On validation error returns { success: False, errors: [...] }.
     """
+    keyme.log.info(f"log_tail get_log_range entry client_id={client_id!r} data_keys={list((data or {}).keys())}")
     _, allowlist = _build_log_list()
     log_id = (data or {}).get('log_id')
     if not log_id or log_id not in allowlist:
+        keyme.log.warning(f"log_tail get_log_range invalid or missing log_id={log_id!r} allowlist_keys={list(allowlist.keys())}")
         return {'success': False, 'errors': ['Invalid or missing log_id']}
     path = allowlist[log_id]
     if not _is_process_main_log(log_id, path):
+        keyme.log.warning(f"log_tail get_log_range not process main log log_id={log_id!r} path={path!r}")
         return {'success': False, 'errors': ['Only process main logs support date range']}
 
     start_s = (data or {}).get('start_date')
     end_s = (data or {}).get('end_date')
     if not start_s or not end_s:
+        keyme.log.warning(f"log_tail get_log_range missing dates start_date={start_s!r} end_date={end_s!r}")
         return {'success': False, 'errors': ['Missing start_date or end_date']}
+    # Normalize: allow "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM:SS..." (take first 10 chars only)
+    start_s = str(start_s).strip()[:10]
+    end_s = str(end_s).strip()[:10]
     try:
         start_dt = datetime.strptime(start_s, '%Y-%m-%d').date()
         end_dt = datetime.strptime(end_s, '%Y-%m-%d').date()
-    except ValueError:
+    except ValueError as e:
+        keyme.log.warning(f"log_tail get_log_range invalid date format start_s={start_s!r} end_s={end_s!r} err={e}")
         return {'success': False, 'errors': ['Invalid date format; use YYYY-MM-DD']}
     if start_dt > end_dt:
+        keyme.log.warning(f"log_tail get_log_range start > end start_dt={start_dt} end_dt={end_dt}")
         return {'success': False, 'errors': ['start_date must be <= end_date']}
     if (end_dt - start_dt).days >= _RANGE_MAX_DAYS:
-        return {'success': False, 'errors': ['Date range exceeds {} days'.format(_RANGE_MAX_DAYS)]}
+        keyme.log.warning(f"log_tail get_log_range range exceeds max days start_dt={start_dt} end_dt={end_dt} max_days={_RANGE_MAX_DAYS}")
+        return {'success': False, 'errors': [f'Date range exceeds {_RANGE_MAX_DAYS} days']}
+
+    keyme.log.info(f"log_tail get_log_range requested start_date={start_s} end_date={end_s} parsed start_dt={start_dt} end_dt={end_dt}")
 
     max_lines = data.get('max_lines', _RANGE_MAX_LINES_DEFAULT)
     try:
@@ -351,34 +399,73 @@ def get_log_range(data, client_id, send_callback):
     except (TypeError, ValueError):
         max_lines = _RANGE_MAX_LINES_DEFAULT
     max_lines = max(1, min(max_lines, _RANGE_MAX_LINES_CAP))
+    keyme.log.info(f"log_tail get_log_range max_lines={max_lines}")
 
     pname = log_id.replace('process/', '', 1)
     today = datetime.utcnow().date()
+    keyme.log.info(f"log_tail get_log_range log_id={log_id!r} pname={pname!r} today={today} _LOG_DIR={_LOG_DIR!r}")
 
     files_to_read = []
+    missing_dates = []
     d = start_dt
     while d <= end_dt:
         if d == today:
             filepath = os.path.join(_LOG_DIR, pname + '.log')
-            if os.path.isfile(filepath):
+            exists = os.path.isfile(filepath)
+            if exists:
                 files_to_read.append((d, filepath, False))
+                keyme.log.debug(f"log_tail get_log_range date={d} using current .log path={filepath!r}")
+            else:
+                missing_dates.append(d.isoformat())
+                keyme.log.debug(f"log_tail get_log_range date={d} (today) missing path={filepath!r}")
         else:
+            # Match archived naming: {pname}.log-{YYYYMMDD}.gz (e.g. CONTROL_PANEL.log-20260222.gz)
             yyyymmdd = d.strftime('%Y%m%d')
             filepath = os.path.join(_LOG_DIR, pname + '.log-' + yyyymmdd + '.gz')
             if os.path.isfile(filepath):
                 files_to_read.append((d, filepath, True))
+                keyme.log.debug(f"log_tail get_log_range date={d} using rotated path={filepath!r}")
+            else:
+                missing_dates.append(d.isoformat())
+                keyme.log.debug(f"log_tail get_log_range date={d} missing path={filepath!r}")
         d += timedelta(days=1)
 
+    if missing_dates:
+        keyme.log.info(f"log_tail get_log_range no files for dates: {missing_dates}")
+    dates_with_data = [t[0].isoformat() for t in files_to_read]
+    keyme.log.info(f"log_tail get_log_range reading {len(files_to_read)} file(s) for dates {dates_with_data}")
+
     if not files_to_read:
+        keyme.log.warning(f"log_tail get_log_range no files found for range start_dt={start_dt} end_dt={end_dt} missing_dates={missing_dates}")
         return {'success': False, 'errors': ['No log files found for the selected range']}
 
+    # Timestamp bounds for awk filtering (log line first field is ISO timestamp e.g. 2026-02-22T14:44:16.257483-05:00)
+    start_ts = f"{start_dt.isoformat()}T00:00:00"
+    end_dt_exclusive = end_dt + timedelta(days=1)
+    end_ts = f"{end_dt_exclusive.isoformat()}T00:00:00"
+    keyme.log.info(f"log_tail get_log_range timestamp filter start_ts={start_ts!r} end_ts={end_ts!r} (exclusive)")
+
     stream_id = (data or {}).get('stream_id') or str(time.time())
+    keyme.log.info(f"log_tail get_log_range starting stream stream_id={stream_id!r} client_id={client_id!r} file_count={len(files_to_read)}")
 
     thread = threading.Thread(
         target=_get_log_range_stream_thread,
-        args=(client_id, send_callback, stream_id, files_to_read, max_lines),
+        args=(client_id, send_callback, stream_id, files_to_read, max_lines, start_ts, end_ts),
         daemon=True,
     )
     thread.start()
 
-    return {'success': True, 'data': {'started': True, 'stream_id': stream_id, 'log_id': log_id, 'path': path}}
+    keyme.log.info(f"log_tail get_log_range success stream_id={stream_id!r} dates_with_data={dates_with_data} missing_dates={missing_dates}")
+    return {
+        'success': True,
+        'data': {
+            'started': True,
+            'stream_id': stream_id,
+            'log_id': log_id,
+            'path': path,
+            'requested_start': start_dt.isoformat(),
+            'requested_end': end_dt.isoformat(),
+            'dates_with_data': dates_with_data,
+            'missing_dates': missing_dates,
+        },
+    }
