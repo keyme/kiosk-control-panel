@@ -1,4 +1,6 @@
-# Log list and tail for control panel device. One active tail per client; allowlist-only paths.
+# Log list and tail for control panel device.
+# One active tail per client; allowlist-only paths.
+# Date-range fetch: process main logs and all.log; optional process filter for all.log.
 
 import glob
 import os
@@ -11,25 +13,69 @@ import pylib as keyme
 
 from control_panel.python import ws_protocol
 
+# -----------------------------------------------------------------------------
+# Constants
+# -----------------------------------------------------------------------------
+
 _LOG_DIR = '/var/log/keyme/processes'
-# Archived process logs: {pname}.log-{YYYYMMDD}.gz e.g. ABILITIES_MANAGER.log-20251109.gz
 _ALL_LOG_PATH = '/var/log/keyme/all.log'
 _TMP_DIR = '/tmp'
+
 _INITIAL_LINES_DEFAULT = 50
 _INITIAL_LINES_MAX = 200
-_ALL_LOG_RATE_LIMIT = 50  # max lines per second when tailing all.log
+_ALL_LOG_RATE_LIMIT = 50  # max lines/sec when tailing all.log
+
 _RANGE_MAX_DAYS = 4
 _RANGE_MAX_LINES_DEFAULT = 20000
 _RANGE_MAX_LINES_CAP = 50000
 _RANGE_READ_CHUNK_SIZE = 65536
-_RANGE_BATCH_SIZE_BYTES = 120 * 1024  # 120 KB target payload per push
+_RANGE_BATCH_SIZE_BYTES = 120 * 1024
+
+# Archived logs: {base_name}-{YYYYMMDD}.gz or {base_name}-{YYYYMMDD} (unarchived).
+# Period covered by a file is (previous_archive_date, this_archive_date].
 
 _client_tails = {}
 _tails_lock = threading.Lock()
 
 
+# -----------------------------------------------------------------------------
+# Helpers
+# -----------------------------------------------------------------------------
+
+def _terminate_and_wait(proc, timeout=2):
+    """Terminate process and wait; kill on timeout. No-op if proc is None."""
+    if proc is None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
+def _parse_datetime(s):
+    """Parse YYYY-MM-DD, YYYY-MM-DDTHH:MM, or YYYY-MM-DDTHH:MM:SS. Returns datetime or None."""
+    s = str(s).strip() if s else ''
+    if not s:
+        return None
+    for fmt, size in (('%Y-%m-%dT%H:%M:%S', 19), ('%Y-%m-%dT%H:%M', 16), ('%Y-%m-%d', 10)):
+        if len(s) >= size:
+            try:
+                return datetime.strptime(s[:size], fmt)
+            except ValueError:
+                pass
+    return None
+
+
+# -----------------------------------------------------------------------------
+# Log list
+# -----------------------------------------------------------------------------
+
 def _build_log_list():
-    """Build list of { id, label, path, type } and allowlist id -> path. Paths only from this list."""
+    """Return (logs, allowlist). logs: list of {id, label, path, type}; allowlist: id -> path."""
     logs = []
     allowlist = {}
 
@@ -39,49 +85,37 @@ def _build_log_list():
             if name == 'all.log':
                 continue
             pname = name[:-4] if name.endswith('.log') else name
-            log_id = 'process/{}'.format(pname)
-            logs.append({
-                'id': log_id,
-                'label': '{} (main)'.format(pname),
-                'path': path,
-                'type': 'main',
-            })
+            log_id = f'process/{pname}'
+            logs.append({'id': log_id, 'label': f'{pname} (main)', 'path': path, 'type': 'main'})
             allowlist[log_id] = path
 
     for suffix in ('stdout', 'stderr'):
-        pattern = os.path.join(_TMP_DIR, '*.{}'.format(suffix))
-        for path in sorted(glob.glob(pattern)):
+        for path in sorted(glob.glob(os.path.join(_TMP_DIR, f'*.{suffix}'))):
             name = os.path.basename(path)
-            pname = name[:-len(suffix) - 1] if name.endswith('.' + suffix) else name
-            log_id = 'process/{}/{}'.format(pname, suffix)
-            logs.append({
-                'id': log_id,
-                'label': '{} ({})'.format(pname, suffix),
-                'path': path,
-                'type': suffix,
-            })
+            pname = name[: -len(suffix) - 1] if name.endswith('.' + suffix) else name
+            log_id = f'process/{pname}/{suffix}'
+            logs.append({'id': log_id, 'label': f'{pname} ({suffix})', 'path': path, 'type': suffix})
             allowlist[log_id] = path
 
     if os.path.isfile(_ALL_LOG_PATH):
-        logs.append({
-            'id': 'all',
-            'label': 'All logs (high volume)',
-            'path': _ALL_LOG_PATH,
-            'type': 'all',
-        })
+        logs.append({'id': 'all', 'label': 'All logs (high volume)', 'path': _ALL_LOG_PATH, 'type': 'all'})
         allowlist['all'] = _ALL_LOG_PATH
 
     return logs, allowlist
 
 
 def get_log_list():
-    """Return { logs: [ { id, label, path, type }, ... ] } for UI. Path is for server allowlist only."""
+    """Return { logs: [...] } for UI."""
     logs, _ = _build_log_list()
     return {'logs': logs}
 
 
+# -----------------------------------------------------------------------------
+# Live tail
+# -----------------------------------------------------------------------------
+
 def _read_tail_n(path, n):
-    """Return last n lines from path. Uses tail -n for consistency."""
+    """Return last n lines from path (tail -n)."""
     n = max(1, min(n, _INITIAL_LINES_MAX))
     try:
         r = subprocess.run(
@@ -95,12 +129,12 @@ def _read_tail_n(path, n):
             return r.stdout.rstrip('\n').split('\n')
         return []
     except (subprocess.TimeoutExpired, OSError, ValueError) as e:
-        keyme.log.warning(f"log_tail tail -n failed path={path} n={n}: {e}")
+        keyme.log.warning(f"log_tail tail -n failed path={path}: {e}")
         return []
 
 
 def _tail_follow_thread(client_id, path, send_callback, push_event, is_all_log):
-    """Background thread: tail -f path, send each line via send_callback until stop_event is set."""
+    """Background: tail -f path, push lines until stop_event is set. Rate-limit for all.log."""
     try:
         proc = subprocess.Popen(
             ['tail', '-f', path],
@@ -113,8 +147,7 @@ def _tail_follow_thread(client_id, path, send_callback, push_event, is_all_log):
         keyme.log.warning(f"log_tail tail -f failed path={path}: {e}")
         return
     try:
-        rate_count = 0
-        rate_sec = time.time()
+        rate_count, rate_sec = 0, time.time()
         for line in iter(proc.stdout.readline, ''):
             if not line:
                 break
@@ -126,26 +159,18 @@ def _tail_follow_thread(client_id, path, send_callback, push_event, is_all_log):
             if is_all_log:
                 now = time.time()
                 if now - rate_sec >= 1.0:
-                    rate_sec = now
-                    rate_count = 0
+                    rate_sec, rate_count = now, 0
                 if rate_count >= _ALL_LOG_RATE_LIMIT:
                     continue
                 rate_count += 1
             send_callback(client_id, {'event': push_event, 'data': {'line': line}})
     finally:
-        try:
-            proc.terminate()
-            proc.wait(timeout=2)
-        except (OSError, subprocess.TimeoutExpired):
-            try:
-                proc.kill()
-            except OSError:
-                pass
-    keyme.log.info(f"log_tail follow thread exiting client_id={client_id} path={path}")
+        _terminate_and_wait(proc)
+    keyme.log.info(f"log_tail follow thread exit client_id={client_id} path={path}")
 
 
 def log_tail_stop(client_id):
-    """Stop any active tail for client_id. Safe to call from any thread. Returns { stopped: true }."""
+    """Stop any active tail for client_id. Returns { stopped: True }."""
     with _tails_lock:
         state = _client_tails.pop(client_id, None)
     if state:
@@ -157,31 +182,23 @@ def log_tail_stop(client_id):
 
 
 def log_tail_start(client_id, data, send_callback, push_event):
-    """Start tailing log_id for client_id. Stops any existing tail for this client.
-    data: { log_id, initial_lines? }. initial_lines capped at _INITIAL_LINES_MAX (200).
-    send_callback(client_id, msg) is used to push log_tail_line. push_event is the event name string.
-    Returns { lines, log_id, path } or { success: False, errors: [...] }.
-    """
+    """Start tailing log_id. data: { log_id, initial_lines? }. Returns { lines, log_id, path } or errors."""
     _, allowlist = _build_log_list()
     log_id = (data or {}).get('log_id')
     if not log_id or log_id not in allowlist:
         return {'success': False, 'errors': ['Invalid or missing log_id']}
     path = allowlist[log_id]
+
     initial_lines = data.get('initial_lines', _INITIAL_LINES_DEFAULT)
     try:
-        initial_lines = int(initial_lines)
+        initial_lines = max(1, min(int(initial_lines), _INITIAL_LINES_MAX))
     except (TypeError, ValueError):
         initial_lines = _INITIAL_LINES_DEFAULT
-    initial_lines = max(1, min(initial_lines, _INITIAL_LINES_MAX))
 
     log_tail_stop(client_id)
-
     lines = _read_tail_n(path, initial_lines)
     stop_event = threading.Event()
-    is_all_log = (path == _ALL_LOG_PATH)
-
-    def send(client_id, obj):
-        send_callback(client_id, obj)
+    is_all_log = path == _ALL_LOG_PATH
 
     thread = threading.Thread(
         target=_tail_follow_thread,
@@ -191,35 +208,21 @@ def log_tail_start(client_id, data, send_callback, push_event):
     with _tails_lock:
         _client_tails[client_id] = {'stop_event': stop_event, 'thread': thread}
     thread.start()
-
     return {'lines': lines, 'log_id': log_id, 'path': path}
 
 
-def _is_process_main_log(log_id, path):
-    """True if log_id is a process main log under _LOG_DIR (not all, not stdout/stderr)."""
-    if not log_id or not path:
-        return False
-    if not path.startswith(_LOG_DIR) or path == _ALL_LOG_PATH:
-        return False
-    if not log_id.startswith('process/') or '/' in log_id[len('process/'):]:
-        return False
-    return path.endswith('.log')
-
+# -----------------------------------------------------------------------------
+# Date-range fetch: archive discovery
+# -----------------------------------------------------------------------------
 
 def _archived_files_overlapping_range(log_dir, base_name, start_dt, end_dt):
-    """Return (list of (archive_date, filepath, is_gz), last_archive_date) for dated logs whose period (d_prev, d_i] overlaps [start_dt, end_dt].
-    Filename date is when the log was rotated (end of period); content is (previous_date, this_date].
-    Includes both archived ({base_name}-{YYYYMMDD}.gz) and unarchived dated ({base_name}-{YYYYMMDD}) files.
-    When both exist for the same date, prefer .gz (archived).
-    last_archive_date is the max dated file (end of last rotated period); current log covers (last_archive_date, now].
-    log_dir: directory for glob (e.g. _LOG_DIR for process logs, or dirname(_ALL_LOG_PATH) for all.log).
-    base_name: e.g. 'CUTTER.log' or 'all.log'.
+    """Return (files_to_read, last_archive_date).
+    files_to_read: list of (archive_date, filepath, is_gz) for files whose period (d_prev, d_i] overlaps [start_dt, end_dt].
+    File period = (previous_archive_date, this_archive_date]; last_archive_date = max dated file (current log covers (last, now]).
     """
     pattern = os.path.join(log_dir, base_name + '-*')
-    paths = glob.glob(pattern)
-    # date -> (filepath, is_gz); prefer .gz when same date exists as both .gz and plain
     by_date = {}
-    for filepath in paths:
+    for filepath in glob.glob(pattern):
         name = os.path.basename(filepath)
         is_gz = name.endswith('.gz')
         suffix = name[:-3] if is_gz else name
@@ -233,36 +236,52 @@ def _archived_files_overlapping_range(log_dir, base_name, start_dt, end_dt):
             archive_date = datetime.strptime(yyyymmdd, '%Y%m%d').date()
         except ValueError:
             continue
-        if archive_date not in by_date or (by_date[archive_date][1] is False and is_gz):
+        if archive_date not in by_date or (not by_date[archive_date][1] and is_gz):
             by_date[archive_date] = (filepath, is_gz)
+
     parsed = sorted(by_date.items(), key=lambda t: t[0])
     last_archive_date = parsed[-1][0] if parsed else None
     result = []
     for i, (d_i, (filepath, is_gz)) in enumerate(parsed):
         d_prev = parsed[i - 1][0] if i > 0 else None
-        # Period is (d_prev, d_i] (open left, closed right). Overlaps [start_dt, end_dt] iff d_prev < end_dt and d_i >= start_dt
         if (d_prev is None or d_prev < end_dt) and d_i >= start_dt:
             result.append((d_i, filepath, is_gz))
     return result, last_archive_date
 
 
+# -----------------------------------------------------------------------------
+# Date-range fetch: stream thread (awk for timestamp + optional process filter)
+# -----------------------------------------------------------------------------
+
+def _awk_script_with_process_filter(process_list):
+    """Return awk script: timestamp in [start,end); if process_list non-empty, line must match KEYMELOG|NAME[ for one."""
+    if not process_list:
+        return r'$1 >= start && $1 < end'
+    procs_str = ','.join(str(p).strip() for p in process_list if str(p).strip())
+    return (
+        r'BEGIN { n = split(procs, p, ",") } '
+        r'$1 >= start && $1 < end { '
+        r'if (n == 0) { print; next } '
+        r'for (i = 1; i <= n; i++) if (index($0, "KEYMELOG|" p[i] "[") > 0) { print; next } '
+        r'}'
+    )
+
+
 def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_read, max_lines, start_ts, end_ts, process_filter=None):
-    """Background thread: read each file, filter by timestamp (awk), optionally by process (grep KEYMELOG|NAME[), send batches via send_callback.
-    process_filter: optional list of process names; only used for all.log. Lines must match KEYMELOG|NAME[ for one of them (grep -F -e ...).
-    """
+    """Background: for each file, pipe through awk (timestamp + optional process match), stream batches."""
+    process_list = [str(p).strip() for p in (process_filter or []) if str(p).strip()]
+    awk_script = _awk_script_with_process_filter(process_list)
+    procs_str = ','.join(process_list) if process_list else ''
     total_emitted = 0
     truncated = False
     start_time = time.time()
-    process_list = [str(p).strip() for p in (process_filter or []) if str(p).strip()]
-    awk_script = r'$1 >= start && $1 < end'
 
     def send_batch(batch):
-        if not batch:
-            return
-        send_callback(client_id, {
-            'event': ws_protocol.PUSH_LOG_RANGE_BATCH,
-            'data': {'stream_id': stream_id, 'lines': batch},
-        })
+        if batch:
+            send_callback(client_id, {
+                'event': ws_protocol.PUSH_LOG_RANGE_BATCH,
+                'data': {'stream_id': stream_id, 'lines': batch},
+            })
 
     def send_done(truncated_flag):
         send_callback(client_id, {
@@ -274,55 +293,34 @@ def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_r
         if total_emitted >= max_lines:
             truncated = True
             break
+        reader = None
+        awk_proc = None
         try:
-            if is_gz:
-                reader = subprocess.Popen(
-                    ['zcat', filepath],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    universal_newlines=True,
-                )
-            else:
-                reader = subprocess.Popen(
-                    ['cat', filepath],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    universal_newlines=True,
-                )
-            # Pipe through awk: timestamp in [start_ts, end_ts)
+            reader = subprocess.Popen(
+                ['zcat', filepath] if is_gz else ['cat', filepath],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+            )
+            awk_args = ['awk', '-v', f'start={start_ts}', '-v', f'end={end_ts}', '-v', f'procs={procs_str}', awk_script]
             awk_proc = subprocess.Popen(
-                ['awk', '-v', f'start={start_ts}', '-v', f'end={end_ts}', awk_script],
+                awk_args,
                 stdin=reader.stdout,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
             )
             reader.stdout.close()
-            if process_list:
-                # grep -F -e 'KEYMELOG|GUI[' -e 'KEYMELOG|CUTTER[' ... (match any of the processes)
-                grep_args = ['grep', '-F'] + [arg for p in process_list for arg in ('-e', f'KEYMELOG|{p}[')]
-                grep_proc = subprocess.Popen(
-                    grep_args,
-                    stdin=awk_proc.stdout,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    universal_newlines=True,
-                )
-                awk_proc.stdout.close()
-                proc = grep_proc
-                reader_stderr = awk_proc.stderr
-            else:
-                proc = awk_proc
-                reader_stderr = reader.stderr
         except OSError as e:
             keyme.log.warning(f"log_tail get_log_range Popen failed path={filepath!r}: {e}")
+            _terminate_and_wait(reader)
             continue
 
         try:
             line_buffer = ''
             batch = []
             batch_bytes = 0
-
+            proc = awk_proc
             while True:
                 if time.time() - start_time > 60:
                     truncated = True
@@ -341,197 +339,100 @@ def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_r
                         break
                     if batch_bytes >= _RANGE_BATCH_SIZE_BYTES:
                         send_batch(batch)
-                        batch = []
-                        batch_bytes = 0
+                        batch, batch_bytes = [], 0
                 if truncated:
                     break
-
             if batch:
                 send_batch(batch)
-            if truncated:
-                try:
-                    proc.terminate()
-                    proc.wait(timeout=2)
-                except (OSError, subprocess.TimeoutExpired):
-                    try:
-                        proc.kill()
-                    except OSError:
-                        pass
-                if process_list:
-                    try:
-                        awk_proc.wait(timeout=1)
-                    except (OSError, subprocess.TimeoutExpired):
-                        try:
-                            awk_proc.kill()
-                        except OSError:
-                            pass
-                try:
-                    reader.wait(timeout=1)
-                except subprocess.TimeoutExpired:
-                    try:
-                        reader.kill()
-                    except OSError:
-                        pass
-                break
-            try:
-                proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                try:
-                    proc.terminate()
-                    proc.wait(timeout=2)
-                except (OSError, subprocess.TimeoutExpired):
-                    try:
-                        proc.kill()
-                    except OSError:
-                        pass
-            if process_list:
-                try:
-                    awk_proc.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    try:
-                        awk_proc.kill()
-                    except OSError:
-                        pass
-            try:
-                reader.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                try:
-                    reader.kill()
-                except OSError:
-                    pass
-            err = (proc.stderr.read() if proc.stderr else '') or (reader_stderr.read() if reader_stderr else '')
-            if err and proc.returncode != 0:
-                keyme.log.warning(f"log_tail get_log_range read failed path={filepath!r}: {err}")
         except (OSError, ValueError) as e:
-            keyme.log.warning(f"log_tail get_log_range failed path={filepath!r}: {e}")
-            try:
-                proc.terminate()
-                proc.wait(timeout=2)
-            except (OSError, subprocess.TimeoutExpired):
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
-            if process_list:
-                try:
-                    awk_proc.terminate()
-                    awk_proc.wait(timeout=1)
-                except (OSError, subprocess.TimeoutExpired):
-                    try:
-                        awk_proc.kill()
-                    except OSError:
-                        pass
-            try:
-                reader.terminate()
-                reader.wait(timeout=1)
-            except (OSError, subprocess.TimeoutExpired):
-                try:
-                    reader.kill()
-                except OSError:
-                    pass
+            keyme.log.warning(f"log_tail get_log_range read failed path={filepath!r}: {e}")
+        finally:
+            _terminate_and_wait(proc)
+            _terminate_and_wait(reader)
+            if proc.stderr:
+                proc.stderr.read()
+            if reader.stderr:
+                reader.stderr.read()
+
+        if truncated:
+            break
 
     send_done(truncated)
-    keyme.log.info(f"log_tail get_log_range stream done stream_id={stream_id!r} emitted={total_emitted} truncated={truncated}")
+    keyme.log.info(f"log_tail get_log_range done stream_id={stream_id!r} emitted={total_emitted} truncated={truncated}")
 
+
+# -----------------------------------------------------------------------------
+# Date-range fetch: API
+# -----------------------------------------------------------------------------
 
 def get_log_range(data, client_id, send_callback):
-    """Stream lines for a date range (process main logs or all.log). Max 4 days per request.
-    data: { log_id, start_date, end_date, max_lines?, stream_id? }.
-    Returns immediately { started: True, stream_id, log_id, path }; batches and done are pushed via send_callback.
-    On validation error returns { success: False, errors: [...] }.
+    """Stream lines for date/datetime range (process main logs or all.log). Max 4 days.
+    data: log_id, start_datetime, end_datetime (or start_date, end_date), max_lines?, stream_id?, process_filter? (all.log only).
+    Returns { success, data: { started, stream_id, ... } } or { success: False, errors }.
     """
-    keyme.log.info(f"log_tail get_log_range entry client_id={client_id!r} data_keys={list((data or {}).keys())}")
+    data = data or {}
+    keyme.log.info(f"log_tail get_log_range client_id={client_id!r} keys={list(data.keys())}")
+
     _, allowlist = _build_log_list()
-    log_id = (data or {}).get('log_id')
+    log_id = data.get('log_id')
     if not log_id or log_id not in allowlist:
-        keyme.log.warning(f"log_tail get_log_range invalid or missing log_id={log_id!r} allowlist_keys={list(allowlist.keys())}")
         return {'success': False, 'errors': ['Invalid or missing log_id']}
     path = allowlist[log_id]
 
-    data = data or {}
     start_raw = data.get('start_datetime') or data.get('start_date')
     end_raw = data.get('end_datetime') or data.get('end_date')
     if not start_raw or not end_raw:
-        keyme.log.warning(f"log_tail get_log_range missing start/end start_raw={start_raw!r} end_raw={end_raw!r}")
         return {'success': False, 'errors': ['Missing start_datetime and end_datetime (or start_date and end_date)']}
 
-    def parse_datetime(s):
-        s = str(s).strip()
-        if not s:
-            return None
-        for fmt, size in (('%Y-%m-%dT%H:%M:%S', 19), ('%Y-%m-%dT%H:%M', 16), ('%Y-%m-%d', 10)):
-            if len(s) >= size:
-                try:
-                    return datetime.strptime(s[:size], fmt)
-                except ValueError:
-                    pass
-        return None
-
-    start_dt_parsed = parse_datetime(start_raw)
-    end_dt_parsed = parse_datetime(end_raw)
+    start_dt_parsed = _parse_datetime(start_raw)
+    end_dt_parsed = _parse_datetime(end_raw)
     if start_dt_parsed is None or end_dt_parsed is None:
-        keyme.log.warning(f"log_tail get_log_range invalid datetime start_raw={start_raw!r} end_raw={end_raw!r}")
-        return {'success': False, 'errors': ['Invalid datetime format; use YYYY-MM-DD or YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS']}
+        return {'success': False, 'errors': ['Invalid datetime; use YYYY-MM-DD or YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS']}
+    if start_dt_parsed >= end_dt_parsed:
+        return {'success': False, 'errors': ['start must be before end']}
     start_dt = start_dt_parsed.date()
     end_dt = end_dt_parsed.date()
-    if start_dt_parsed >= end_dt_parsed:
-        keyme.log.warning(f"log_tail get_log_range start >= end start={start_dt_parsed} end={end_dt_parsed}")
-        return {'success': False, 'errors': ['start must be before end']}
     if (end_dt - start_dt).days >= _RANGE_MAX_DAYS:
-        keyme.log.warning(f"log_tail get_log_range range exceeds max days start_dt={start_dt} end_dt={end_dt} max_days={_RANGE_MAX_DAYS}")
         return {'success': False, 'errors': [f'Date range exceeds {_RANGE_MAX_DAYS} days']}
 
     start_ts = start_dt_parsed.strftime('%Y-%m-%dT%H:%M:%S')
     end_ts = end_dt_parsed.strftime('%Y-%m-%dT%H:%M:%S')
-    keyme.log.info(f"log_tail get_log_range requested start_ts={start_ts!r} end_ts={end_ts!r} start_dt={start_dt} end_dt={end_dt}")
 
     max_lines = data.get('max_lines', _RANGE_MAX_LINES_DEFAULT)
     try:
-        max_lines = int(max_lines)
+        max_lines = max(1, min(int(max_lines), _RANGE_MAX_LINES_CAP))
     except (TypeError, ValueError):
         max_lines = _RANGE_MAX_LINES_DEFAULT
-    max_lines = max(1, min(max_lines, _RANGE_MAX_LINES_CAP))
-    keyme.log.info(f"log_tail get_log_range max_lines={max_lines}")
 
-    today = datetime.utcnow().date()
     if log_id == 'all':
         log_dir = os.path.dirname(_ALL_LOG_PATH)
         base_name = 'all.log'
     else:
-        pname = log_id.replace('process/', '', 1)
         log_dir = _LOG_DIR
-        base_name = pname + '.log'
-    keyme.log.info(f"log_tail get_log_range log_id={log_id!r} log_dir={log_dir!r} base_name={base_name!r} today={today}")
+        base_name = log_id.replace('process/', '', 1) + '.log'
 
-    # Archive filename date = when rotated (end of period). Content = (prev_archive_date, this_archive_date].
     files_to_read, last_archive_date = _archived_files_overlapping_range(log_dir, base_name, start_dt, end_dt)
-    # Current log covers (last_archive_date, now]. Include it when [start_dt, end_dt] overlaps that period.
+    today = datetime.utcnow().date()
     if start_dt <= today and (last_archive_date is None or end_dt > last_archive_date):
-        current_log_path = os.path.join(log_dir, base_name)
-        if os.path.isfile(current_log_path):
-            files_to_read.append((today, current_log_path, False))
-            keyme.log.debug(f"log_tail get_log_range including current .log path={current_log_path!r} (overlaps (last_archive={last_archive_date}, now])")
-    dates_with_data = [t[0].isoformat() for t in files_to_read]
-    missing_dates = [] if files_to_read else [f"{start_dt.isoformat()}..{end_dt.isoformat()}"]
-    keyme.log.info(f"log_tail get_log_range overlap selection: reading {len(files_to_read)} file(s) dates_with_data={dates_with_data}")
-    for day_or_archive, filepath, _ in files_to_read:
-        keyme.log.debug(f"log_tail get_log_range file day_or_archive={day_or_archive} path={filepath!r}")
+        current_path = os.path.join(log_dir, base_name)
+        if os.path.isfile(current_path):
+            files_to_read.append((today, current_path, False))
 
     if not files_to_read:
-        keyme.log.warning(f"log_tail get_log_range no files found for range start_dt={start_dt} end_dt={end_dt} missing_dates={missing_dates}")
+        keyme.log.warning(f"log_tail get_log_range no files for range {start_dt}..{end_dt}")
         return {'success': False, 'errors': ['No log files found for the selected range']}
 
-    # start_ts/end_ts already set above from parsed datetime; awk uses $1 >= start_ts && $1 < end_ts (exclusive end)
-    keyme.log.info(f"log_tail get_log_range timestamp filter start_ts={start_ts!r} end_ts={end_ts!r} (exclusive)")
-
-    stream_id = (data or {}).get('stream_id') or str(time.time())
     process_filter = None
     if log_id == 'all':
         pf = data.get('process_filter')
-        if pf is not None and (isinstance(pf, (list, tuple)) and len(pf) > 0):
+        if isinstance(pf, (list, tuple)) and len(pf) > 0:
             process_filter = [str(p).strip() for p in pf if str(p).strip()]
-            keyme.log.info(f"log_tail get_log_range all.log process_filter={process_filter}")
-    keyme.log.info(f"log_tail get_log_range starting stream stream_id={stream_id!r} client_id={client_id!r} file_count={len(files_to_read)}")
+            if process_filter:
+                keyme.log.info(f"log_tail get_log_range process_filter={process_filter}")
+
+    stream_id = data.get('stream_id') or str(time.time())
+    dates_with_data = [t[0].isoformat() for t in files_to_read]
+    keyme.log.info(f"log_tail get_log_range stream_id={stream_id!r} files={len(files_to_read)} dates={dates_with_data}")
 
     thread = threading.Thread(
         target=_get_log_range_stream_thread,
@@ -540,7 +441,6 @@ def get_log_range(data, client_id, send_callback):
     )
     thread.start()
 
-    keyme.log.info(f"log_tail get_log_range success stream_id={stream_id!r} dates_with_data={dates_with_data} missing_dates={missing_dates}")
     return {
         'success': True,
         'data': {
@@ -551,6 +451,6 @@ def get_log_range(data, client_id, send_callback):
             'requested_start': start_dt.isoformat(),
             'requested_end': end_dt.isoformat(),
             'dates_with_data': dates_with_data,
-            'missing_dates': missing_dates,
+            'missing_dates': [] if files_to_read else [f"{start_dt.isoformat()}..{end_dt.isoformat()}"],
         },
     }
