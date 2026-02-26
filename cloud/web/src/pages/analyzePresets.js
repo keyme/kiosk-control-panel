@@ -1,5 +1,5 @@
 /**
- * Predefined process names (match log_analyze_scripts/errors_and_restarts.awk).
+ * Predefined process names (used by log_filter.awk and builder).
  * Used for preset definitions and query builder.
  */
 export const ANALYZE_PROCESS_NAMES = [

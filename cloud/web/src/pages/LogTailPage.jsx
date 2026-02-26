@@ -680,7 +680,10 @@ function ViewTab({ socket }) {
 
 /** Per-hour summary: buckets = { "2026-02-01T00": { count, byProcess: { PROCESS: { count } } }, ... }. Single metric. */
 function AnalyzeSummaryView({ buckets }) {
-  const [selectedProcesses, setSelectedProcesses] = useState(() => new Set());
+  const [selectedProcesses, setSelectedProcesses] = useState(() => null);
+  const [processDropdownOpen, setProcessDropdownOpen] = useState(false);
+  const processDropdownRef = useRef(null);
+
   const uniqueProcesses = useMemo(() => {
     if (!buckets || typeof buckets !== 'object') return [];
     const set = new Set();
@@ -692,39 +695,54 @@ function AnalyzeSummaryView({ buckets }) {
     }
     return Array.from(set).sort();
   }, [buckets]);
+
   const chartData = useMemo(() => {
     if (!buckets || typeof buckets !== 'object') return [];
     const entries = Object.entries(buckets).map(([hour, v]) => {
       let count = 0;
-      if (selectedProcesses.size > 0) {
+      if (selectedProcesses === null) {
+        count = v?.count ?? 0;
+      } else if (selectedProcesses.size > 0) {
         for (const p of selectedProcesses) {
           const bp = v?.byProcess?.[p];
           if (bp) count += bp.count ?? 0;
         }
-      } else {
-        count = v?.count ?? 0;
       }
       return { hour, count };
     });
     return entries.sort((a, b) => a.hour.localeCompare(b.hour));
   }, [buckets, selectedProcesses]);
+
   const total = chartData.reduce((s, d) => s + d.count, 0);
 
   const toggleProcess = (p) => {
     setSelectedProcesses((prev) => {
-      const next = new Set(prev);
-      if (prev.size === 0) {
-        // Showing all; unchecking p = show all except p
-        return new Set(uniqueProcesses.filter((x) => x !== p));
-      }
+      const next = prev === null ? new Set(uniqueProcesses) : new Set(prev);
       if (next.has(p)) next.delete(p);
       else next.add(p);
-      if (next.size === uniqueProcesses.length) return new Set(); // all selected = show all
+      if (next.size === 0) return new Set();
+      if (next.size === uniqueProcesses.length) return null;
       return next;
     });
   };
-  const selectAll = () => setSelectedProcesses(new Set());
-  const selectNone = () => setSelectedProcesses(new Set());
+
+  useEffect(() => {
+    if (!processDropdownOpen) return;
+    const onDocClick = (e) => {
+      if (processDropdownRef.current && !processDropdownRef.current.contains(e.target)) {
+        setProcessDropdownOpen(false);
+      }
+    };
+    document.addEventListener('click', onDocClick, true);
+    return () => document.removeEventListener('click', onDocClick, true);
+  }, [processDropdownOpen]);
+
+  const processLabel =
+    selectedProcesses === null
+      ? 'All'
+      : selectedProcesses.size === 0
+        ? 'None'
+        : `${selectedProcesses.size} selected`;
 
   return (
     <div className="space-y-6">
@@ -732,39 +750,42 @@ function AnalyzeSummaryView({ buckets }) {
         Total: {total}
       </p>
       <div className="flex flex-wrap items-start gap-4">
-        <div className="flex flex-col gap-1">
-          <span className="text-xs font-medium text-muted-foreground">Processes</span>
-          <div className="flex gap-2 text-xs">
-            <button type="button" onClick={selectAll} className="text-primary hover:underline">
-              All
-            </button>
-            <span className="text-muted-foreground">·</span>
-            <button type="button" onClick={selectNone} className="text-primary hover:underline">
-              None
-            </button>
-            {selectedProcesses.size > 0 && (
-              <>
+        <div className="relative" ref={processDropdownRef}>
+          <span className="text-xs font-medium text-muted-foreground block mb-1">Processes</span>
+          <button
+            type="button"
+            onClick={() => setProcessDropdownOpen((o) => !o)}
+            className="rounded-md border border-input bg-background px-3 py-2 text-sm text-left min-w-0 flex items-center justify-between gap-2"
+          >
+            <span className="truncate">{processLabel}</span>
+            <span className="text-muted-foreground shrink-0" aria-hidden>▼</span>
+          </button>
+          {processDropdownOpen && (
+            <div className="absolute left-0 top-full mt-1 z-50 min-w-[200px] max-h-[280px] overflow-auto rounded-md border border-border bg-popover py-2 shadow-md">
+              <div className="flex gap-2 text-xs px-2 pb-2 border-b border-border mb-2">
+                <button type="button" onClick={() => { setSelectedProcesses(null); }} className="text-primary hover:underline">
+                  All
+                </button>
                 <span className="text-muted-foreground">·</span>
-                <span className="text-muted-foreground">{selectedProcesses.size} selected</span>
-              </>
-            )}
-          </div>
-          <div className="rounded-md border border-input bg-background p-2 max-h-[200px] overflow-auto flex flex-col gap-1">
-            {uniqueProcesses.map((p) => (
-              <label key={p} className="flex items-center gap-2 cursor-pointer hover:bg-muted/50 rounded px-2 py-1">
-                <input
-                  type="checkbox"
-                  checked={selectedProcesses.size === 0 || selectedProcesses.has(p)}
-                  onChange={() => toggleProcess(p)}
-                  className="rounded border-input"
-                />
-                <span className="text-sm">{p}</span>
-              </label>
-            ))}
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">
-            {selectedProcesses.size === 0 ? 'Showing all processes.' : 'Showing selected processes only.'}
-          </p>
+                <button type="button" onClick={() => { setSelectedProcesses(new Set()); }} className="text-primary hover:underline">
+                  None
+                </button>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                {uniqueProcesses.map((p) => (
+                  <label key={p} className="flex items-center gap-2 cursor-pointer hover:bg-muted/50 px-2 py-1.5">
+                    <input
+                      type="checkbox"
+                      checked={selectedProcesses === null || selectedProcesses.has(p)}
+                      onChange={() => toggleProcess(p)}
+                      className="rounded border-input"
+                    />
+                    <span className="text-sm truncate">{p}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
       {chartData.length > 0 ? (
@@ -925,6 +946,7 @@ export default function LogTailPage({ socket }) {
   const [analyzeStartDatetime, setAnalyzeStartDatetime] = useState('');
   const [analyzeEndDatetime, setAnalyzeEndDatetime] = useState('');
   const [analyzePresetId, setAnalyzePresetId] = useState(() => (ANALYZE_PRESETS[0]?.id ?? 'build'));
+  const [analyzeBuilderOpen, setAnalyzeBuilderOpen] = useState(false);
   const [analyzeBuilder, setAnalyzeBuilder] = useState(() => ({
     processes: [],
     levels: [],
@@ -1781,13 +1803,13 @@ export default function LogTailPage({ socket }) {
       {activeTab === 'analyze' && (
         <div className="space-y-4">
           <Card>
-            <CardContent className="space-y-4 pt-4">
+            <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Run an analysis on all.log for the selected datetime range. Only aggregated output is shown.
+                Run an analysis on all.log for the selected datetime range. Select a preset query or build your own below. Only aggregated output is shown.
               </p>
-              <div className="flex flex-wrap items-end gap-4">
+              <div className="flex flex-wrap items-end gap-3">
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-muted-foreground">Start date/time</span>
+                  <span className="text-xs font-medium text-muted-foreground">Start</span>
                   <input
                     type="datetime-local"
                     value={analyzeStartDatetime}
@@ -1796,28 +1818,13 @@ export default function LogTailPage({ socket }) {
                   />
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-muted-foreground">End date/time</span>
+                  <span className="text-xs font-medium text-muted-foreground">End</span>
                   <input
                     type="datetime-local"
                     value={analyzeEndDatetime}
                     onChange={(e) => setAnalyzeEndDatetime(e.target.value)}
                     className="rounded-md border border-input bg-background px-3 py-2 text-sm"
                   />
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-muted-foreground">Preset</span>
-                  <select
-                    value={analyzePresetId}
-                    onChange={(e) => setAnalyzePresetId(e.target.value)}
-                    className="min-w-[320px] rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  >
-                    {ANALYZE_PRESETS.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.query}
-                      </option>
-                    ))}
-                    <option value="build">Build custom</option>
-                  </select>
                 </label>
                 <button
                   type="button"
@@ -1871,7 +1878,56 @@ export default function LogTailPage({ socket }) {
                   Run
                 </button>
               </div>
-              {analyzePresetId === 'build' && (
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs font-medium text-muted-foreground">Preset</span>
+                  <select
+                    value={analyzePresetId === 'build' ? '' : analyzePresetId}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setAnalyzePresetId(v || 'build');
+                      if (v) setAnalyzeBuilderOpen(false);
+                    }}
+                    className="min-w-[280px] rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    {ANALYZE_PRESETS.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.query}
+                      </option>
+                    ))}
+                    <option value="">Custom (see query above)</option>
+                  </select>
+                </label>
+                {analyzePresetId === 'build' ? (
+                  <button
+                    type="button"
+                    onClick={() => setAnalyzeBuilderOpen((o) => !o)}
+                    className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-muted/50"
+                  >
+                    {analyzeBuilderOpen ? 'Close builder' : 'Edit query'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAnalyzePresetId('build');
+                      setAnalyzeBuilderOpen(true);
+                    }}
+                    className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-muted/50"
+                  >
+                    Build custom
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-muted-foreground">Query</span>
+                <input
+                  readOnly
+                  value={currentQueryLabel}
+                  className="w-full rounded-md border border-input bg-muted/30 px-3 py-2 text-sm font-mono"
+                />
+              </div>
+              {analyzePresetId === 'build' && analyzeBuilderOpen && (
                 <div className="rounded-md border border-input bg-muted/20 p-4 space-y-4">
                   <span className="text-xs font-medium text-muted-foreground">Build custom query</span>
                   <div className="flex flex-wrap gap-6">
@@ -1957,9 +2013,6 @@ export default function LogTailPage({ socket }) {
                   </div>
                 </div>
               )}
-              <p className="text-xs text-muted-foreground font-mono truncate" title={currentQueryLabel}>
-                Query: {currentQueryLabel}
-              </p>
               {analyzeError && <p className="text-sm text-destructive" role="alert">{analyzeError}</p>}
             </CardContent>
           </Card>

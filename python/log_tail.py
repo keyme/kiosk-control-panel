@@ -464,92 +464,6 @@ def get_log_range(data, client_id, send_callback):
 # Log analyze: generic filter (structured params -> awk -v), per-hour count, one push
 # -----------------------------------------------------------------------------
 
-def _run_log_analyze_filter_thread(client_id, send_callback, stream_id, files_to_read, start_ts, end_ts, pname, log_level, reg_message):
-    """Background: for each file zcat|awk -v pname,log_level,reg_message, parse hour\\tprocess\\tcount; merge; send one push."""
-    script_path = os.path.join(_LOG_ANALYZE_SCRIPTS_DIR, _LOG_FILTER_SCRIPT)
-    if not os.path.isfile(script_path):
-        keyme.log.warning(f"log_tail run_log_analyze script not found: {script_path}")
-        send_callback(client_id, {
-            'event': ws_protocol.PUSH_LOG_ANALYZE_RESULT,
-            'data': {'stream_id': stream_id, 'buckets': {}},
-        })
-        return
-    buckets = {}
-    awk_base = ['nice', '-n', '100', 'awk', '-v', f'start={start_ts}', '-v', f'end={end_ts}',
-                '-v', f'pname={pname}', '-v', f'log_level={log_level}', '-v', f'reg_message={reg_message}',
-                '-f', script_path]
-
-    for _day, filepath, is_gz in files_to_read:
-        reader = None
-        awk_proc = None
-        reader_cmd = (['nice', '-n', '100', 'zcat', filepath] if is_gz else ['nice', '-n', '100', 'cat', filepath])
-        cmd_str = ' '.join(reader_cmd) + ' | ' + ' '.join(awk_base)
-        keyme.log.info(f"log_tail run_log_analyze executing: {cmd_str}")
-
-        try:
-            reader = subprocess.Popen(
-                reader_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True,
-            )
-            awk_proc = subprocess.Popen(
-                awk_base,
-                stdin=reader.stdout,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True,
-            )
-            reader.stdout.close()
-        except OSError as e:
-            keyme.log.warning(f"log_tail run_log_analyze Popen failed path={filepath!r}: {e}")
-            _terminate_and_wait(reader)
-            _terminate_and_wait(awk_proc)
-            send_callback(client_id, {
-                'event': ws_protocol.PUSH_LOG_ANALYZE_RESULT,
-                'data': {'stream_id': stream_id, 'buckets': {}},
-            })
-            return
-
-        try:
-            out, _ = awk_proc.communicate(timeout=300)
-        except (OSError, subprocess.TimeoutExpired) as e:
-            keyme.log.warning(f"log_tail run_log_analyze communicate failed path={filepath!r}: {e}")
-            _terminate_and_wait(awk_proc)
-            _terminate_and_wait(reader)
-            continue
-        finally:
-            _terminate_and_wait(awk_proc)
-            _terminate_and_wait(reader)
-
-        for line in (out or '').strip().split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-            parts = line.split('\t')
-            if len(parts) < 3:
-                continue
-            hour_s = parts[0].strip()
-            process_s = parts[1].strip()
-            try:
-                count_n = int(parts[2].strip())
-            except ValueError:
-                continue
-            if hour_s not in buckets:
-                buckets[hour_s] = {'count': 0, 'byProcess': {}}
-            buckets[hour_s]['count'] += count_n
-            if process_s:
-                if process_s not in buckets[hour_s]['byProcess']:
-                    buckets[hour_s]['byProcess'][process_s] = {'count': 0}
-                buckets[hour_s]['byProcess'][process_s]['count'] += count_n
-
-    send_callback(client_id, {
-        'event': ws_protocol.PUSH_LOG_ANALYZE_RESULT,
-        'data': {'stream_id': stream_id, 'buckets': buckets},
-    })
-    keyme.log.info(f"log_tail run_log_analyze filter done stream_id={stream_id!r} buckets={len(buckets)}")
-
-
 def _sanitize_awk_var(s):
     """Remove chars that break awk -v (e.g. newline, null, =). Allow backslash for regex."""
     if s is None:
@@ -560,65 +474,153 @@ def _sanitize_awk_var(s):
     return s
 
 
+def _parse_analyze_params(data):
+    """Parse and validate run_log_analyze payload. Returns (params_dict, None) or (None, error_response)."""
+    data = data or {}
+    start_raw = data.get('start_datetime') or data.get('start_date')
+    end_raw = data.get('end_datetime') or data.get('end_date')
+    if not start_raw or not end_raw:
+        return None, {'success': False, 'errors': ['Missing start_datetime and end_datetime']}
+    start_dt_parsed = _parse_datetime(start_raw)
+    end_dt_parsed = _parse_datetime(end_raw)
+    if start_dt_parsed is None or end_dt_parsed is None:
+        return None, {'success': False, 'errors': ['Invalid datetime; use YYYY-MM-DD or YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS']}
+    if start_dt_parsed >= end_dt_parsed:
+        return None, {'success': False, 'errors': ['start must be before end']}
+
+    processes = data.get('processes')
+    processes = [str(p).strip() for p in (processes if isinstance(processes, (list, tuple)) else []) if str(p).strip()]
+    levels = data.get('levels')
+    levels = [str(l).strip().lower() for l in (levels if isinstance(levels, (list, tuple)) else []) if str(l).strip()]
+    message_regex = _sanitize_awk_var((data.get('message_regex') or '').strip())
+
+    return {
+        'start_dt': start_dt_parsed.date(),
+        'end_dt': end_dt_parsed.date(),
+        'start_ts': start_dt_parsed.strftime('%Y-%m-%dT%H:%M:%S'),
+        'end_ts': end_dt_parsed.strftime('%Y-%m-%dT%H:%M:%S'),
+        'pname': '|'.join(processes) if processes else '',
+        'log_level': '|'.join(f'<{l}>' for l in levels) if levels else '',
+        'reg_message': message_regex,
+    }, None
+
+
+def _all_log_files_for_range(log_dir, start_dt, end_dt):
+    """Return list of (day, filepath, is_gz) for all.log and its archives overlapping [start_dt, end_dt]."""
+    files_to_read, last_archive_date = _archived_files_overlapping_range(log_dir, 'all.log', start_dt, end_dt)
+    today = datetime.utcnow().date()
+    if start_dt <= today and (last_archive_date is None or end_dt > last_archive_date):
+        current_path = os.path.join(log_dir, 'all.log')
+        if os.path.isfile(current_path):
+            files_to_read.append((today, current_path, False))
+    return files_to_read
+
+
+def _merge_awk_line_into_buckets(buckets, line):
+    """Parse one line of awk output (hour\\tprocess\\tcount) and merge into buckets. No-op if invalid."""
+    line = (line or '').strip()
+    if not line:
+        return
+    parts = line.split('\t')
+    if len(parts) < 3:
+        return
+    hour_s = parts[0].strip()
+    process_s = parts[1].strip()
+    try:
+        count_n = int(parts[2].strip())
+    except ValueError:
+        return
+    if hour_s not in buckets:
+        buckets[hour_s] = {'count': 0, 'byProcess': {}}
+    buckets[hour_s]['count'] += count_n
+    if process_s:
+        if process_s not in buckets[hour_s]['byProcess']:
+            buckets[hour_s]['byProcess'][process_s] = {'count': 0}
+        buckets[hour_s]['byProcess'][process_s]['count'] += count_n
+
+
+def _run_log_analyze_filter_thread(client_id, send_callback, stream_id, files_to_read, start_ts, end_ts, pname, log_level, reg_message):
+    """Background: for each file zcat|awk, parse hour\\tprocess\\tcount; merge; send one push."""
+    script_path = os.path.join(_LOG_ANALYZE_SCRIPTS_DIR, _LOG_FILTER_SCRIPT)
+    if not os.path.isfile(script_path):
+        keyme.log.warning("log_tail run_log_analyze script not found: %s", script_path)
+        send_callback(client_id, {
+            'event': ws_protocol.PUSH_LOG_ANALYZE_RESULT,
+            'data': {'stream_id': stream_id, 'buckets': {}},
+        })
+        return
+
+    awk_cmd = [
+        'nice', '-n', '100', 'awk',
+        '-v', f'start={start_ts}', '-v', f'end={end_ts}',
+        '-v', f'pname={pname}', '-v', f'log_level={log_level}', '-v', f'reg_message={reg_message}',
+        '-f', script_path,
+    ]
+    buckets = {}
+
+    for _day, filepath, is_gz in files_to_read:
+        reader_cmd = ['nice', '-n', '100', 'zcat', filepath] if is_gz else ['nice', '-n', '100', 'cat', filepath]
+        reader = awk_proc = None
+        try:
+            reader = subprocess.Popen(
+                reader_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+            )
+            awk_proc = subprocess.Popen(
+                awk_cmd,
+                stdin=reader.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+            )
+            reader.stdout.close()
+            out, _ = awk_proc.communicate(timeout=300)
+            for line in (out or '').split('\n'):
+                _merge_awk_line_into_buckets(buckets, line)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            keyme.log.warning("log_tail run_log_analyze file %s: %s", filepath, e)
+        finally:
+            _terminate_and_wait(awk_proc)
+            _terminate_and_wait(reader)
+
+    send_callback(client_id, {
+        'event': ws_protocol.PUSH_LOG_ANALYZE_RESULT,
+        'data': {'stream_id': stream_id, 'buckets': buckets},
+    })
+    keyme.log.info("log_tail run_log_analyze done stream_id=%r buckets=%d", stream_id, len(buckets))
+
+
 def run_log_analyze(data, client_id, send_callback):
     """Run generic log filter on all.log for the given datetime range.
     data: start_datetime, end_datetime, processes?, levels?, message_regex?, stream_id?.
     Returns { success: True, data: { started, stream_id } } or { success: False, errors }.
     Result pushed via send_callback as log_analyze_result with buckets (count, byProcess).
     """
-    data = data or {}
-    start_raw = data.get('start_datetime') or data.get('start_date')
-    end_raw = data.get('end_datetime') or data.get('end_date')
-    if not start_raw or not end_raw:
-        return {'success': False, 'errors': ['Missing start_datetime and end_datetime']}
-    start_dt_parsed = _parse_datetime(start_raw)
-    end_dt_parsed = _parse_datetime(end_raw)
-    if start_dt_parsed is None or end_dt_parsed is None:
-        return {'success': False, 'errors': ['Invalid datetime; use YYYY-MM-DD or YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS']}
-    if start_dt_parsed >= end_dt_parsed:
-        return {'success': False, 'errors': ['start must be before end']}
-
-    processes = data.get('processes')
-    if isinstance(processes, (list, tuple)):
-        processes = [str(p).strip() for p in processes if str(p).strip()]
-    else:
-        processes = []
-    levels = data.get('levels')
-    if isinstance(levels, (list, tuple)):
-        levels = [str(l).strip().lower() for l in levels if str(l).strip()]
-    else:
-        levels = []
-    message_regex = (data.get('message_regex') or '').strip()
-    message_regex = _sanitize_awk_var(message_regex)
-
-    pname = '|'.join(processes) if processes else ''
-    log_level = '|'.join(f'<{l}>' for l in levels) if levels else ''
-    reg_message = message_regex
-
-    start_dt = start_dt_parsed.date()
-    end_dt = end_dt_parsed.date()
-    start_ts = start_dt_parsed.strftime('%Y-%m-%dT%H:%M:%S')
-    end_ts = end_dt_parsed.strftime('%Y-%m-%dT%H:%M:%S')
+    params, err = _parse_analyze_params(data)
+    if err is not None:
+        return err
 
     log_dir = os.path.dirname(_ALL_LOG_PATH)
-    base_name = 'all.log'
-    files_to_read, last_archive_date = _archived_files_overlapping_range(log_dir, base_name, start_dt, end_dt)
-    today = datetime.utcnow().date()
-    if start_dt <= today and (last_archive_date is None or end_dt > last_archive_date):
-        current_path = os.path.join(log_dir, base_name)
-        if os.path.isfile(current_path):
-            files_to_read.append((today, current_path, False))
-
+    files_to_read = _all_log_files_for_range(log_dir, params['start_dt'], params['end_dt'])
     if not files_to_read:
-        keyme.log.warning(f"log_tail run_log_analyze no files for range {start_dt}..{end_dt}")
+        keyme.log.warning("log_tail run_log_analyze no files for range %s..%s", params['start_dt'], params['end_dt'])
         return {'success': False, 'errors': ['No log files found for the selected range']}
 
-    stream_id = data.get('stream_id') or str(time.time())
-    keyme.log.info(f"log_tail run_log_analyze stream_id={stream_id!r} files={len(files_to_read)} pname={bool(pname)} level={bool(log_level)} msg={bool(reg_message)}")
+    stream_id = (data or {}).get('stream_id') or str(time.time())
+    keyme.log.info(
+        "log_tail run_log_analyze stream_id=%r files=%d",
+        stream_id, len(files_to_read),
+    )
 
     thread = threading.Thread(
         target=_run_log_analyze_filter_thread,
-        args=(client_id, send_callback, stream_id, files_to_read, start_ts, end_ts, pname, log_level, reg_message),
+        args=(
+            client_id, send_callback, stream_id, files_to_read,
+            params['start_ts'], params['end_ts'],
+            params['pname'], params['log_level'], params['reg_message'],
+        ),
         daemon=True,
     )
     thread.start()
