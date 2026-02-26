@@ -207,10 +207,11 @@ def _is_process_main_log(log_id, path):
 
 
 def _archived_files_overlapping_range(pname, start_dt, end_dt):
-    """Return list of (archive_date, filepath, is_gz) for dated logs whose period (d_prev, d_i] overlaps [start_dt, end_dt].
+    """Return (list of (archive_date, filepath, is_gz), last_archive_date) for dated logs whose period (d_prev, d_i] overlaps [start_dt, end_dt].
     Filename date is when the log was rotated (end of period); content is (previous_date, this_date].
     Includes both archived ({pname}.log-{YYYYMMDD}.gz) and unarchived dated ({pname}.log-{YYYYMMDD}) files.
     When both exist for the same date, prefer .gz (archived).
+    last_archive_date is the max dated file (end of last rotated period); current .log covers (last_archive_date, now].
     """
     pattern = os.path.join(_LOG_DIR, pname + '.log-*')
     paths = glob.glob(pattern)
@@ -233,13 +234,14 @@ def _archived_files_overlapping_range(pname, start_dt, end_dt):
         if archive_date not in by_date or (by_date[archive_date][1] is False and is_gz):
             by_date[archive_date] = (filepath, is_gz)
     parsed = sorted(by_date.items(), key=lambda t: t[0])
+    last_archive_date = parsed[-1][0] if parsed else None
     result = []
     for i, (d_i, (filepath, is_gz)) in enumerate(parsed):
         d_prev = parsed[i - 1][0] if i > 0 else None
         # Period is (d_prev, d_i] (open left, closed right). Overlaps [start_dt, end_dt] iff d_prev < end_dt and d_i >= start_dt
         if (d_prev is None or d_prev < end_dt) and d_i >= start_dt:
             result.append((d_i, filepath, is_gz))
-    return result
+    return result, last_archive_date
 
 
 def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_read, max_lines, start_ts, end_ts):
@@ -442,12 +444,13 @@ def get_log_range(data, client_id, send_callback):
     keyme.log.info(f"log_tail get_log_range log_id={log_id!r} pname={pname!r} today={today} _LOG_DIR={_LOG_DIR!r}")
 
     # Archive filename date = when rotated (end of period). Content = (prev_archive_date, this_archive_date].
-    files_to_read = _archived_files_overlapping_range(pname, start_dt, end_dt)
-    if start_dt <= today <= end_dt:
+    files_to_read, last_archive_date = _archived_files_overlapping_range(pname, start_dt, end_dt)
+    # Current .log covers (last_archive_date, now]. Include it when [start_dt, end_dt] overlaps that period.
+    if start_dt <= today and (last_archive_date is None or end_dt > last_archive_date):
         current_log_path = os.path.join(_LOG_DIR, pname + '.log')
         if os.path.isfile(current_log_path):
             files_to_read.append((today, current_log_path, False))
-            keyme.log.debug(f"log_tail get_log_range including current .log path={current_log_path!r}")
+            keyme.log.debug(f"log_tail get_log_range including current .log path={current_log_path!r} (overlaps (last_archive={last_archive_date}, now])")
     dates_with_data = [t[0].isoformat() for t in files_to_read]
     missing_dates = [] if files_to_read else [f"{start_dt.isoformat()}..{end_dt.isoformat()}"]
     keyme.log.info(f"log_tail get_log_range overlap selection: reading {len(files_to_read)} file(s) dates_with_data={dates_with_data}")
