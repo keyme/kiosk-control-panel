@@ -806,6 +806,7 @@ export default function LogTailPage({ socket }) {
   const [analyzeOutput, setAnalyzeOutput] = useState('');
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
   const [analyzeError, setAnalyzeError] = useState(null);
+  const analyzeStreamIdRef = useRef(null);
 
   const errorsAndRestartsEvents = useMemo(() => {
     if (analyzeId !== 'errors_and_restarts' || !analyzeOutput) return null;
@@ -1671,20 +1672,41 @@ export default function LogTailPage({ socket }) {
                     setAnalyzeError(null);
                     setAnalyzeOutput('');
                     setAnalyzeLoading(true);
+                    const streamId = Date.now();
+                    analyzeStreamIdRef.current = streamId;
+
+                    const onBatch = (data) => {
+                      if (data?.stream_id !== analyzeStreamIdRef.current) return;
+                      const lines = data.lines || [];
+                      setAnalyzeOutput((prev) => prev + lines.join('\n') + (lines.length ? '\n' : ''));
+                    };
+                    const onDone = (data) => {
+                      if (data?.stream_id !== analyzeStreamIdRef.current) return;
+                      setAnalyzeLoading(false);
+                      socket.off('log_analyze_batch', onBatch);
+                      socket.off('log_analyze_done', onDone);
+                    };
+
+                    socket.on('log_analyze_batch', onBatch);
+                    socket.on('log_analyze_done', onDone);
+
                     socket.requestIfSupported('run_log_analyze', {
                       start_datetime: start,
                       end_datetime: end,
                       analysis_id: analyzeId,
+                      stream_id: streamId,
                     }).then((res) => {
-                      setAnalyzeLoading(false);
-                      if (res?.success && res?.data?.output != null) {
-                        setAnalyzeOutput(res.data.output);
-                      } else {
+                      if (!res?.success || !res?.data?.started) {
+                        setAnalyzeLoading(false);
                         setAnalyzeError(res?.errors?.join(', ') || 'Analysis failed');
+                        socket.off('log_analyze_batch', onBatch);
+                        socket.off('log_analyze_done', onDone);
                       }
                     }).catch((err) => {
                       setAnalyzeLoading(false);
                       setAnalyzeError(err?.message || 'Analysis failed');
+                      socket.off('log_analyze_batch', onBatch);
+                      socket.off('log_analyze_done', onDone);
                     });
                   }}
                   disabled={!socket?.connected || analyzeLoading || !analyzeStartDatetime.trim() || !analyzeEndDatetime.trim()}

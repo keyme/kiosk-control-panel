@@ -33,6 +33,7 @@ _RANGE_BATCH_SIZE_BYTES = 120 * 1024
 
 # Log analyze: allowlisted awk scripts (analysis_id -> .awk filename).
 _LOG_ANALYZE_SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'log_analyze_scripts')
+_ANALYZE_BATCH_SIZE = 100
 ANALYZE_SCRIPTS = {
     'errors_and_restarts': 'errors_and_restarts.awk',
 }
@@ -463,14 +464,75 @@ def get_log_range(data, client_id, send_callback):
 
 
 # -----------------------------------------------------------------------------
-# Log analyze: run awk script on all.log for date range (one-shot)
+# Log analyze: run awk script on all.log for date range (streaming)
 # -----------------------------------------------------------------------------
 
-def run_log_analyze(data):
+def _run_log_analyze_stream_thread(client_id, send_callback, stream_id, files_to_read, start_ts, end_ts, script_path):
+    """Background: for each file, zcat|awk, read lines, push batches and done."""
+    awk_args = ['nice', '-n', '100', 'awk', '-v', f'start={start_ts}', '-v', f'end={end_ts}', '-f', script_path]
+
+    def send_batch(lines):
+        if lines:
+            send_callback(client_id, {
+                'event': ws_protocol.PUSH_LOG_ANALYZE_BATCH,
+                'data': {'stream_id': stream_id, 'lines': lines},
+            })
+
+    def send_done():
+        send_callback(client_id, {
+            'event': ws_protocol.PUSH_LOG_ANALYZE_DONE,
+            'data': {'stream_id': stream_id},
+        })
+
+    for _day, filepath, is_gz in files_to_read:
+        reader = None
+        awk_proc = None
+        try:
+            reader = subprocess.Popen(
+                ['nice', '-n', '100', 'zcat', filepath] if is_gz else ['nice', '-n', '100', 'cat', filepath],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+            )
+            awk_proc = subprocess.Popen(
+                awk_args,
+                stdin=reader.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+            )
+            reader.stdout.close()
+        except OSError as e:
+            keyme.log.warning(f"log_tail run_log_analyze Popen failed path={filepath!r}: {e}")
+            _terminate_and_wait(reader)
+            _terminate_and_wait(awk_proc)
+            send_done()
+            return
+
+        try:
+            batch = []
+            for line in awk_proc.stdout:
+                batch.append(line.rstrip('\n'))
+                if len(batch) >= _ANALYZE_BATCH_SIZE:
+                    send_batch(batch)
+                    batch = []
+            if batch:
+                send_batch(batch)
+        except (OSError, ValueError) as e:
+            keyme.log.warning(f"log_tail run_log_analyze read failed path={filepath!r}: {e}")
+        finally:
+            _terminate_and_wait(awk_proc)
+            _terminate_and_wait(reader)
+
+    send_done()
+    keyme.log.info(f"log_tail run_log_analyze stream done stream_id={stream_id!r}")
+
+
+def run_log_analyze(data, client_id, send_callback):
     """Run an allowlisted awk analysis on all.log for the given datetime range.
-    data: start_datetime, end_datetime, analysis_id.
-    Returns { success: True, data: { output: str } } or { success: False, errors: list }.
-    No day limit (analyze only).
+    data: start_datetime, end_datetime, analysis_id, stream_id?.
+    Returns { success: True, data: { started, stream_id } } or { success: False, errors }.
+    Batches and done are pushed via send_callback. No day limit (analyze only).
     """
     data = data or {}
     start_raw = data.get('start_datetime') or data.get('start_date')
@@ -510,45 +572,14 @@ def run_log_analyze(data):
         keyme.log.warning(f"log_tail run_log_analyze no files for range {start_dt}..{end_dt}")
         return {'success': False, 'errors': ['No log files found for the selected range']}
 
-    keyme.log.info(f"log_tail run_log_analyze analysis_id={analysis_id!r} files={len(files_to_read)}")
+    stream_id = data.get('stream_id') or str(time.time())
+    keyme.log.info(f"log_tail run_log_analyze analysis_id={analysis_id!r} stream_id={stream_id!r} files={len(files_to_read)}")
 
-    try:
-        awk_proc = subprocess.Popen(
-            ['nice', '-n', '100', 'awk', '-v', f'start={start_ts}', '-v', f'end={end_ts}', '-f', script_path],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True,
-        )
-    except OSError as e:
-        keyme.log.warning(f"log_tail run_log_analyze awk Popen failed: {e}")
-        return {'success': False, 'errors': [f'Failed to run awk: {e}']}
+    thread = threading.Thread(
+        target=_run_log_analyze_stream_thread,
+        args=(client_id, send_callback, stream_id, files_to_read, start_ts, end_ts, script_path),
+        daemon=True,
+    )
+    thread.start()
 
-    try:
-        for _day, filepath, is_gz in files_to_read:
-            cmd = ['nice', '-n', '100', 'zcat', filepath] if is_gz else ['nice', '-n', '100', 'cat', filepath]
-            reader = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                universal_newlines=True,
-            )
-            for line in reader.stdout:
-                awk_proc.stdin.write(line)
-            reader.stdout.close()
-            reader.wait()
-        awk_proc.stdin.close()
-        stdout = awk_proc.stdout.read()
-        stderr = awk_proc.stderr.read()
-        ret = awk_proc.wait()
-    except OSError as e:
-        keyme.log.warning(f"log_tail run_log_analyze read/pipe failed: {e}")
-        _terminate_and_wait(awk_proc)
-        return {'success': False, 'errors': [str(e)]}
-
-    if ret != 0:
-        keyme.log.warning(f"log_tail run_log_analyze awk exit {ret} stderr={stderr!r}")
-        err_msg = stderr.strip() if stderr else f'awk exited with code {ret}'
-        return {'success': False, 'errors': [err_msg]}
-
-    return {'success': True, 'data': {'output': stdout or ''}}
+    return {'success': True, 'data': {'started': True, 'stream_id': stream_id}}

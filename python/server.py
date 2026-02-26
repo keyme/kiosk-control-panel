@@ -1019,10 +1019,10 @@ def get_log_range(client_id, data, send_callback):
     return _log_tail_module.get_log_range(data or {}, client_id, send_callback)
 
 
-def run_log_analyze(data):
-    """Run an allowlisted awk analysis on all.log for the given datetime range. Returns { success, data: { output } } or { success: False, errors }."""
+def run_log_analyze(client_id, data, send_callback):
+    """Run an allowlisted awk analysis on all.log; streams batches via send_callback. Returns { success, data: { started, stream_id } } or { success: False, errors }."""
     keyme.log.info("WS: requesting run_log_analyze")
-    return _log_tail_module.run_log_analyze(data or {})
+    return _log_tail_module.run_log_analyze(data or {}, client_id, send_callback)
 
 
 # Fleet commands (state-changing) live in fleet_commands.py; re-export so ws_server and parser keep working.

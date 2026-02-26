@@ -87,6 +87,8 @@ PUSH_RESTART_ALL_LINE = 'restart_all_line'
 PUSH_RESTART_ALL_DONE = 'restart_all_done'
 PUSH_LOG_RANGE_BATCH = 'log_range_batch'
 PUSH_LOG_RANGE_DONE = 'log_range_done'
+PUSH_LOG_ANALYZE_BATCH = 'log_analyze_batch'
+PUSH_LOG_ANALYZE_DONE = 'log_analyze_done'
 PUSH_ASYNC_PREFIX = 'async.'
 
 # Response: success shape has "success": True and "data"; error has "success": False and "errors".

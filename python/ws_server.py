@@ -148,7 +148,11 @@ def _dispatch_request(client_id, request_id, event, data, connection_count, conn
             data or {},
             lambda cid, obj: _schedule_send(cid, obj),
         ),
-        'run_log_analyze': lambda: handlers.run_log_analyze(data or {}),
+        'run_log_analyze': lambda: handlers.run_log_analyze(
+            client_id,
+            data or {},
+            lambda obj: _schedule_send(client_id, obj),
+        ),
         'fleet_restart_process': lambda: handlers.fleet_restart_process(
             data or {},
             **(
