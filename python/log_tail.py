@@ -463,27 +463,14 @@ def get_log_range(data, client_id, send_callback):
 
 
 # -----------------------------------------------------------------------------
-# Log analyze: run awk script on all.log for date range (streaming)
+# Log analyze: run awk script on all.log for date range (per-hour summary, one push)
 # -----------------------------------------------------------------------------
 
-def _run_log_analyze_stream_thread(client_id, send_callback, stream_id, files_to_read, start_ts, end_ts, script_path):
-    """Background: same flow as get_log_range — for each file zcat|awk, read in chunks, push batches via PUSH_LOG_RANGE_*."""
+def _run_log_analyze_summary_thread(client_id, send_callback, stream_id, files_to_read, start_ts, end_ts, script_path):
+    """Background: for each file zcat|awk, read full stdout, parse hour\\terrors\\trestarts, merge into buckets; send one push."""
     awk_cmd = ['nice', '-n', '100', 'awk', '-v', f'start={start_ts}', '-v', f'end={end_ts}', '-f', script_path]
+    buckets = {}
 
-    def send_batch(batch):
-        if batch:
-            send_callback(client_id, {
-                'event': ws_protocol.PUSH_LOG_RANGE_BATCH,
-                'data': {'stream_id': stream_id, 'lines': batch},
-            })
-
-    def send_done(truncated_flag):
-        send_callback(client_id, {
-            'event': ws_protocol.PUSH_LOG_RANGE_DONE,
-            'data': {'stream_id': stream_id, 'truncated': truncated_flag},
-        })
-
-    total_emitted = 0
     for _day, filepath, is_gz in files_to_read:
         reader = None
         awk_proc = None
@@ -510,41 +497,46 @@ def _run_log_analyze_stream_thread(client_id, send_callback, stream_id, files_to
             keyme.log.warning(f"log_tail run_log_analyze Popen failed path={filepath!r}: {e}")
             _terminate_and_wait(reader)
             _terminate_and_wait(awk_proc)
-            send_done(False)
+            send_callback(client_id, {
+                'event': ws_protocol.PUSH_LOG_ANALYZE_RESULT,
+                'data': {'stream_id': stream_id, 'buckets': {}},
+            })
             return
 
         try:
-            line_buffer = ''
-            batch = []
-            batch_bytes = 0
-            proc = awk_proc
-            while True:
-                chunk = proc.stdout.read(_RANGE_READ_CHUNK_SIZE)
-                if not chunk:
-                    break
-                line_buffer += chunk
-                while '\n' in line_buffer:
-                    line, line_buffer = line_buffer.split('\n', 1)
-                    batch.append(line)
-                    batch_bytes += len(line) + 1
-                    total_emitted += 1
-                    if batch_bytes >= _RANGE_BATCH_SIZE_BYTES:
-                        send_batch(batch)
-                        batch, batch_bytes = [], 0
-            if batch:
-                send_batch(batch)
-        except (OSError, ValueError) as e:
-            keyme.log.warning(f"log_tail run_log_analyze read failed path={filepath!r}: {e}")
-        finally:
-            _terminate_and_wait(proc)
+            out, _ = awk_proc.communicate(timeout=300)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            keyme.log.warning(f"log_tail run_log_analyze communicate failed path={filepath!r}: {e}")
+            _terminate_and_wait(awk_proc)
             _terminate_and_wait(reader)
-            if proc.stderr:
-                proc.stderr.read()
-            if reader.stderr:
-                reader.stderr.read()
+            continue
+        finally:
+            _terminate_and_wait(awk_proc)
+            _terminate_and_wait(reader)
 
-    send_done(False)
-    keyme.log.info(f"log_tail run_log_analyze stream done stream_id={stream_id!r} emitted={total_emitted}")
+        for line in (out or '').strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split('\t')
+            if len(parts) < 3:
+                continue
+            hour_s, err_s, rest_s = parts[0].strip(), parts[1].strip(), parts[2].strip()
+            try:
+                err_n = int(err_s)
+                rest_n = int(rest_s)
+            except ValueError:
+                continue
+            if hour_s not in buckets:
+                buckets[hour_s] = {'errors': 0, 'restarts': 0}
+            buckets[hour_s]['errors'] += err_n
+            buckets[hour_s]['restarts'] += rest_n
+
+    send_callback(client_id, {
+        'event': ws_protocol.PUSH_LOG_ANALYZE_RESULT,
+        'data': {'stream_id': stream_id, 'buckets': buckets},
+    })
+    keyme.log.info(f"log_tail run_log_analyze summary done stream_id={stream_id!r} buckets={len(buckets)}")
 
 
 def run_log_analyze(data, client_id, send_callback):
@@ -595,7 +587,7 @@ def run_log_analyze(data, client_id, send_callback):
     keyme.log.info(f"log_tail run_log_analyze analysis_id={analysis_id!r} stream_id={stream_id!r} files={len(files_to_read)}")
 
     thread = threading.Thread(
-        target=_run_log_analyze_stream_thread,
+        target=_run_log_analyze_summary_thread,
         args=(client_id, send_callback, stream_id, files_to_read, start_ts, end_ts, script_path),
         daemon=True,
     )

@@ -671,6 +671,49 @@ function ViewTab({ socket }) {
   );
 }
 
+/** Per-hour summary: buckets = { "2026-02-01T00": { errors, restarts }, ... }. Chart only; no event list. */
+function ErrorsAndRestartsSummaryView({ buckets }) {
+  const chartData = useMemo(() => {
+    if (!buckets || typeof buckets !== 'object') return [];
+    return Object.entries(buckets)
+      .map(([hour, v]) => ({ hour, errors: v.errors ?? 0, restarts: v.restarts ?? 0 }))
+      .sort((a, b) => a.hour.localeCompare(b.hour));
+  }, [buckets]);
+  const totalErrors = chartData.reduce((s, d) => s + d.errors, 0);
+  const totalRestarts = chartData.reduce((s, d) => s + d.restarts, 0);
+
+  return (
+    <div className="space-y-6">
+      <p className="text-sm text-muted-foreground">
+        Total errors: {totalErrors} · Total restarts: {totalRestarts}
+      </p>
+      {chartData.length > 0 ? (
+        <div className="h-[300px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis dataKey="hour" tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" />
+              <YAxis tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" allowDecimals={false} />
+              <Tooltip
+                contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}
+                labelStyle={{ color: 'var(--foreground)' }}
+              />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Area type="monotone" dataKey="errors" name="Errors" stackId="a" fill="var(--chart-1)" stroke="var(--chart-1)" />
+              <Area type="monotone" dataKey="restarts" name="Restarts" stackId="a" fill="var(--chart-2)" stroke="var(--chart-2)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground py-4">No events in selected range.</p>
+      )}
+      <p className="text-sm text-muted-foreground">
+        Summary by hour. Narrow the date range to see an event list.
+      </p>
+    </div>
+  );
+}
+
 function ErrorsAndRestartsView({ events }) {
   const [processFilter, setProcessFilter] = useState('');
   const uniqueProcesses = useMemo(() => {
@@ -804,6 +847,7 @@ export default function LogTailPage({ socket }) {
   const [analyzeEndDatetime, setAnalyzeEndDatetime] = useState('');
   const [analyzeId, setAnalyzeId] = useState('errors_and_restarts');
   const [analyzeOutput, setAnalyzeOutput] = useState('');
+  const [analyzeBuckets, setAnalyzeBuckets] = useState(null);
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
   const [analyzeError, setAnalyzeError] = useState(null);
   const analyzeStreamIdRef = useRef(null);
@@ -1671,24 +1715,19 @@ export default function LogTailPage({ socket }) {
                     }
                     setAnalyzeError(null);
                     setAnalyzeOutput('');
+                    setAnalyzeBuckets(null);
                     setAnalyzeLoading(true);
                     const streamId = Date.now();
                     analyzeStreamIdRef.current = streamId;
 
-                    const onBatch = (data) => {
+                    const onResult = (data) => {
                       if (data?.stream_id !== analyzeStreamIdRef.current) return;
-                      const lines = data.lines || [];
-                      setAnalyzeOutput((prev) => prev + lines.join('\n') + (lines.length ? '\n' : ''));
-                    };
-                    const onDone = (data) => {
-                      if (data?.stream_id !== analyzeStreamIdRef.current) return;
+                      setAnalyzeBuckets(data?.buckets ?? {});
                       setAnalyzeLoading(false);
-                      socket.off('log_range_batch', onBatch);
-                      socket.off('log_range_done', onDone);
+                      socket.off('log_analyze_result', onResult);
                     };
 
-                    socket.on('log_range_batch', onBatch);
-                    socket.on('log_range_done', onDone);
+                    socket.on('log_analyze_result', onResult);
 
                     socket.requestIfSupported('run_log_analyze', {
                       start_datetime: start,
@@ -1699,14 +1738,12 @@ export default function LogTailPage({ socket }) {
                       if (!res?.success || !res?.data?.started) {
                         setAnalyzeLoading(false);
                         setAnalyzeError(res?.errors?.join(', ') || 'Analysis failed');
-                        socket.off('log_range_batch', onBatch);
-                        socket.off('log_range_done', onDone);
+                        socket.off('log_analyze_result', onResult);
                       }
                     }).catch((err) => {
                       setAnalyzeLoading(false);
                       setAnalyzeError(err?.message || 'Analysis failed');
-                      socket.off('log_range_batch', onBatch);
-                      socket.off('log_range_done', onDone);
+                      socket.off('log_analyze_result', onResult);
                     });
                   }}
                   disabled={!socket?.connected || analyzeLoading || !analyzeStartDatetime.trim() || !analyzeEndDatetime.trim()}
@@ -1733,6 +1770,8 @@ export default function LogTailPage({ socket }) {
                   <Loader2 className="size-4 animate-spin" aria-hidden />
                   Running…
                 </p>
+              ) : analyzeId === 'errors_and_restarts' && analyzeBuckets !== null ? (
+                <ErrorsAndRestartsSummaryView buckets={analyzeBuckets} />
               ) : analyzeId === 'errors_and_restarts' && errorsAndRestartsEvents ? (
                 errorsAndRestartsEvents.length > 0 ? (
                   <ErrorsAndRestartsView events={errorsAndRestartsEvents} />
