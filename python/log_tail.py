@@ -5,8 +5,11 @@ import os
 import subprocess
 import threading
 import time
+from datetime import datetime, timedelta
 
 import pylib as keyme
+
+from control_panel.python import ws_protocol
 
 _LOG_DIR = '/var/log/keyme/processes'
 _ALL_LOG_PATH = '/var/log/keyme/all.log'
@@ -14,6 +17,11 @@ _TMP_DIR = '/tmp'
 _INITIAL_LINES_DEFAULT = 50
 _INITIAL_LINES_MAX = 200
 _ALL_LOG_RATE_LIMIT = 50  # max lines per second when tailing all.log
+_RANGE_MAX_DAYS = 4
+_RANGE_MAX_LINES_DEFAULT = 20000
+_RANGE_MAX_LINES_CAP = 50000
+_RANGE_READ_CHUNK_SIZE = 65536
+_RANGE_BATCH_SIZE_BYTES = 120 * 1024  # 120 KB target payload per push
 
 _client_tails = {}
 _tails_lock = threading.Lock()
@@ -184,3 +192,193 @@ def log_tail_start(client_id, data, send_callback, push_event):
     thread.start()
 
     return {'lines': lines, 'log_id': log_id, 'path': path}
+
+
+def _is_process_main_log(log_id, path):
+    """True if log_id is a process main log under _LOG_DIR (not all, not stdout/stderr)."""
+    if not log_id or not path:
+        return False
+    if not path.startswith(_LOG_DIR) or path == _ALL_LOG_PATH:
+        return False
+    if not log_id.startswith('process/') or '/' in log_id[len('process/'):]:
+        return False
+    return path.endswith('.log')
+
+
+def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_read, max_lines):
+    """Background thread: read each file in chunks, send batches (~120 KB) and done via send_callback."""
+    total_emitted = 0
+    truncated = False
+    start_time = time.time()
+
+    def send_batch(batch):
+        if not batch:
+            return
+        send_callback(client_id, {
+            'event': ws_protocol.PUSH_LOG_RANGE_BATCH,
+            'data': {'stream_id': stream_id, 'lines': batch},
+        })
+
+    def send_done(truncated_flag):
+        send_callback(client_id, {
+            'event': ws_protocol.PUSH_LOG_RANGE_DONE,
+            'data': {'stream_id': stream_id, 'truncated': truncated_flag},
+        })
+
+    for _day, filepath, is_gz in files_to_read:
+        if total_emitted >= max_lines:
+            truncated = True
+            break
+        try:
+            if is_gz:
+                proc = subprocess.Popen(
+                    ['zcat', filepath],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                )
+            else:
+                proc = subprocess.Popen(
+                    ['cat', filepath],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                )
+        except OSError as e:
+            keyme.log.warning('log_tail get_log_range Popen failed path=%s: %s', filepath, e)
+            continue
+
+        try:
+            line_buffer = ''
+            batch = []
+            batch_bytes = 0
+
+            while True:
+                if time.time() - start_time > 60:
+                    truncated = True
+                    break
+                chunk = proc.stdout.read(_RANGE_READ_CHUNK_SIZE)
+                if not chunk:
+                    break
+                line_buffer += chunk
+                while '\n' in line_buffer:
+                    line, line_buffer = line_buffer.split('\n', 1)
+                    batch.append(line)
+                    batch_bytes += len(line) + 1
+                    total_emitted += 1
+                    if total_emitted >= max_lines:
+                        truncated = True
+                        break
+                    if batch_bytes >= _RANGE_BATCH_SIZE_BYTES:
+                        send_batch(batch)
+                        batch = []
+                        batch_bytes = 0
+                if truncated:
+                    break
+
+            if batch:
+                send_batch(batch)
+            if truncated:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=2)
+                except (OSError, subprocess.TimeoutExpired):
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
+                break
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=2)
+                except (OSError, subprocess.TimeoutExpired):
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
+            err = proc.stderr.read() if proc.stderr else ''
+            if err and proc.returncode != 0:
+                keyme.log.warning('log_tail get_log_range read failed path=%s: %s', filepath, err)
+        except (OSError, ValueError) as e:
+            keyme.log.warning('log_tail get_log_range failed path=%s: %s', filepath, e)
+            try:
+                proc.terminate()
+                proc.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+
+    send_done(truncated)
+    keyme.log.info('log_tail get_log_range stream done stream_id=%s emitted=%s truncated=%s', stream_id, total_emitted, truncated)
+
+
+def get_log_range(data, client_id, send_callback):
+    """Stream lines for a date range (process main logs only). Max 4 days per request.
+    data: { log_id, start_date, end_date, max_lines?, stream_id? }.
+    Returns immediately { started: True, stream_id, log_id, path }; batches and done are pushed via send_callback.
+    On validation error returns { success: False, errors: [...] }.
+    """
+    _, allowlist = _build_log_list()
+    log_id = (data or {}).get('log_id')
+    if not log_id or log_id not in allowlist:
+        return {'success': False, 'errors': ['Invalid or missing log_id']}
+    path = allowlist[log_id]
+    if not _is_process_main_log(log_id, path):
+        return {'success': False, 'errors': ['Only process main logs support date range']}
+
+    start_s = (data or {}).get('start_date')
+    end_s = (data or {}).get('end_date')
+    if not start_s or not end_s:
+        return {'success': False, 'errors': ['Missing start_date or end_date']}
+    try:
+        start_dt = datetime.strptime(start_s, '%Y-%m-%d').date()
+        end_dt = datetime.strptime(end_s, '%Y-%m-%d').date()
+    except ValueError:
+        return {'success': False, 'errors': ['Invalid date format; use YYYY-MM-DD']}
+    if start_dt > end_dt:
+        return {'success': False, 'errors': ['start_date must be <= end_date']}
+    if (end_dt - start_dt).days >= _RANGE_MAX_DAYS:
+        return {'success': False, 'errors': ['Date range exceeds {} days'.format(_RANGE_MAX_DAYS)]}
+
+    max_lines = data.get('max_lines', _RANGE_MAX_LINES_DEFAULT)
+    try:
+        max_lines = int(max_lines)
+    except (TypeError, ValueError):
+        max_lines = _RANGE_MAX_LINES_DEFAULT
+    max_lines = max(1, min(max_lines, _RANGE_MAX_LINES_CAP))
+
+    pname = log_id.replace('process/', '', 1)
+    today = datetime.utcnow().date()
+
+    files_to_read = []
+    d = start_dt
+    while d <= end_dt:
+        if d == today:
+            filepath = os.path.join(_LOG_DIR, pname + '.log')
+            if os.path.isfile(filepath):
+                files_to_read.append((d, filepath, False))
+        else:
+            yyyymmdd = d.strftime('%Y%m%d')
+            filepath = os.path.join(_LOG_DIR, pname + '.log-' + yyyymmdd + '.gz')
+            if os.path.isfile(filepath):
+                files_to_read.append((d, filepath, True))
+        d += timedelta(days=1)
+
+    if not files_to_read:
+        return {'success': False, 'errors': ['No log files found for the selected range']}
+
+    stream_id = (data or {}).get('stream_id') or str(time.time())
+
+    thread = threading.Thread(
+        target=_get_log_range_stream_thread,
+        args=(client_id, send_callback, stream_id, files_to_read, max_lines),
+        daemon=True,
+    )
+    thread.start()
+
+    return {'success': True, 'data': {'started': True, 'stream_id': stream_id, 'log_id': log_id, 'path': path}}

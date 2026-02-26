@@ -96,7 +96,482 @@ function isNearBottom(el) {
   return distance <= SCROLL_BOTTOM_EPS_PX;
 }
 
+function getDaysBetween(startStr, endStr) {
+  const start = new Date(startStr);
+  const end = new Date(endStr);
+  const diff = (end - start) / (1000 * 60 * 60 * 24);
+  return Math.floor(diff) + 1;
+}
+
+const RANGE_MAX_DAYS = 4;
+const CONTEXT_CAP_DEFAULT = 10;
+const CONTEXT_CAP = 50;
+
+function ViewTab({ socket }) {
+  const [logs, setLogs] = useState([]);
+  const [viewLogId, setViewLogId] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [fetchedLines, setFetchedLines] = useState([]);
+  const [fetchLoading, setFetchLoading] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
+  const [levelFilter, setLevelFilter] = useState(() => ({ c: true, e: true, w: true, i: true, d: true, other: true }));
+  const [searchQuery, setSearchQuery] = useState('');
+  const [beforeContext, setBeforeContext] = useState(0);
+  const [afterContext, setAfterContext] = useState(CONTEXT_CAP_DEFAULT);
+  const [selectedProcesses, setSelectedProcesses] = useState(null);
+  const [processFilterOpen, setProcessFilterOpen] = useState(false);
+  const [expandedTracebacks, setExpandedTracebacks] = useState(new Set());
+  const [fetchTruncated, setFetchTruncated] = useState(false);
+  const viewStreamRef = useRef(null);
+  const rangeStreamIdRef = useRef(null);
+
+  const mainLogs = useMemo(() => logs.filter((l) => l.type === 'main'), [logs]);
+
+  useEffect(() => {
+    if (!socket?.connected) return;
+    socket.requestIfSupported('get_log_list').then((res) => {
+      if (res?.success && res?.data?.logs) {
+        setLogs(res.data.logs);
+        if (!viewLogId && res.data.logs.length > 0) {
+          const main = res.data.logs.filter((l) => l.type === 'main');
+          if (main.length > 0) setViewLogId(main[0].id);
+        }
+      }
+    });
+  }, [socket, viewLogId]);
+
+  const uniqueProcessNames = useMemo(() => {
+    const set = new Set();
+    for (const line of fetchedLines) {
+      const p = parseKeyMeLine(line)?.process;
+      if (p) set.add(p);
+    }
+    return Array.from(set).sort();
+  }, [fetchedLines]);
+
+  const matchIndices = useMemo(() => {
+    const qRaw = String(searchQuery || '').trim();
+    const hasQuery = qRaw.length > 0;
+    const needle = qRaw.toLowerCase();
+    const idx = [];
+    fetchedLines.forEach((line, i) => {
+      const parsed = parseKeyMeLine(line);
+      const lvl = parsed?.level ?? 'other';
+      if (!levelFilter[lvl]) return;
+      if (hasQuery && !String(line).toLowerCase().includes(needle)) return;
+      if (selectedProcesses != null && selectedProcesses.length > 0) {
+        const proc = parsed?.process;
+        if (!proc || !selectedProcesses.includes(proc)) return;
+      }
+      idx.push(i);
+    });
+    return idx;
+  }, [fetchedLines, searchQuery, levelFilter, selectedProcesses]);
+
+  const contextRanges = useMemo(() => {
+    if (beforeContext <= 0 && afterContext <= 0) return matchIndices.map((i) => [i, i]);
+    const merged = [];
+    for (const i of matchIndices) {
+      const low = Math.max(0, i - beforeContext);
+      const high = Math.min(fetchedLines.length - 1, i + afterContext);
+      merged.push([low, high]);
+    }
+    merged.sort((a, b) => a[0] - b[0]);
+    const out = [];
+    let lastEnd = -1;
+    for (const [lo, hi] of merged) {
+      if (lo <= lastEnd + 1) {
+        out[out.length - 1][1] = Math.max(out[out.length - 1][1], hi);
+      } else {
+        out.push([lo, hi]);
+      }
+      lastEnd = Math.max(lastEnd, hi);
+    }
+    return out;
+  }, [matchIndices, beforeContext, afterContext, fetchedLines.length]);
+
+  const viewEntries = useMemo(() => {
+    const entries = [];
+    for (const [lo, hi] of contextRanges) {
+      for (let i = lo; i <= hi; i++) {
+        const line = fetchedLines[i];
+        const parsed = parseKeyMeLine(line);
+        const lvl = parsed?.level ?? 'other';
+        entries.push({ line, parsed, level: lvl, index: i });
+      }
+    }
+    return entries;
+  }, [contextRanges, fetchedLines]);
+
+  const errorIndices = useMemo(() => {
+    const idx = [];
+    viewEntries.forEach((entry, viewIdx) => {
+      if (entry.level === 'e' || entry.level === 'c') idx.push({ viewIdx, lineIndex: entry.index });
+    });
+    return idx;
+  }, [viewEntries]);
+
+  const handleFetch = useCallback(() => {
+    if (!socket?.connected || !viewLogId) return;
+    const start = startDate.trim();
+    const end = endDate.trim();
+    if (!start || !end) {
+      setFetchError('Enter start and end date (YYYY-MM-DD)');
+      return;
+    }
+    const days = getDaysBetween(start, end);
+    if (days < 1 || days > RANGE_MAX_DAYS) {
+      setFetchError(`Date range must be 1–${RANGE_MAX_DAYS} days`);
+      return;
+    }
+    setFetchError(null);
+    setFetchTruncated(false);
+    setFetchedLines([]);
+    setFetchLoading(true);
+    const streamId = Date.now();
+    rangeStreamIdRef.current = streamId;
+
+    const onBatch = (data) => {
+      if (data?.stream_id !== rangeStreamIdRef.current) return;
+      setFetchedLines((prev) => [...prev, ...(data.lines || [])]);
+    };
+    const onDone = (data) => {
+      if (data?.stream_id !== rangeStreamIdRef.current) return;
+      setFetchLoading(false);
+      setFetchTruncated(Boolean(data?.truncated));
+      socket.off('log_range_batch', onBatch);
+      socket.off('log_range_done', onDone);
+    };
+
+    socket.on('log_range_batch', onBatch);
+    socket.on('log_range_done', onDone);
+
+    socket.requestIfSupported('get_log_range', {
+      log_id: viewLogId,
+      start_date: start,
+      end_date: end,
+      stream_id: streamId,
+    }).then((res) => {
+      if (!res?.success || !res?.data?.started) {
+        setFetchLoading(false);
+        setFetchError(res?.errors?.join(', ') || 'Failed to fetch range');
+        socket.off('log_range_batch', onBatch);
+        socket.off('log_range_done', onDone);
+      }
+    }).catch((err) => {
+      setFetchLoading(false);
+      setFetchError(err?.message || 'Failed to fetch range');
+      socket.off('log_range_batch', onBatch);
+      socket.off('log_range_done', onDone);
+    });
+  }, [socket, viewLogId, startDate, endDate]);
+
+  const jumpToError = useCallback((direction) => {
+    if (errorIndices.length === 0) return;
+    const scrollEl = viewStreamRef.current;
+    if (!scrollEl) return;
+    const container = scrollEl.querySelector('[data-view-entries]');
+    if (!container) return;
+    const children = container.children;
+    if (children.length === 0) return;
+    const currentScroll = scrollEl.scrollTop + scrollEl.clientHeight / 2;
+    let targetViewIdx = null;
+    if (direction === 'next') {
+      for (const { viewIdx } of errorIndices) {
+        const el = children[viewIdx];
+        if (el && el.offsetTop > currentScroll - 100) {
+          targetViewIdx = viewIdx;
+          break;
+        }
+      }
+      if (targetViewIdx == null && errorIndices.length > 0) targetViewIdx = errorIndices[0].viewIdx;
+    } else {
+      for (let i = errorIndices.length - 1; i >= 0; i--) {
+        const el = children[errorIndices[i].viewIdx];
+        if (el && el.offsetTop < currentScroll + 100) {
+          targetViewIdx = errorIndices[i].viewIdx;
+          break;
+        }
+      }
+      if (targetViewIdx == null && errorIndices.length > 0) targetViewIdx = errorIndices[errorIndices.length - 1].viewIdx;
+    }
+    if (targetViewIdx != null && children[targetViewIdx]) {
+      children[targetViewIdx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [errorIndices]);
+
+  const toggleLevel = (lvl) => setLevelFilter((prev) => ({ ...prev, [lvl]: !prev[lvl] }));
+
+  const levelButtonClass = (lvl) => {
+    const enabled = !!levelFilter[lvl];
+    const s = levelStyle(lvl === 'other' ? '?' : lvl);
+    return cn(
+      'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium',
+      enabled ? s.badge : 'bg-muted text-muted-foreground border-border opacity-60 hover:opacity-90'
+    );
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="space-y-4 pt-4">
+          <div className="flex flex-wrap items-end gap-4">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-muted-foreground">Process</span>
+              <select
+                value={viewLogId}
+                onChange={(e) => setViewLogId(e.target.value)}
+                className="min-w-[200px] rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                {mainLogs.map((l) => (
+                  <option key={l.id} value={l.id}>{l.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-muted-foreground">Start date</span>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-muted-foreground">End date</span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={handleFetch}
+              disabled={!socket?.connected || fetchLoading || mainLogs.length === 0}
+              className={cn(
+                'inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium',
+                'bg-primary text-primary-foreground hover:bg-primary/90',
+                'disabled:opacity-50 disabled:pointer-events-none'
+              )}
+            >
+              {fetchLoading ? <Loader2 className="size-4 animate-spin" /> : null}
+              Fetch
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-muted-foreground">Filters:</span>
+            <button type="button" onClick={() => toggleLevel('e')} className={levelButtonClass('e')}>Errors</button>
+            <button type="button" onClick={() => toggleLevel('w')} className={levelButtonClass('w')}>Warnings</button>
+            <button type="button" onClick={() => toggleLevel('c')} className={levelButtonClass('c')}>Critical</button>
+            <button type="button" onClick={() => toggleLevel('i')} className={levelButtonClass('i')}>Info</button>
+            <button type="button" onClick={() => toggleLevel('d')} className={levelButtonClass('d')}>Debug</button>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search"
+              className="h-9 w-40 rounded-md border border-input bg-background px-3 text-sm"
+            />
+            <label className="flex items-center gap-1">
+              <span className="text-xs text-muted-foreground">BEFORE</span>
+              <input
+                type="number"
+                min={0}
+                max={CONTEXT_CAP}
+                value={beforeContext}
+                onChange={(e) => setBeforeContext(Math.max(0, Math.min(CONTEXT_CAP, Number(e.target.value) || 0)))}
+                className="w-14 rounded-md border border-input bg-background px-2 py-1 text-sm"
+              />
+            </label>
+            <label className="flex items-center gap-1">
+              <span className="text-xs text-muted-foreground">AFTER</span>
+              <input
+                type="number"
+                min={0}
+                max={CONTEXT_CAP}
+                value={afterContext}
+                onChange={(e) => setAfterContext(Math.max(0, Math.min(CONTEXT_CAP, Number(e.target.value) || 0)))}
+                className="w-14 rounded-md border border-input bg-background px-2 py-1 text-sm"
+              />
+            </label>
+            {uniqueProcessNames.length > 0 && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setProcessFilterOpen((o) => !o)}
+                  className="rounded-md border border-input bg-background px-3 py-1.5 text-sm"
+                >
+                  Process: {selectedProcesses == null || selectedProcesses.length === 0 ? 'All' : `${selectedProcesses.length} selected`}
+                </button>
+                {processFilterOpen && (
+                  <div className="absolute left-0 top-full mt-1 z-50 min-w-[180px] rounded-md border border-border bg-popover p-2 shadow-md">
+                    <button
+                      type="button"
+                      className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+                      onClick={() => { setSelectedProcesses(null); setProcessFilterOpen(false); }}
+                    >
+                      Clear all
+                    </button>
+                    <div className="max-h-40 overflow-auto mt-1">
+                      {uniqueProcessNames.map((name) => (
+                        <label key={name} className="flex items-center gap-2 px-2 py-1 hover:bg-accent/50 rounded cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selectedProcesses != null && selectedProcesses.includes(name)}
+                            onChange={() => {
+                              setSelectedProcesses((prev) => {
+                                const next = prev == null ? [] : [...prev];
+                                const i = next.indexOf(name);
+                                if (i >= 0) next.splice(i, 1);
+                                else next.push(name);
+                                return next.length ? next : null;
+                              });
+                            }}
+                          />
+                          <span className="text-sm truncate">{name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {fetchError && <p className="text-sm text-destructive" role="alert">{fetchError}</p>}
+          {fetchTruncated && !fetchError && (
+            <p className="text-sm text-muted-foreground">Results truncated to max lines.</p>
+          )}
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => jumpToError('prev')}
+              disabled={errorIndices.length === 0}
+              className="rounded-md border border-input px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50"
+            >
+              Previous error
+            </button>
+            <button
+              type="button"
+              onClick={() => jumpToError('next')}
+              disabled={errorIndices.length === 0}
+              className="rounded-md border border-input px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50"
+            >
+              Next error
+            </button>
+            {fetchedLines.length > 0 && (
+              <span className="text-xs text-muted-foreground">
+                {viewEntries.length} lines shown
+                {matchIndices.length > 0 && ` (${matchIndices.length} matches)`}
+              </span>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {viewEntries.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Log stream</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div
+              ref={viewStreamRef}
+              className="rounded-md border border-input bg-muted/30 h-[60vh] overflow-auto"
+              data-view-entries-container
+            >
+              <div className="font-mono text-xs leading-relaxed" data-view-entries>
+                {viewEntries.map((entry, i) => {
+                  const { line, parsed } = entry;
+                  if (!parsed) {
+                    return (
+                      <div key={`${entry.index}-${i}`} className="px-4 py-0.5 border-b border-border/30 last:border-0 whitespace-pre-wrap break-all">
+                        {line}
+                      </div>
+                    );
+                  }
+                  const { timestamp, level, kiosk, process: proc, pid, body } = parsed;
+                  const s = levelStyle(level);
+                  const badge = String(level || '?').toUpperCase();
+                  const bodyStr = String(body ?? '').trimStart();
+                  const parts = bodyStr.includes('#012') ? bodyStr.split('#012') : null;
+                  const isCollapsed = parts && parts.length > 1 && !expandedTracebacks.has(entry.index);
+                  const toggleTraceback = () => {
+                    setExpandedTracebacks((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(entry.index)) next.delete(entry.index);
+                      else next.add(entry.index);
+                      return next;
+                    });
+                  };
+                  return (
+                    <div
+                      key={`${entry.index}-${i}`}
+                      className={cn(
+                        'px-4 py-0.5 border-b border-border/30 last:border-0 whitespace-pre-wrap break-all',
+                        s.row
+                      )}
+                    >
+                      <span className="text-muted-foreground">{timestamp}</span>
+                      {' '}
+                      <span className={cn('inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[0.65rem] leading-none border', s.badge)}>
+                        {badge}
+                      </span>
+                      {' '}
+                      <span className="text-violet-300">{kiosk}</span>
+                      {' '}
+                      <span className="text-cyan-300">KEYMELOG|{proc}[{pid}]</span>
+                      <span className="text-muted-foreground">:</span>
+                      <span className={cn('ml-1', level === 'd' ? 'text-muted-foreground' : 'text-foreground')}>
+                        {parts && parts.length > 1
+                          ? (
+                              <>
+                                {parts[0].trimStart()}
+                                {isCollapsed ? (
+                                  <button
+                                    type="button"
+                                    onClick={toggleTraceback}
+                                    className="ml-2 text-xs text-primary hover:underline"
+                                  >
+                                    [+{parts.length - 1} lines]
+                                  </button>
+                                ) : (
+                                  <>
+                                    {parts.slice(1).map((p, j) => (
+                                      <span key={j} className="block ml-2">{p.trimStart()}</span>
+                                    ))}
+                                    <button
+                                      type="button"
+                                      onClick={toggleTraceback}
+                                      className="ml-2 text-xs text-primary hover:underline"
+                                    >
+                                      [collapse]
+                                    </button>
+                                  </>
+                                )}
+                              </>
+                            )
+                          : bodyStr}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 export default function LogTailPage({ socket }) {
+  const [activeTab, setActiveTab] = useState('tail');
   const [logs, setLogs] = useState([]);
   const [logId, setLogId] = useState('');
   const [initialLines, setInitialLines] = useState(INITIAL_LINES_DEFAULT);
@@ -118,6 +593,8 @@ export default function LogTailPage({ socket }) {
     d: true,
     other: true,
   }));
+  const [selectedProcesses, setSelectedProcesses] = useState(null);
+  const [processFilterOpen, setProcessFilterOpen] = useState(false);
 
   const linesRef = useRef([]);
   const onTailLineRef = useRef(null);
@@ -131,6 +608,15 @@ export default function LogTailPage({ socket }) {
   const selectedLog = useMemo(() => logs.find((l) => l.id === logId), [logs, logId]);
   const isAllLog = selectedLog?.type === 'all';
   const canDownload = renderLineCount > 0;
+
+  const uniqueProcessNames = useMemo(() => {
+    const set = new Set();
+    for (const line of renderLines) {
+      const p = parseKeyMeLine(line)?.process;
+      if (p) set.add(p);
+    }
+    return Array.from(set).sort();
+  }, [renderLines]);
 
   const viewEntries = useMemo(() => {
     const qRaw = String(searchQuery || '').trim();
@@ -146,10 +632,14 @@ export default function LogTailPage({ socket }) {
         const hay = matchCase ? String(line) : String(line).toLowerCase();
         if (!hay.includes(needle)) continue;
       }
+      if (isAllLog && selectedProcesses != null && selectedProcesses.length > 0) {
+        const proc = parsed?.process;
+        if (!proc || !selectedProcesses.includes(proc)) continue;
+      }
       out.push({ line, parsed, level: lvl });
     }
     return out;
-  }, [renderLines, searchQuery, matchCase, levelFilter]);
+  }, [renderLines, searchQuery, matchCase, levelFilter, isAllLog, selectedProcesses]);
 
   const shownCount = viewEntries.length;
 
@@ -408,6 +898,47 @@ export default function LogTailPage({ socket }) {
     <div className="space-y-6">
       <PageTitle icon={ScrollText}>Device logs</PageTitle>
 
+      <div className="flex gap-1 border-b border-border">
+        <button
+          type="button"
+          onClick={() => setActiveTab('tail')}
+          className={cn(
+            'px-4 py-2 text-sm font-medium rounded-t-md border border-b-0 -mb-px',
+            activeTab === 'tail'
+              ? 'bg-background border-border'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          )}
+        >
+          Tail (Live)
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('view')}
+          className={cn(
+            'px-4 py-2 text-sm font-medium rounded-t-md border border-b-0 -mb-px',
+            activeTab === 'view'
+              ? 'bg-background border-border'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          )}
+        >
+          View (Range)
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('analyze')}
+          className={cn(
+            'px-4 py-2 text-sm font-medium rounded-t-md border border-b-0 -mb-px',
+            activeTab === 'analyze'
+              ? 'bg-background border-border'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          )}
+        >
+          Analyze (Insights)
+        </button>
+      </div>
+
+      {activeTab === 'tail' && (
+        <>
       <Card>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground leading-relaxed">
@@ -476,6 +1007,61 @@ export default function LogTailPage({ socket }) {
                 className="w-24 rounded-md border border-input bg-background px-3 py-2 text-sm"
               />
             </label>
+
+            {isAllLog && (
+              <div className="relative">
+                <span className="text-xs font-medium text-muted-foreground block mb-1">Process filter</span>
+                <button
+                  type="button"
+                  onClick={() => setProcessFilterOpen((o) => !o)}
+                  className="min-w-[140px] rounded-md border border-input bg-background px-3 py-2 text-sm text-left flex items-center justify-between gap-2"
+                >
+                  <span className="truncate">
+                    {selectedProcesses == null || selectedProcesses.length === 0
+                      ? 'Clear all'
+                      : `${selectedProcesses.length} selected`}
+                  </span>
+                </button>
+                {processFilterOpen && (
+                  <div className="absolute left-0 top-full mt-1 z-50 min-w-[200px] rounded-md border border-border bg-popover p-2 shadow-md">
+                    <button
+                      type="button"
+                      className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+                      onClick={() => { setSelectedProcesses(null); setProcessFilterOpen(false); }}
+                    >
+                      Clear all
+                    </button>
+                    <div className="border-t border-border mt-2 pt-2 max-h-48 overflow-auto">
+                      <p className="text-xs text-muted-foreground px-2 pb-1">Select some:</p>
+                      {uniqueProcessNames.map((name) => {
+                        const checked = selectedProcesses != null && selectedProcesses.includes(name);
+                        return (
+                          <label key={name} className="flex items-center gap-2 px-2 py-1 hover:bg-accent/50 rounded cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                setSelectedProcesses((prev) => {
+                                  const next = prev == null ? [] : [...prev];
+                                  const i = next.indexOf(name);
+                                  if (i >= 0) next.splice(i, 1);
+                                  else next.push(name);
+                                  return next.length ? next : null;
+                                });
+                              }}
+                            />
+                            <span className="text-sm truncate">{name}</span>
+                          </label>
+                        );
+                      })}
+                      {uniqueProcessNames.length === 0 && (
+                        <p className="text-xs text-muted-foreground px-2 py-1">No processes in buffer</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="flex items-center gap-2">
               <button
@@ -814,6 +1400,20 @@ export default function LogTailPage({ socket }) {
           </div>
         </DialogContent>
       </Dialog>
+        </>
+      )}
+
+      {activeTab === 'view' && (
+        <ViewTab socket={socket} />
+      )}
+
+      {activeTab === 'analyze' && (
+        <Card>
+          <CardContent className="py-12">
+            <p className="text-center text-muted-foreground">Insights – Coming soon</p>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

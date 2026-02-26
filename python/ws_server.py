@@ -143,6 +143,11 @@ def _dispatch_request(client_id, request_id, event, data, connection_count, conn
             ws_protocol.PUSH_LOG_TAIL_LINE,
         ),
         'log_tail_stop': lambda: handlers.log_tail_stop(client_id),
+        'get_log_range': lambda: handlers.get_log_range(
+            client_id,
+            data or {},
+            lambda cid, obj: _schedule_send(cid, obj),
+        ),
         'fleet_restart_process': lambda: handlers.fleet_restart_process(
             data or {},
             **(

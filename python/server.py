@@ -1013,6 +1013,12 @@ def log_tail_stop(client_id):
     return _log_tail_module.log_tail_stop(client_id)
 
 
+def get_log_range(client_id, data, send_callback):
+    """Return log lines for a date range (process main logs only, max 4 days). Streams batches via send_callback."""
+    keyme.log.info("WS: requesting get_log_range")
+    return _log_tail_module.get_log_range(data or {}, client_id, send_callback)
+
+
 # Fleet commands (state-changing) live in fleet_commands.py; re-export so ws_server and parser keep working.
 from control_panel.python import fleet_commands
 
