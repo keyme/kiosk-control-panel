@@ -207,33 +207,38 @@ def _is_process_main_log(log_id, path):
 
 
 def _archived_files_overlapping_range(pname, start_dt, end_dt):
-    """Return list of (archive_date, filepath, True) for archives whose period (d_prev, d_i] overlaps [start_dt, end_dt].
-    Archive filename date is when the log was rotated (end of period); content is (previous_archive_date, this_archive_date].
+    """Return list of (archive_date, filepath, is_gz) for dated logs whose period (d_prev, d_i] overlaps [start_dt, end_dt].
+    Filename date is when the log was rotated (end of period); content is (previous_date, this_date].
+    Includes both archived ({pname}.log-{YYYYMMDD}.gz) and unarchived dated ({pname}.log-{YYYYMMDD}) files.
+    When both exist for the same date, prefer .gz (archived).
     """
-    pattern = os.path.join(_LOG_DIR, pname + '.log-*.gz')
+    pattern = os.path.join(_LOG_DIR, pname + '.log-*')
     paths = glob.glob(pattern)
-    parsed = []
+    # date -> (filepath, is_gz); prefer .gz when same date exists as both .gz and plain
+    by_date = {}
     for filepath in paths:
         name = os.path.basename(filepath)
-        if not name.endswith('.gz'):
-            continue
-        suffix = name[:-3]
+        is_gz = name.endswith('.gz')
+        suffix = name[:-3] if is_gz else name
         parts = suffix.split('-')
         if len(parts) < 2:
             continue
         yyyymmdd = parts[-1]
+        if len(yyyymmdd) != 8 or not yyyymmdd.isdigit():
+            continue
         try:
             archive_date = datetime.strptime(yyyymmdd, '%Y%m%d').date()
         except ValueError:
             continue
-        parsed.append((archive_date, filepath))
-    parsed.sort(key=lambda t: t[0])
+        if archive_date not in by_date or (by_date[archive_date][1] is False and is_gz):
+            by_date[archive_date] = (filepath, is_gz)
+    parsed = sorted(by_date.items(), key=lambda t: t[0])
     result = []
-    for i, (d_i, filepath) in enumerate(parsed):
+    for i, (d_i, (filepath, is_gz)) in enumerate(parsed):
         d_prev = parsed[i - 1][0] if i > 0 else None
         # Period is (d_prev, d_i] (open left, closed right). Overlaps [start_dt, end_dt] iff d_prev < end_dt and d_i >= start_dt
         if (d_prev is None or d_prev < end_dt) and d_i >= start_dt:
-            result.append((d_i, filepath, True))
+            result.append((d_i, filepath, is_gz))
     return result
 
 
