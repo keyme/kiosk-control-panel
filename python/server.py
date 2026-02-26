@@ -639,6 +639,7 @@ from control_panel.python.fleet_commands import check_fleet_command_allowed
 
 _MOTION_WAIT_TIMEOUT = 60
 _motion_result_queue = queue.Queue()
+_motion_lock = threading.Lock()
 
 
 def deliver_motion_result(request):
@@ -687,45 +688,51 @@ def inventory_rotate_and_capture(data):
     if not (1 <= magazine <= 20):
         return WebsocketError([SocketErrors.INVALID_INPUT.value, "magazine must be 1-20"]).to_json()
 
-    # HOME carousel
-    _send_motion_async("HOME", {"axis": "carousel", "direction": "negative"})
+    if not _motion_lock.acquire(blocking=False):
+        return WebsocketError([SocketErrors.OTHER.value, "Another rotate/capture in progress"]).to_json()
+
     try:
-        ok, err = _motion_result_queue.get(timeout=_MOTION_WAIT_TIMEOUT)
-    except queue.Empty:
-        keyme.log.warning("inventory_rotate_and_capture: HOME timed out")
-        return WebsocketError([SocketErrors.OTHER.value, "Carousel move timed out"]).to_json()
-    if not ok:
-        keyme.log.warning("inventory_rotate_and_capture: HOME failed: %s", err)
-        return WebsocketError([SocketErrors.OTHER.value, err or "Carousel move timed out"]).to_json()
+        # HOME carousel
+        _send_motion_async("HOME", {"axis": "carousel", "direction": "negative"})
+        try:
+            ok, err = _motion_result_queue.get(timeout=_MOTION_WAIT_TIMEOUT)
+        except queue.Empty:
+            keyme.log.warning("inventory_rotate_and_capture: HOME timed out")
+            return WebsocketError([SocketErrors.OTHER.value, "Carousel move timed out"]).to_json()
+        if not ok:
+            keyme.log.warning("inventory_rotate_and_capture: HOME failed: %s", err)
+            return WebsocketError([SocketErrors.OTHER.value, err or "Carousel move timed out"]).to_json()
 
-    # GOTO carousel (magazine + 3 for inventory camera view)
-    position = (magazine + 3 - 1) % 20 + 1
-    position_name = "magazine{}".format(position)
-    _send_motion_async("GOTO", {"axis": "carousel", "position": position_name})
-    try:
-        ok, err = _motion_result_queue.get(timeout=_MOTION_WAIT_TIMEOUT)
-    except queue.Empty:
-        keyme.log.warning("inventory_rotate_and_capture: GOTO timed out")
-        return WebsocketError([SocketErrors.OTHER.value, "Carousel move timed out"]).to_json()
-    if not ok:
-        keyme.log.warning("inventory_rotate_and_capture: GOTO failed: %s", err)
-        return WebsocketError([SocketErrors.OTHER.value, err or "Carousel move timed out"]).to_json()
+        # GOTO carousel (magazine + 3 for inventory camera view)
+        position = (magazine + 3 - 1) % 20 + 1
+        position_name = "magazine{}".format(position)
+        _send_motion_async("GOTO", {"axis": "carousel", "position": position_name})
+        try:
+            ok, err = _motion_result_queue.get(timeout=_MOTION_WAIT_TIMEOUT)
+        except queue.Empty:
+            keyme.log.warning("inventory_rotate_and_capture: GOTO timed out")
+            return WebsocketError([SocketErrors.OTHER.value, "Carousel move timed out"]).to_json()
+        if not ok:
+            keyme.log.warning("inventory_rotate_and_capture: GOTO failed: %s", err)
+            return WebsocketError([SocketErrors.OTHER.value, err or "Carousel move timed out"]).to_json()
 
-    # Take images
-    resize = 1.0
-    overhead_b64, overhead_err = _take_image_on_device("overhead_camera", resize)
-    if overhead_err:
-        keyme.log.warning("inventory_rotate_and_capture: overhead_camera failed: %s", overhead_err)
-        return WebsocketError([SocketErrors.OTHER.value, "Overhead camera: " + overhead_err]).to_json()
-    inv_b64, inv_err = _take_image_on_device("inventory_camera", resize)
-    if inv_err:
-        keyme.log.warning("inventory_rotate_and_capture: inventory_camera failed: %s", inv_err)
-        return WebsocketError([SocketErrors.OTHER.value, "Inventory camera: " + inv_err]).to_json()
+        # Take images
+        resize = 1.0
+        overhead_b64, overhead_err = _take_image_on_device("overhead_camera", resize)
+        if overhead_err:
+            keyme.log.warning("inventory_rotate_and_capture: overhead_camera failed: %s", overhead_err)
+            return WebsocketError([SocketErrors.OTHER.value, "Overhead camera: " + overhead_err]).to_json()
+        inv_b64, inv_err = _take_image_on_device("inventory_camera", resize)
+        if inv_err:
+            keyme.log.warning("inventory_rotate_and_capture: inventory_camera failed: %s", inv_err)
+            return WebsocketError([SocketErrors.OTHER.value, "Inventory camera: " + inv_err]).to_json()
 
-    return WebsocketSuccess({
-        "overheadImageBase64": overhead_b64,
-        "inventoryImageBase64": inv_b64,
-    }).to_json()
+        return WebsocketSuccess({
+            "overheadImageBase64": overhead_b64,
+            "inventoryImageBase64": inv_b64,
+        }).to_json()
+    finally:
+        _motion_lock.release()
 
 
 def clear_cache():
