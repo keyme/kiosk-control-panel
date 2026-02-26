@@ -206,6 +206,37 @@ def _is_process_main_log(log_id, path):
     return path.endswith('.log')
 
 
+def _archived_files_overlapping_range(pname, start_dt, end_dt):
+    """Return list of (archive_date, filepath, True) for archives whose period (d_prev, d_i] overlaps [start_dt, end_dt].
+    Archive filename date is when the log was rotated (end of period); content is (previous_archive_date, this_archive_date].
+    """
+    pattern = os.path.join(_LOG_DIR, pname + '.log-*.gz')
+    paths = glob.glob(pattern)
+    parsed = []
+    for filepath in paths:
+        name = os.path.basename(filepath)
+        if not name.endswith('.gz'):
+            continue
+        suffix = name[:-3]
+        parts = suffix.split('-')
+        if len(parts) < 2:
+            continue
+        yyyymmdd = parts[-1]
+        try:
+            archive_date = datetime.strptime(yyyymmdd, '%Y%m%d').date()
+        except ValueError:
+            continue
+        parsed.append((archive_date, filepath))
+    parsed.sort(key=lambda t: t[0])
+    result = []
+    for i, (d_i, filepath) in enumerate(parsed):
+        d_prev = parsed[i - 1][0] if i > 0 else None
+        # Period is (d_prev, d_i] (open left, closed right). Overlaps [start_dt, end_dt] iff d_prev < end_dt and d_i >= start_dt
+        if (d_prev is None or d_prev < end_dt) and d_i >= start_dt:
+            result.append((d_i, filepath, True))
+    return result
+
+
 def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_read, max_lines, start_ts, end_ts):
     """Background thread: read each file, filter by timestamp (awk), send batches (~120 KB) and done via send_callback."""
     total_emitted = 0
@@ -405,35 +436,18 @@ def get_log_range(data, client_id, send_callback):
     today = datetime.utcnow().date()
     keyme.log.info(f"log_tail get_log_range log_id={log_id!r} pname={pname!r} today={today} _LOG_DIR={_LOG_DIR!r}")
 
-    files_to_read = []
-    missing_dates = []
-    d = start_dt
-    while d <= end_dt:
-        if d == today:
-            filepath = os.path.join(_LOG_DIR, pname + '.log')
-            exists = os.path.isfile(filepath)
-            if exists:
-                files_to_read.append((d, filepath, False))
-                keyme.log.debug(f"log_tail get_log_range date={d} using current .log path={filepath!r}")
-            else:
-                missing_dates.append(d.isoformat())
-                keyme.log.debug(f"log_tail get_log_range date={d} (today) missing path={filepath!r}")
-        else:
-            # Match archived naming: {pname}.log-{YYYYMMDD}.gz (e.g. CONTROL_PANEL.log-20260222.gz)
-            yyyymmdd = d.strftime('%Y%m%d')
-            filepath = os.path.join(_LOG_DIR, pname + '.log-' + yyyymmdd + '.gz')
-            if os.path.isfile(filepath):
-                files_to_read.append((d, filepath, True))
-                keyme.log.debug(f"log_tail get_log_range date={d} using rotated path={filepath!r}")
-            else:
-                missing_dates.append(d.isoformat())
-                keyme.log.debug(f"log_tail get_log_range date={d} missing path={filepath!r}")
-        d += timedelta(days=1)
-
-    if missing_dates:
-        keyme.log.info(f"log_tail get_log_range no files for dates: {missing_dates}")
+    # Archive filename date = when rotated (end of period). Content = (prev_archive_date, this_archive_date].
+    files_to_read = _archived_files_overlapping_range(pname, start_dt, end_dt)
+    if start_dt <= today <= end_dt:
+        current_log_path = os.path.join(_LOG_DIR, pname + '.log')
+        if os.path.isfile(current_log_path):
+            files_to_read.append((today, current_log_path, False))
+            keyme.log.debug(f"log_tail get_log_range including current .log path={current_log_path!r}")
     dates_with_data = [t[0].isoformat() for t in files_to_read]
-    keyme.log.info(f"log_tail get_log_range reading {len(files_to_read)} file(s) for dates {dates_with_data}")
+    missing_dates = [] if files_to_read else [f"{start_dt.isoformat()}..{end_dt.isoformat()}"]
+    keyme.log.info(f"log_tail get_log_range overlap selection: reading {len(files_to_read)} file(s) dates_with_data={dates_with_data}")
+    for day_or_archive, filepath, _ in files_to_read:
+        keyme.log.debug(f"log_tail get_log_range file day_or_archive={day_or_archive} path={filepath!r}")
 
     if not files_to_read:
         keyme.log.warning(f"log_tail get_log_range no files found for range start_dt={start_dt} end_dt={end_dt} missing_dates={missing_dates}")
