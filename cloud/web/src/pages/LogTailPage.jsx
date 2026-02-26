@@ -1683,12 +1683,12 @@ export default function LogTailPage({ socket }) {
                     const onDone = (data) => {
                       if (data?.stream_id !== analyzeStreamIdRef.current) return;
                       setAnalyzeLoading(false);
-                      socket.off('log_analyze_batch', onBatch);
-                      socket.off('log_analyze_done', onDone);
+                      socket.off('log_range_batch', onBatch);
+                      socket.off('log_range_done', onDone);
                     };
 
-                    socket.on('log_analyze_batch', onBatch);
-                    socket.on('log_analyze_done', onDone);
+                    socket.on('log_range_batch', onBatch);
+                    socket.on('log_range_done', onDone);
 
                     socket.requestIfSupported('run_log_analyze', {
                       start_datetime: start,
@@ -1699,14 +1699,14 @@ export default function LogTailPage({ socket }) {
                       if (!res?.success || !res?.data?.started) {
                         setAnalyzeLoading(false);
                         setAnalyzeError(res?.errors?.join(', ') || 'Analysis failed');
-                        socket.off('log_analyze_batch', onBatch);
-                        socket.off('log_analyze_done', onDone);
+                        socket.off('log_range_batch', onBatch);
+                        socket.off('log_range_done', onDone);
                       }
                     }).catch((err) => {
                       setAnalyzeLoading(false);
                       setAnalyzeError(err?.message || 'Analysis failed');
-                      socket.off('log_analyze_batch', onBatch);
-                      socket.off('log_analyze_done', onDone);
+                      socket.off('log_range_batch', onBatch);
+                      socket.off('log_range_done', onDone);
                     });
                   }}
                   disabled={!socket?.connected || analyzeLoading || !analyzeStartDatetime.trim() || !analyzeEndDatetime.trim()}

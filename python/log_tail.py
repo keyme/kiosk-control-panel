@@ -33,7 +33,6 @@ _RANGE_BATCH_SIZE_BYTES = 120 * 1024
 
 # Log analyze: allowlisted awk scripts (analysis_id -> .awk filename).
 _LOG_ANALYZE_SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'log_analyze_scripts')
-_ANALYZE_BATCH_SIZE = 100
 ANALYZE_SCRIPTS = {
     'errors_and_restarts': 'errors_and_restarts.awk',
 }
@@ -468,34 +467,39 @@ def get_log_range(data, client_id, send_callback):
 # -----------------------------------------------------------------------------
 
 def _run_log_analyze_stream_thread(client_id, send_callback, stream_id, files_to_read, start_ts, end_ts, script_path):
-    """Background: for each file, zcat|awk, read lines, push batches and done."""
-    awk_args = ['nice', '-n', '100', 'awk', '-v', f'start={start_ts}', '-v', f'end={end_ts}', '-f', script_path]
+    """Background: same flow as get_log_range — for each file zcat|awk, read in chunks, push batches via PUSH_LOG_RANGE_*."""
+    awk_cmd = ['nice', '-n', '100', 'awk', '-v', f'start={start_ts}', '-v', f'end={end_ts}', '-f', script_path]
 
-    def send_batch(lines):
-        if lines:
+    def send_batch(batch):
+        if batch:
             send_callback(client_id, {
-                'event': ws_protocol.PUSH_LOG_ANALYZE_BATCH,
-                'data': {'stream_id': stream_id, 'lines': lines},
+                'event': ws_protocol.PUSH_LOG_RANGE_BATCH,
+                'data': {'stream_id': stream_id, 'lines': batch},
             })
 
-    def send_done():
+    def send_done(truncated_flag):
         send_callback(client_id, {
-            'event': ws_protocol.PUSH_LOG_ANALYZE_DONE,
-            'data': {'stream_id': stream_id},
+            'event': ws_protocol.PUSH_LOG_RANGE_DONE,
+            'data': {'stream_id': stream_id, 'truncated': truncated_flag},
         })
 
+    total_emitted = 0
     for _day, filepath, is_gz in files_to_read:
         reader = None
         awk_proc = None
+        reader_cmd = (['nice', '-n', '100', 'zcat', filepath] if is_gz else ['nice', '-n', '100', 'cat', filepath])
+        cmd_str = ' '.join(reader_cmd) + ' | ' + ' '.join(awk_cmd)
+        keyme.log.info(f"log_tail run_log_analyze executing: {cmd_str}")
+
         try:
             reader = subprocess.Popen(
-                ['nice', '-n', '100', 'zcat', filepath] if is_gz else ['nice', '-n', '100', 'cat', filepath],
+                reader_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
             )
             awk_proc = subprocess.Popen(
-                awk_args,
+                awk_cmd,
                 stdin=reader.stdout,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -506,26 +510,41 @@ def _run_log_analyze_stream_thread(client_id, send_callback, stream_id, files_to
             keyme.log.warning(f"log_tail run_log_analyze Popen failed path={filepath!r}: {e}")
             _terminate_and_wait(reader)
             _terminate_and_wait(awk_proc)
-            send_done()
+            send_done(False)
             return
 
         try:
+            line_buffer = ''
             batch = []
-            for line in awk_proc.stdout:
-                batch.append(line.rstrip('\n'))
-                if len(batch) >= _ANALYZE_BATCH_SIZE:
-                    send_batch(batch)
-                    batch = []
+            batch_bytes = 0
+            proc = awk_proc
+            while True:
+                chunk = proc.stdout.read(_RANGE_READ_CHUNK_SIZE)
+                if not chunk:
+                    break
+                line_buffer += chunk
+                while '\n' in line_buffer:
+                    line, line_buffer = line_buffer.split('\n', 1)
+                    batch.append(line)
+                    batch_bytes += len(line) + 1
+                    total_emitted += 1
+                    if batch_bytes >= _RANGE_BATCH_SIZE_BYTES:
+                        send_batch(batch)
+                        batch, batch_bytes = [], 0
             if batch:
                 send_batch(batch)
         except (OSError, ValueError) as e:
             keyme.log.warning(f"log_tail run_log_analyze read failed path={filepath!r}: {e}")
         finally:
-            _terminate_and_wait(awk_proc)
+            _terminate_and_wait(proc)
             _terminate_and_wait(reader)
+            if proc.stderr:
+                proc.stderr.read()
+            if reader.stderr:
+                reader.stderr.read()
 
-    send_done()
-    keyme.log.info(f"log_tail run_log_analyze stream done stream_id={stream_id!r}")
+    send_done(False)
+    keyme.log.info(f"log_tail run_log_analyze stream done stream_id={stream_id!r} emitted={total_emitted}")
 
 
 def run_log_analyze(data, client_id, send_callback):
