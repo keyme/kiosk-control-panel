@@ -8,6 +8,13 @@ import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/de
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
+import {
+  ANALYZE_PRESETS,
+  ANALYZE_PROCESS_NAMES,
+  ANALYZE_LEVELS,
+  ANALYZE_MESSAGE_PRESETS,
+  getPresetPayload,
+} from './analyzePresets';
 
 const INITIAL_LINES_DEFAULT = 50;
 const INITIAL_LINES_MAX = 200;
@@ -671,9 +678,9 @@ function ViewTab({ socket }) {
   );
 }
 
-/** Per-hour summary: buckets = { "2026-02-01T00": { errors, restarts, byProcess: { PROCESS: { errors, restarts } } }, ... }. */
-function ErrorsAndRestartsSummaryView({ buckets }) {
-  const [processFilter, setProcessFilter] = useState('');
+/** Per-hour summary: buckets = { "2026-02-01T00": { count, byProcess: { PROCESS: { count } } }, ... }. Single metric. */
+function AnalyzeSummaryView({ buckets }) {
+  const [selectedProcesses, setSelectedProcesses] = useState(() => new Set());
   const uniqueProcesses = useMemo(() => {
     if (!buckets || typeof buckets !== 'object') return [];
     const set = new Set();
@@ -688,41 +695,77 @@ function ErrorsAndRestartsSummaryView({ buckets }) {
   const chartData = useMemo(() => {
     if (!buckets || typeof buckets !== 'object') return [];
     const entries = Object.entries(buckets).map(([hour, v]) => {
-      let errors = 0;
-      let restarts = 0;
-      if (processFilter && v?.byProcess?.[processFilter]) {
-        errors = v.byProcess[processFilter].errors ?? 0;
-        restarts = v.byProcess[processFilter].restarts ?? 0;
+      let count = 0;
+      if (selectedProcesses.size > 0) {
+        for (const p of selectedProcesses) {
+          const bp = v?.byProcess?.[p];
+          if (bp) count += bp.count ?? 0;
+        }
       } else {
-        errors = v?.errors ?? 0;
-        restarts = v?.restarts ?? 0;
+        count = v?.count ?? 0;
       }
-      return { hour, errors, restarts };
+      return { hour, count };
     });
     return entries.sort((a, b) => a.hour.localeCompare(b.hour));
-  }, [buckets, processFilter]);
-  const totalErrors = chartData.reduce((s, d) => s + d.errors, 0);
-  const totalRestarts = chartData.reduce((s, d) => s + d.restarts, 0);
+  }, [buckets, selectedProcesses]);
+  const total = chartData.reduce((s, d) => s + d.count, 0);
+
+  const toggleProcess = (p) => {
+    setSelectedProcesses((prev) => {
+      const next = new Set(prev);
+      if (prev.size === 0) {
+        // Showing all; unchecking p = show all except p
+        return new Set(uniqueProcesses.filter((x) => x !== p));
+      }
+      if (next.has(p)) next.delete(p);
+      else next.add(p);
+      if (next.size === uniqueProcesses.length) return new Set(); // all selected = show all
+      return next;
+    });
+  };
+  const selectAll = () => setSelectedProcesses(new Set());
+  const selectNone = () => setSelectedProcesses(new Set());
 
   return (
     <div className="space-y-6">
       <p className="text-sm text-muted-foreground">
-        Total errors: {totalErrors} · Total restarts: {totalRestarts}
+        Total: {total}
       </p>
-      <div className="flex flex-wrap items-center gap-4">
-        <label className="flex items-center gap-2">
-          <span className="text-xs font-medium text-muted-foreground">Process</span>
-          <select
-            value={processFilter}
-            onChange={(e) => setProcessFilter(e.target.value)}
-            className="rounded-md border border-input bg-background px-3 py-2 text-sm min-w-[180px]"
-          >
-            <option value="">All</option>
+      <div className="flex flex-wrap items-start gap-4">
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-medium text-muted-foreground">Processes</span>
+          <div className="flex gap-2 text-xs">
+            <button type="button" onClick={selectAll} className="text-primary hover:underline">
+              All
+            </button>
+            <span className="text-muted-foreground">·</span>
+            <button type="button" onClick={selectNone} className="text-primary hover:underline">
+              None
+            </button>
+            {selectedProcesses.size > 0 && (
+              <>
+                <span className="text-muted-foreground">·</span>
+                <span className="text-muted-foreground">{selectedProcesses.size} selected</span>
+              </>
+            )}
+          </div>
+          <div className="rounded-md border border-input bg-background p-2 max-h-[200px] overflow-auto flex flex-col gap-1">
             {uniqueProcesses.map((p) => (
-              <option key={p} value={p}>{p}</option>
+              <label key={p} className="flex items-center gap-2 cursor-pointer hover:bg-muted/50 rounded px-2 py-1">
+                <input
+                  type="checkbox"
+                  checked={selectedProcesses.size === 0 || selectedProcesses.has(p)}
+                  onChange={() => toggleProcess(p)}
+                  className="rounded border-input"
+                />
+                <span className="text-sm">{p}</span>
+              </label>
             ))}
-          </select>
-        </label>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            {selectedProcesses.size === 0 ? 'Showing all processes.' : 'Showing selected processes only.'}
+          </p>
+        </div>
       </div>
       {chartData.length > 0 ? (
         <div className="h-[300px] w-full">
@@ -736,13 +779,12 @@ function ErrorsAndRestartsSummaryView({ buckets }) {
                 labelStyle={{ color: 'var(--foreground)' }}
               />
               <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Area type="monotone" dataKey="errors" name="Errors" stackId="a" fill="var(--chart-1)" stroke="var(--chart-1)" />
-              <Area type="monotone" dataKey="restarts" name="Restarts" stackId="a" fill="var(--chart-2)" stroke="var(--chart-2)" />
+              <Area type="monotone" dataKey="count" name="Matches" fill="var(--chart-1)" stroke="var(--chart-1)" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground py-4">No events in selected range.</p>
+        <p className="text-sm text-muted-foreground py-4">No matches in selected range.</p>
       )}
       <p className="text-sm text-muted-foreground">
         Summary by hour. Narrow the date range to see an event list.
@@ -882,17 +924,48 @@ export default function LogTailPage({ socket }) {
 
   const [analyzeStartDatetime, setAnalyzeStartDatetime] = useState('');
   const [analyzeEndDatetime, setAnalyzeEndDatetime] = useState('');
-  const [analyzeId, setAnalyzeId] = useState('errors_and_restarts');
-  const [analyzeOutput, setAnalyzeOutput] = useState('');
+  const [analyzePresetId, setAnalyzePresetId] = useState(() => (ANALYZE_PRESETS[0]?.id ?? 'build'));
+  const [analyzeBuilder, setAnalyzeBuilder] = useState(() => ({
+    processes: [],
+    levels: [],
+    messagePresetIds: [],
+    messageCustom: '',
+  }));
   const [analyzeBuckets, setAnalyzeBuckets] = useState(null);
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
   const [analyzeError, setAnalyzeError] = useState(null);
   const analyzeStreamIdRef = useRef(null);
 
-  const errorsAndRestartsEvents = useMemo(() => {
-    if (analyzeId !== 'errors_and_restarts' || !analyzeOutput) return null;
-    return parseErrorsAndRestartsOutput(analyzeOutput).events;
-  }, [analyzeId, analyzeOutput]);
+  const currentAnalyzePayload = useMemo(() => {
+    if (analyzePresetId && analyzePresetId !== 'build') {
+      const preset = ANALYZE_PRESETS.find((p) => p.id === analyzePresetId);
+      return preset ? getPresetPayload(preset) : { processes: [], levels: [], message_regex: '' };
+    }
+    const { processes, levels, messagePresetIds, messageCustom } = analyzeBuilder;
+    const message_regex = messagePresetIds.length
+      ? messagePresetIds
+          .map((id) => ANALYZE_MESSAGE_PRESETS.find((m) => m.id === id)?.message_regex)
+          .filter(Boolean)
+          .join('|')
+      : (messageCustom || '').trim();
+    return { processes: [...processes], levels: [...levels], message_regex };
+  }, [analyzePresetId, analyzeBuilder]);
+
+  const currentQueryLabel = useMemo(() => {
+    if (analyzePresetId && analyzePresetId !== 'build') {
+      const preset = ANALYZE_PRESETS.find((p) => p.id === analyzePresetId);
+      return preset?.query ?? '';
+    }
+    const { processes, levels, messagePresetIds, messageCustom } = analyzeBuilder;
+    const parts = [];
+    if (processes.length) parts.push(`process_name:${processes.length === 1 ? processes[0] : '(' + processes.join(' OR ') + ')'}`);
+    if (levels.length) parts.push(`log_level:${levels.length === 1 ? levels[0] : '(' + levels.join(' OR ') + ')'}`);
+    if (messagePresetIds.length) {
+      const labels = messagePresetIds.map((id) => ANALYZE_MESSAGE_PRESETS.find((m) => m.id === id)?.label).filter(Boolean);
+      parts.push(`message:${labels.join(' OR ')}`);
+    } else if (messageCustom.trim()) parts.push(`message:/${messageCustom.replace(/[/\\]/g, '\\$&')}/`);
+    return parts.length ? parts.join(' AND ') : '(no filter)';
+  }, [analyzePresetId, analyzeBuilder]);
 
   const linesRef = useRef([]);
   const onTailLineRef = useRef(null);
@@ -1732,13 +1805,18 @@ export default function LogTailPage({ socket }) {
                   />
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-muted-foreground">Analysis</span>
+                  <span className="text-xs font-medium text-muted-foreground">Preset</span>
                   <select
-                    value={analyzeId}
-                    onChange={(e) => setAnalyzeId(e.target.value)}
-                    className="min-w-[200px] rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={analyzePresetId}
+                    onChange={(e) => setAnalyzePresetId(e.target.value)}
+                    className="min-w-[320px] rounded-md border border-input bg-background px-3 py-2 text-sm"
                   >
-                    <option value="errors_and_restarts">Errors and restarts</option>
+                    {ANALYZE_PRESETS.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.query}
+                      </option>
+                    ))}
+                    <option value="build">Build custom</option>
                   </select>
                 </label>
                 <button
@@ -1751,7 +1829,6 @@ export default function LogTailPage({ socket }) {
                       return;
                     }
                     setAnalyzeError(null);
-                    setAnalyzeOutput('');
                     setAnalyzeBuckets(null);
                     setAnalyzeLoading(true);
                     const streamId = Date.now();
@@ -1769,7 +1846,7 @@ export default function LogTailPage({ socket }) {
                     socket.requestIfSupported('run_log_analyze', {
                       start_datetime: start,
                       end_datetime: end,
-                      analysis_id: analyzeId,
+                      ...currentAnalyzePayload,
                       stream_id: streamId,
                     }).then((res) => {
                       if (!res?.success || !res?.data?.started) {
@@ -1794,6 +1871,95 @@ export default function LogTailPage({ socket }) {
                   Run
                 </button>
               </div>
+              {analyzePresetId === 'build' && (
+                <div className="rounded-md border border-input bg-muted/20 p-4 space-y-4">
+                  <span className="text-xs font-medium text-muted-foreground">Build custom query</span>
+                  <div className="flex flex-wrap gap-6">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs text-muted-foreground">Processes</span>
+                      <div className="flex flex-wrap gap-2 max-h-[120px] overflow-auto">
+                        {ANALYZE_PROCESS_NAMES.map((p) => (
+                          <label key={p} className="flex items-center gap-1.5 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={analyzeBuilder.processes.includes(p)}
+                              onChange={() => {
+                                setAnalyzeBuilder((prev) => ({
+                                  ...prev,
+                                  processes: prev.processes.includes(p)
+                                    ? prev.processes.filter((x) => x !== p)
+                                    : [...prev.processes, p],
+                                }));
+                              }}
+                              className="rounded border-input"
+                            />
+                            {p}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs text-muted-foreground">Log level</span>
+                      <div className="flex flex-wrap gap-2">
+                        {ANALYZE_LEVELS.map(({ value, label }) => (
+                          <label key={value} className="flex items-center gap-1.5 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={analyzeBuilder.levels.includes(value)}
+                              onChange={() => {
+                                setAnalyzeBuilder((prev) => ({
+                                  ...prev,
+                                  levels: prev.levels.includes(value)
+                                    ? prev.levels.filter((x) => x !== value)
+                                    : [...prev.levels, value],
+                                }));
+                              }}
+                              className="rounded border-input"
+                            />
+                            {label}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs text-muted-foreground">Message (presets)</span>
+                      <div className="flex flex-wrap gap-2 max-h-[100px] overflow-auto">
+                        {ANALYZE_MESSAGE_PRESETS.map((m) => (
+                          <label key={m.id} className="flex items-center gap-1.5 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={analyzeBuilder.messagePresetIds.includes(m.id)}
+                              onChange={() => {
+                                setAnalyzeBuilder((prev) => ({
+                                  ...prev,
+                                  messagePresetIds: prev.messagePresetIds.includes(m.id)
+                                    ? prev.messagePresetIds.filter((x) => x !== m.id)
+                                    : [...prev.messagePresetIds, m.id],
+                                }));
+                              }}
+                              className="rounded border-input"
+                            />
+                            {m.label}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs text-muted-foreground">Message (custom regex)</span>
+                      <input
+                        type="text"
+                        value={analyzeBuilder.messageCustom}
+                        onChange={(e) => setAnalyzeBuilder((prev) => ({ ...prev, messageCustom: e.target.value }))}
+                        placeholder="optional"
+                        className="rounded-md border border-input bg-background px-3 py-2 text-sm w-64"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground font-mono truncate" title={currentQueryLabel}>
+                Query: {currentQueryLabel}
+              </p>
               {analyzeError && <p className="text-sm text-destructive" role="alert">{analyzeError}</p>}
             </CardContent>
           </Card>
@@ -1807,18 +1973,8 @@ export default function LogTailPage({ socket }) {
                   <Loader2 className="size-4 animate-spin" aria-hidden />
                   Running…
                 </p>
-              ) : analyzeId === 'errors_and_restarts' && analyzeBuckets !== null ? (
-                <ErrorsAndRestartsSummaryView buckets={analyzeBuckets} />
-              ) : analyzeId === 'errors_and_restarts' && errorsAndRestartsEvents ? (
-                errorsAndRestartsEvents.length > 0 ? (
-                  <ErrorsAndRestartsView events={errorsAndRestartsEvents} />
-                ) : (
-                  <p className="text-sm text-muted-foreground">No events in range.</p>
-                )
-              ) : analyzeOutput !== '' ? (
-                <pre className="rounded-md border border-input bg-muted/30 p-4 text-xs font-mono overflow-auto max-h-[60vh] whitespace-pre-wrap break-all">
-                  {analyzeOutput}
-                </pre>
+              ) : analyzeBuckets !== null ? (
+                <AnalyzeSummaryView buckets={analyzeBuckets} />
               ) : (
                 <p className="text-sm text-muted-foreground">Run an analysis to see output.</p>
               )}

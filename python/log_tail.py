@@ -31,11 +31,9 @@ _RANGE_MAX_LINES_CAP = 50000
 _RANGE_READ_CHUNK_SIZE = 65536
 _RANGE_BATCH_SIZE_BYTES = 120 * 1024
 
-# Log analyze: allowlisted awk scripts (analysis_id -> .awk filename).
+# Log analyze: generic filter script (structured params -> -v pname, log_level, reg_message).
 _LOG_ANALYZE_SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'log_analyze_scripts')
-ANALYZE_SCRIPTS = {
-    'errors_and_restarts': 'errors_and_restarts.awk',
-}
+_LOG_FILTER_SCRIPT = 'log_filter.awk'
 
 # Archived logs: {base_name}-{YYYYMMDD}.gz or {base_name}-{YYYYMMDD} (unarchived).
 # Period covered by a file is (previous_archive_date, this_archive_date].
@@ -463,19 +461,29 @@ def get_log_range(data, client_id, send_callback):
 
 
 # -----------------------------------------------------------------------------
-# Log analyze: run awk script on all.log for date range (per-hour summary, one push)
+# Log analyze: generic filter (structured params -> awk -v), per-hour count, one push
 # -----------------------------------------------------------------------------
 
-def _run_log_analyze_summary_thread(client_id, send_callback, stream_id, files_to_read, start_ts, end_ts, script_path):
-    """Background: for each file zcat|awk, read full stdout, parse hour\\terrors\\trestarts, merge into buckets; send one push."""
-    awk_cmd = ['nice', '-n', '100', 'awk', '-v', f'start={start_ts}', '-v', f'end={end_ts}', '-f', script_path]
+def _run_log_analyze_filter_thread(client_id, send_callback, stream_id, files_to_read, start_ts, end_ts, pname, log_level, reg_message):
+    """Background: for each file zcat|awk -v pname,log_level,reg_message, parse hour\\tprocess\\tcount; merge; send one push."""
+    script_path = os.path.join(_LOG_ANALYZE_SCRIPTS_DIR, _LOG_FILTER_SCRIPT)
+    if not os.path.isfile(script_path):
+        keyme.log.warning(f"log_tail run_log_analyze script not found: {script_path}")
+        send_callback(client_id, {
+            'event': ws_protocol.PUSH_LOG_ANALYZE_RESULT,
+            'data': {'stream_id': stream_id, 'buckets': {}},
+        })
+        return
     buckets = {}
+    awk_base = ['nice', '-n', '100', 'awk', '-v', f'start={start_ts}', '-v', f'end={end_ts}',
+                '-v', f'pname={pname}', '-v', f'log_level={log_level}', '-v', f'reg_message={reg_message}',
+                '-f', script_path]
 
     for _day, filepath, is_gz in files_to_read:
         reader = None
         awk_proc = None
         reader_cmd = (['nice', '-n', '100', 'zcat', filepath] if is_gz else ['nice', '-n', '100', 'cat', filepath])
-        cmd_str = ' '.join(reader_cmd) + ' | ' + ' '.join(awk_cmd)
+        cmd_str = ' '.join(reader_cmd) + ' | ' + ' '.join(awk_base)
         keyme.log.info(f"log_tail run_log_analyze executing: {cmd_str}")
 
         try:
@@ -486,7 +494,7 @@ def _run_log_analyze_summary_thread(client_id, send_callback, stream_id, files_t
                 universal_newlines=True,
             )
             awk_proc = subprocess.Popen(
-                awk_cmd,
+                awk_base,
                 stdin=reader.stdout,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -519,39 +527,44 @@ def _run_log_analyze_summary_thread(client_id, send_callback, stream_id, files_t
             if not line:
                 continue
             parts = line.split('\t')
-            if len(parts) < 4:
+            if len(parts) < 3:
                 continue
             hour_s = parts[0].strip()
             process_s = parts[1].strip()
-            err_s = parts[2].strip()
-            rest_s = parts[3].strip()
             try:
-                err_n = int(err_s)
-                rest_n = int(rest_s)
+                count_n = int(parts[2].strip())
             except ValueError:
                 continue
             if hour_s not in buckets:
-                buckets[hour_s] = {'errors': 0, 'restarts': 0, 'byProcess': {}}
-            buckets[hour_s]['errors'] += err_n
-            buckets[hour_s]['restarts'] += rest_n
+                buckets[hour_s] = {'count': 0, 'byProcess': {}}
+            buckets[hour_s]['count'] += count_n
             if process_s:
                 if process_s not in buckets[hour_s]['byProcess']:
-                    buckets[hour_s]['byProcess'][process_s] = {'errors': 0, 'restarts': 0}
-                buckets[hour_s]['byProcess'][process_s]['errors'] += err_n
-                buckets[hour_s]['byProcess'][process_s]['restarts'] += rest_n
+                    buckets[hour_s]['byProcess'][process_s] = {'count': 0}
+                buckets[hour_s]['byProcess'][process_s]['count'] += count_n
 
     send_callback(client_id, {
         'event': ws_protocol.PUSH_LOG_ANALYZE_RESULT,
         'data': {'stream_id': stream_id, 'buckets': buckets},
     })
-    keyme.log.info(f"log_tail run_log_analyze summary done stream_id={stream_id!r} buckets={len(buckets)}")
+    keyme.log.info(f"log_tail run_log_analyze filter done stream_id={stream_id!r} buckets={len(buckets)}")
+
+
+def _sanitize_awk_var(s):
+    """Remove chars that break awk -v (e.g. newline, null, =). Allow backslash for regex."""
+    if s is None:
+        return ''
+    s = str(s).strip()
+    for c in ('\x00', '\n', '\r', '='):
+        s = s.replace(c, '')
+    return s
 
 
 def run_log_analyze(data, client_id, send_callback):
-    """Run an allowlisted awk analysis on all.log for the given datetime range.
-    data: start_datetime, end_datetime, analysis_id, stream_id?.
+    """Run generic log filter on all.log for the given datetime range.
+    data: start_datetime, end_datetime, processes?, levels?, message_regex?, stream_id?.
     Returns { success: True, data: { started, stream_id } } or { success: False, errors }.
-    Batches and done are pushed via send_callback. No day limit (analyze only).
+    Result pushed via send_callback as log_analyze_result with buckets (count, byProcess).
     """
     data = data or {}
     start_raw = data.get('start_datetime') or data.get('start_date')
@@ -565,13 +578,22 @@ def run_log_analyze(data, client_id, send_callback):
     if start_dt_parsed >= end_dt_parsed:
         return {'success': False, 'errors': ['start must be before end']}
 
-    analysis_id = (data.get('analysis_id') or '').strip()
-    if not analysis_id or analysis_id not in ANALYZE_SCRIPTS:
-        return {'success': False, 'errors': [f'Invalid or unknown analysis_id; allowed: {list(ANALYZE_SCRIPTS.keys())}']}
-    script_filename = ANALYZE_SCRIPTS[analysis_id]
-    script_path = os.path.join(_LOG_ANALYZE_SCRIPTS_DIR, script_filename)
-    if not os.path.isfile(script_path):
-        return {'success': False, 'errors': [f'Script not found: {script_filename}']}
+    processes = data.get('processes')
+    if isinstance(processes, (list, tuple)):
+        processes = [str(p).strip() for p in processes if str(p).strip()]
+    else:
+        processes = []
+    levels = data.get('levels')
+    if isinstance(levels, (list, tuple)):
+        levels = [str(l).strip().lower() for l in levels if str(l).strip()]
+    else:
+        levels = []
+    message_regex = (data.get('message_regex') or '').strip()
+    message_regex = _sanitize_awk_var(message_regex)
+
+    pname = '|'.join(processes) if processes else ''
+    log_level = '|'.join(f'<{l}>' for l in levels) if levels else ''
+    reg_message = message_regex
 
     start_dt = start_dt_parsed.date()
     end_dt = end_dt_parsed.date()
@@ -592,11 +614,11 @@ def run_log_analyze(data, client_id, send_callback):
         return {'success': False, 'errors': ['No log files found for the selected range']}
 
     stream_id = data.get('stream_id') or str(time.time())
-    keyme.log.info(f"log_tail run_log_analyze analysis_id={analysis_id!r} stream_id={stream_id!r} files={len(files_to_read)}")
+    keyme.log.info(f"log_tail run_log_analyze stream_id={stream_id!r} files={len(files_to_read)} pname={bool(pname)} level={bool(log_level)} msg={bool(reg_message)}")
 
     thread = threading.Thread(
-        target=_run_log_analyze_summary_thread,
-        args=(client_id, send_callback, stream_id, files_to_read, start_ts, end_ts, script_path),
+        target=_run_log_analyze_filter_thread,
+        args=(client_id, send_callback, stream_id, files_to_read, start_ts, end_ts, pname, log_level, reg_message),
         daemon=True,
     )
     thread.start()
