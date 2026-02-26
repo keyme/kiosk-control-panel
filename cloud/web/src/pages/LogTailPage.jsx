@@ -123,11 +123,17 @@ function ViewTab({ socket }) {
   const [expandedTracebacks, setExpandedTracebacks] = useState(new Set());
   const [fetchTruncated, setFetchTruncated] = useState(false);
   const [fetchMissingDates, setFetchMissingDates] = useState([]);
+  const [fetchProcessFilter, setFetchProcessFilter] = useState([]);
+  const [fetchProcessFilterOpen, setFetchProcessFilterOpen] = useState(false);
   const [logStreamFullscreen, setLogStreamFullscreen] = useState(false);
   const viewStreamRef = useRef(null);
   const rangeStreamIdRef = useRef(null);
 
   const mainLogs = useMemo(() => logs.filter((l) => l.type === 'main' || l.id === 'all'), [logs]);
+  const processNamesForAllLog = useMemo(
+    () => mainLogs.filter((l) => l.id !== 'all').map((l) => l.id.replace('process/', '')),
+    [mainLogs]
+  );
 
   useEffect(() => {
     if (!socket?.connected) return;
@@ -253,12 +259,16 @@ function ViewTab({ socket }) {
     socket.on('log_range_batch', onBatch);
     socket.on('log_range_done', onDone);
 
-    socket.requestIfSupported('get_log_range', {
+    const payload = {
       log_id: viewLogId,
       start_datetime: start,
       end_datetime: end,
       stream_id: streamId,
-    }).then((res) => {
+    };
+    if (viewLogId === 'all' && fetchProcessFilter.length > 0) {
+      payload.process_filter = fetchProcessFilter;
+    }
+    socket.requestIfSupported('get_log_range', payload).then((res) => {
       if (!res?.success || !res?.data?.started) {
         setFetchLoading(false);
         setFetchError(res?.errors?.join(', ') || 'Failed to fetch range');
@@ -276,7 +286,7 @@ function ViewTab({ socket }) {
       socket.off('log_range_batch', onBatch);
       socket.off('log_range_done', onDone);
     });
-  }, [socket, viewLogId, startDatetime, endDatetime]);
+  }, [socket, viewLogId, startDatetime, endDatetime, fetchProcessFilter]);
 
   const jumpToError = useCallback((direction) => {
     if (errorIndices.length === 0) return;
@@ -358,6 +368,42 @@ function ViewTab({ socket }) {
                 className="rounded-md border border-input bg-background px-3 py-2 text-sm"
               />
             </label>
+            {viewLogId === 'all' && processNamesForAllLog.length > 0 && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setFetchProcessFilterOpen((o) => !o)}
+                  className="rounded-md border border-input bg-background px-3 py-2 text-sm min-w-[140px] text-left"
+                >
+                  Process filter: {fetchProcessFilter.length === 0 ? 'All' : `${fetchProcessFilter.length} selected`}
+                </button>
+                {fetchProcessFilterOpen && (
+                  <div className="absolute left-0 top-full mt-1 z-50 min-w-[200px] max-h-48 overflow-auto rounded-md border border-border bg-popover p-2 shadow-md">
+                    <button
+                      type="button"
+                      className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+                      onClick={() => { setFetchProcessFilter([]); setFetchProcessFilterOpen(false); }}
+                    >
+                      All processes
+                    </button>
+                    {processNamesForAllLog.map((name) => (
+                      <label key={name} className="flex items-center gap-2 px-2 py-1 hover:bg-accent/50 rounded cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={fetchProcessFilter.includes(name)}
+                          onChange={() => {
+                            setFetchProcessFilter((prev) =>
+                              prev.includes(name) ? prev.filter((p) => p !== name) : [...prev, name]
+                            );
+                          }}
+                        />
+                        <span className="text-sm truncate">{name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <button
               type="button"
               onClick={handleFetch}

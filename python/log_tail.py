@@ -246,13 +246,27 @@ def _archived_files_overlapping_range(log_dir, base_name, start_dt, end_dt):
     return result, last_archive_date
 
 
-def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_read, max_lines, start_ts, end_ts):
-    """Background thread: read each file, filter by timestamp (awk), send batches (~120 KB) and done via send_callback."""
+def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_read, max_lines, start_ts, end_ts, process_filter=None):
+    """Background thread: read each file, filter by timestamp (awk), optionally by process (KEYMELOG|NAME[), send batches via send_callback.
+    process_filter: optional list of process names; only used for all.log. Lines must match KEYMELOG|NAME[ for one of them.
+    """
     total_emitted = 0
     truncated = False
     start_time = time.time()
-    # awk: first field $1 is the log timestamp; only output lines in [start_ts, end_ts)
-    awk_condition = r'$1 >= start && $1 < end'
+    process_list = process_filter if process_filter else []
+    if process_list:
+        procs_str = ','.join(str(p).strip() for p in process_list if str(p).strip())
+        # awk: timestamp in range and (no filter or line contains KEYMELOG|PROCESS[)
+        awk_script = (
+            r'BEGIN { n = split(procs, p, ",") } '
+            r'$1 >= start && $1 < end { '
+            r'if (n == 0) { print; next } '
+            r'for (i = 1; i <= n; i++) if (index($0, "KEYMELOG|" p[i] "[") > 0) { print; next } '
+            r'}'
+        )
+    else:
+        procs_str = ''
+        awk_script = r'$1 >= start && $1 < end'
 
     def send_batch(batch):
         if not batch:
@@ -287,9 +301,10 @@ def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_r
                     stderr=subprocess.PIPE,
                     universal_newlines=True,
                 )
-            # Pipe through awk to only pass lines whose first field (timestamp) is in [start_ts, end_ts)
+            # Pipe through awk: timestamp in [start_ts, end_ts) and optionally process match (KEYMELOG|NAME[)
+            awk_args = ['awk', '-v', f'start={start_ts}', '-v', f'end={end_ts}', '-v', f'procs={procs_str}', awk_script]
             awk_proc = subprocess.Popen(
-                ['awk', '-v', f'start={start_ts}', '-v', f'end={end_ts}', awk_condition],
+                awk_args,
                 stdin=reader.stdout,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -484,11 +499,17 @@ def get_log_range(data, client_id, send_callback):
     keyme.log.info(f"log_tail get_log_range timestamp filter start_ts={start_ts!r} end_ts={end_ts!r} (exclusive)")
 
     stream_id = (data or {}).get('stream_id') or str(time.time())
+    process_filter = None
+    if log_id == 'all':
+        pf = data.get('process_filter')
+        if pf is not None and (isinstance(pf, (list, tuple)) and len(pf) > 0):
+            process_filter = [str(p).strip() for p in pf if str(p).strip()]
+            keyme.log.info(f"log_tail get_log_range all.log process_filter={process_filter}")
     keyme.log.info(f"log_tail get_log_range starting stream stream_id={stream_id!r} client_id={client_id!r} file_count={len(files_to_read)}")
 
     thread = threading.Thread(
         target=_get_log_range_stream_thread,
-        args=(client_id, send_callback, stream_id, files_to_read, max_lines, start_ts, end_ts),
+        args=(client_id, send_callback, stream_id, files_to_read, max_lines, start_ts, end_ts, process_filter),
         daemon=True,
     )
     thread.start()
