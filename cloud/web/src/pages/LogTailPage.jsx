@@ -5,6 +5,9 @@ import { ScrollText, Play, Square, Download, AlertTriangle, Loader2, HelpCircle,
 import { cn } from '@/lib/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+} from 'recharts';
 
 const INITIAL_LINES_DEFAULT = 50;
 const INITIAL_LINES_MAX = 200;
@@ -73,6 +76,23 @@ function levelStyle(level) {
 function extractLevel(line) {
   const parsed = parseKeyMeLine(line);
   return parsed?.level ?? 'other';
+}
+
+/** Parse run_log_analyze output for errors_and_restarts: one raw log line per event. Returns { events } or { events: [], parseError: true }. */
+function parseErrorsAndRestartsOutput(output) {
+  const events = [];
+  const lines = String(output ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    const parsed = parseKeyMeLine(line);
+    if (!parsed) continue;
+    const { timestamp, level, process: processName, body } = parsed;
+    const isRestart = body.includes('async_STARTED to MANAGER');
+    const isError = level === 'e' || level === 'c';
+    const type = isRestart ? 'restart' : isError ? 'error' : null;
+    if (!type) continue;
+    events.push({ timestamp, process: processName, type, raw: line });
+  }
+  return { events };
 }
 
 function downloadLog(lines, logLabel) {
@@ -651,6 +671,109 @@ function ViewTab({ socket }) {
   );
 }
 
+function ErrorsAndRestartsView({ events }) {
+  const [processFilter, setProcessFilter] = useState('');
+  const uniqueProcesses = useMemo(() => {
+    const set = new Set(events.map((e) => e.process));
+    return Array.from(set).sort();
+  }, [events]);
+  const filteredEvents = useMemo(() => {
+    if (!processFilter) return events;
+    return events.filter((e) => e.process === processFilter);
+  }, [events, processFilter]);
+  const chartData = useMemo(() => {
+    const byDate = {};
+    for (const e of filteredEvents) {
+      const date = e.timestamp.slice(0, 10);
+      if (!byDate[date]) byDate[date] = { date, errors: 0, restarts: 0 };
+      if (e.type === 'error') byDate[date].errors += 1;
+      else byDate[date].restarts += 1;
+    }
+    return Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date));
+  }, [filteredEvents]);
+  const totalErrors = filteredEvents.filter((e) => e.type === 'error').length;
+  const totalRestarts = filteredEvents.filter((e) => e.type === 'restart').length;
+
+  return (
+    <div className="space-y-6">
+      <p className="text-sm text-muted-foreground">
+        Total errors: {totalErrors} · Total restarts: {totalRestarts}
+      </p>
+      <div className="flex flex-wrap items-center gap-4">
+        <label className="flex items-center gap-2">
+          <span className="text-xs font-medium text-muted-foreground">Process</span>
+          <select
+            value={processFilter}
+            onChange={(e) => setProcessFilter(e.target.value)}
+            className="rounded-md border border-input bg-background px-3 py-2 text-sm min-w-[180px]"
+          >
+            <option value="">All</option>
+            {uniqueProcesses.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {chartData.length > 0 ? (
+        <div className="h-[300px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" />
+              <YAxis tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" allowDecimals={false} />
+              <Tooltip
+                contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}
+                labelStyle={{ color: 'var(--foreground)' }}
+              />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Area type="monotone" dataKey="errors" name="Errors" stackId="a" fill="var(--chart-1)" stroke="var(--chart-1)" />
+              <Area type="monotone" dataKey="restarts" name="Restarts" stackId="a" fill="var(--chart-2)" stroke="var(--chart-2)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground py-4">No events in selected range.</p>
+      )}
+      <div>
+        <h3 className="text-sm font-medium mb-2">Events</h3>
+        <div className="rounded-md border border-input overflow-auto max-h-[40vh]">
+          <table className="w-full border-collapse text-sm">
+            <thead className="bg-muted/50 sticky top-0">
+              <tr className="border-b border-border">
+                <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Timestamp</th>
+                <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Process</th>
+                <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Type</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredEvents.length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="px-3 py-4 text-muted-foreground text-center">No events</td>
+                </tr>
+              ) : (
+                filteredEvents.map((ev, i) => (
+                  <tr key={i} className="border-b border-border/50 hover:bg-muted/30">
+                    <td className="px-3 py-1.5 font-mono text-xs">{ev.timestamp}</td>
+                    <td className="px-3 py-1.5">{ev.process}</td>
+                    <td className="px-3 py-1.5">
+                      <span className={cn(
+                        'inline-flex rounded px-1.5 py-0.5 text-xs',
+                        ev.type === 'error' ? 'bg-red-500/20 text-red-200' : 'bg-amber-500/20 text-amber-200'
+                      )}>
+                        {ev.type}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function LogTailPage({ socket }) {
   const [activeTab, setActiveTab] = useState('tail');
   const [logs, setLogs] = useState([]);
@@ -683,6 +806,11 @@ export default function LogTailPage({ socket }) {
   const [analyzeOutput, setAnalyzeOutput] = useState('');
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
   const [analyzeError, setAnalyzeError] = useState(null);
+
+  const errorsAndRestartsEvents = useMemo(() => {
+    if (analyzeId !== 'errors_and_restarts' || !analyzeOutput) return null;
+    return parseErrorsAndRestartsOutput(analyzeOutput).events;
+  }, [analyzeId, analyzeOutput]);
 
   const linesRef = useRef([]);
   const onTailLineRef = useRef(null);
@@ -1583,6 +1711,12 @@ export default function LogTailPage({ socket }) {
                   <Loader2 className="size-4 animate-spin" aria-hidden />
                   Running…
                 </p>
+              ) : analyzeId === 'errors_and_restarts' && errorsAndRestartsEvents ? (
+                errorsAndRestartsEvents.length > 0 ? (
+                  <ErrorsAndRestartsView events={errorsAndRestartsEvents} />
+                ) : (
+                  <p className="text-sm text-muted-foreground">No events in range.</p>
+                )
               ) : analyzeOutput !== '' ? (
                 <pre className="rounded-md border border-input bg-muted/30 p-4 text-xs font-mono overflow-auto max-h-[60vh] whitespace-pre-wrap break-all">
                   {analyzeOutput}

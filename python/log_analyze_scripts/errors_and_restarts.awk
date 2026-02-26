@@ -1,62 +1,20 @@
-# Errors and restarts by process. Reads stdin; expects start and end as awk -v vars (ISO datetime).
-# Filters lines with $1 >= start && $1 < end. Output: SUMMARY block (Error count, Restarts).
-
-BEGIN {
-    is_error_report = (is_error_report == "" ? 1 : is_error_report)
-    is_restart_report = (is_restart_report == "" ? 1 : is_restart_report)
-
-    process_string = "ABILITIES_MANAGER CONTROLLER ADVERTISER AUTOCAL BACKEND BACKGROUND_DL BROWSER " \
-                     "CREDIT_CARD CUTTER DET DET_BITTING_LEFT DET_BITTING_RIGHT DET_MILLING " \
-                     "DEVICE_DIRECTOR GEOMETRY GRIP_CALIB GRIPPER_CAM GUI INVENTORY INVENTORY_CAMERA " \
-                     "IO JOB_SERVER ADMIN_OPTIONS KEY_PATH_GEN MOTION NETS_SERVER ORDER_DISPATCHER " \
-                     "OVERHEAD_CAMERA POWER_MONITOR PRINTER RFID_READER SECURITY_CAMERA " \
-                     "SECURITY_MONITOR TRANSPONDER UPLOADER"
-
-    N = split(process_string, processes, " ")
-    for (i = 1; i <= N; i++) {
-        num_errs[processes[i]] = 0
-        num_restarts[processes[i]] = 0
-    }
-}
+# Errors and restarts: output one raw log line per event (for frontend to parse and chart).
+# Reads stdin; expects start and end as awk -v vars (ISO datetime).
+# Filters lines with $1 >= start && $1 < end. Prints $0 for each error or restart line.
+# No process list needed: any line with KEYMELOG| is considered; process is parsed on the frontend.
 
 {
     if (start != "" && end != "") {
         if ($1 < start || $1 >= end) next
     }
-    if (is_error_report == 0 && is_restart_report == 0) next
 
-    for (i = 1; i <= N; i++) {
-        process = processes[i]
-        if (index($0, "<e>") && index($0, "KEYMELOG|" process)) {
-            num_errs[process]++
-            next
-        }
-        if (index($0, "<c>") && index($0, "KEYMELOG|" process)) {
-            num_errs[process]++
-            next
-        }
-        if (index($0, "KEYMELOG|" process) && index($0, "async_STARTED to MANAGER")) {
-            num_restarts[process]++
-            break
-        }
+    # Restart: async_STARTED to MANAGER in a KeyMe log line
+    if (index($0, "KEYMELOG|") > 0 && index($0, "async_STARTED to MANAGER") > 0) {
+        print $0
+        next
     }
-}
-
-END {
-    print ""
-    print "================================ SUMMARY ================================"
-    if (is_error_report == 1) {
-        print "Error count:"
-        for (i = 1; i <= N; i++) {
-            printf "    %-20s : %d\n", processes[i], num_errs[processes[i]]
-        }
+    # Error: <e> or <c> level in a KeyMe log line
+    if ((index($0, "<e>") > 0 || index($0, "<c>") > 0) && index($0, "KEYMELOG|") > 0) {
+        print $0
     }
-    if (is_restart_report == 1) {
-        print ""
-        print "Restarts:"
-        for (i = 1; i <= N; i++) {
-            printf "    %-20s : %d\n", processes[i], num_restarts[processes[i]]
-        }
-    }
-    print "================================ SUMMARY END ================================"
 }
