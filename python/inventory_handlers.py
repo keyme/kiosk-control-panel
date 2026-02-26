@@ -405,7 +405,6 @@ def inventory_advanced_action(data):
             "milling": milling,
             "name": style,
             "count": count,
-            "display_name": "Test",
             "magazine": magazine,
         }
         from inventory.magazine_actions import MagazineAction
