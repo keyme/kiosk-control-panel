@@ -206,14 +206,16 @@ def _is_process_main_log(log_id, path):
     return path.endswith('.log')
 
 
-def _archived_files_overlapping_range(pname, start_dt, end_dt):
+def _archived_files_overlapping_range(log_dir, base_name, start_dt, end_dt):
     """Return (list of (archive_date, filepath, is_gz), last_archive_date) for dated logs whose period (d_prev, d_i] overlaps [start_dt, end_dt].
     Filename date is when the log was rotated (end of period); content is (previous_date, this_date].
-    Includes both archived ({pname}.log-{YYYYMMDD}.gz) and unarchived dated ({pname}.log-{YYYYMMDD}) files.
+    Includes both archived ({base_name}-{YYYYMMDD}.gz) and unarchived dated ({base_name}-{YYYYMMDD}) files.
     When both exist for the same date, prefer .gz (archived).
-    last_archive_date is the max dated file (end of last rotated period); current .log covers (last_archive_date, now].
+    last_archive_date is the max dated file (end of last rotated period); current log covers (last_archive_date, now].
+    log_dir: directory for glob (e.g. _LOG_DIR for process logs, or dirname(_ALL_LOG_PATH) for all.log).
+    base_name: e.g. 'CUTTER.log' or 'all.log'.
     """
-    pattern = os.path.join(_LOG_DIR, pname + '.log-*')
+    pattern = os.path.join(log_dir, base_name + '-*')
     paths = glob.glob(pattern)
     # date -> (filepath, is_gz); prefer .gz when same date exists as both .gz and plain
     by_date = {}
@@ -392,7 +394,7 @@ def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_r
 
 
 def get_log_range(data, client_id, send_callback):
-    """Stream lines for a date range (process main logs only). Max 4 days per request.
+    """Stream lines for a date range (process main logs or all.log). Max 4 days per request.
     data: { log_id, start_date, end_date, max_lines?, stream_id? }.
     Returns immediately { started: True, stream_id, log_id, path }; batches and done are pushed via send_callback.
     On validation error returns { success: False, errors: [...] }.
@@ -404,9 +406,6 @@ def get_log_range(data, client_id, send_callback):
         keyme.log.warning(f"log_tail get_log_range invalid or missing log_id={log_id!r} allowlist_keys={list(allowlist.keys())}")
         return {'success': False, 'errors': ['Invalid or missing log_id']}
     path = allowlist[log_id]
-    if not _is_process_main_log(log_id, path):
-        keyme.log.warning(f"log_tail get_log_range not process main log log_id={log_id!r} path={path!r}")
-        return {'success': False, 'errors': ['Only process main logs support date range']}
 
     start_s = (data or {}).get('start_date')
     end_s = (data or {}).get('end_date')
@@ -439,15 +438,21 @@ def get_log_range(data, client_id, send_callback):
     max_lines = max(1, min(max_lines, _RANGE_MAX_LINES_CAP))
     keyme.log.info(f"log_tail get_log_range max_lines={max_lines}")
 
-    pname = log_id.replace('process/', '', 1)
     today = datetime.utcnow().date()
-    keyme.log.info(f"log_tail get_log_range log_id={log_id!r} pname={pname!r} today={today} _LOG_DIR={_LOG_DIR!r}")
+    if log_id == 'all':
+        log_dir = os.path.dirname(_ALL_LOG_PATH)
+        base_name = 'all.log'
+    else:
+        pname = log_id.replace('process/', '', 1)
+        log_dir = _LOG_DIR
+        base_name = pname + '.log'
+    keyme.log.info(f"log_tail get_log_range log_id={log_id!r} log_dir={log_dir!r} base_name={base_name!r} today={today}")
 
     # Archive filename date = when rotated (end of period). Content = (prev_archive_date, this_archive_date].
-    files_to_read, last_archive_date = _archived_files_overlapping_range(pname, start_dt, end_dt)
-    # Current .log covers (last_archive_date, now]. Include it when [start_dt, end_dt] overlaps that period.
+    files_to_read, last_archive_date = _archived_files_overlapping_range(log_dir, base_name, start_dt, end_dt)
+    # Current log covers (last_archive_date, now]. Include it when [start_dt, end_dt] overlaps that period.
     if start_dt <= today and (last_archive_date is None or end_dt > last_archive_date):
-        current_log_path = os.path.join(_LOG_DIR, pname + '.log')
+        current_log_path = os.path.join(log_dir, base_name)
         if os.path.isfile(current_log_path):
             files_to_read.append((today, current_log_path, False))
             keyme.log.debug(f"log_tail get_log_range including current .log path={current_log_path!r} (overlaps (last_archive={last_archive_date}, now])")
