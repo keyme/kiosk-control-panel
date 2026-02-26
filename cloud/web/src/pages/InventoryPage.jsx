@@ -21,7 +21,6 @@ function escapeCsvCell(val) {
 
 const SEGMENT_COUNT = 20;
 const DEG_PER_SEG = 360 / SEGMENT_COUNT;
-const LOW_STOCK_THRESHOLD = 25;
 
 function segmentState(mag, lowThreshold) {
   // Empty slot / no key config loaded.
@@ -31,7 +30,7 @@ function segmentState(mag, lowThreshold) {
   const c = typeof mag.count === 'number' ? mag.count : Number(mag.count);
   if (!Number.isFinite(c)) return 'enabled';
   if (c <= 0) return 'zero';
-  if (c < LOW_STOCK_THRESHOLD) return 'low';
+  if (c < lowThreshold) return 'low';
   return 'enabled';
 }
 
@@ -670,11 +669,11 @@ export default function InventoryPage({ connected, socket }) {
               <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-muted-foreground">
                 <div className="flex items-center gap-2">
                   <span className="h-2.5 w-2.5 rounded-sm" style={{ background: '#22c55e' }} />
-                  <span>good (≥ {LOW_STOCK_THRESHOLD})</span>
+                  <span>good (≥ {lowInventoryThreshold})</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="h-2.5 w-2.5 rounded-sm" style={{ background: '#eab308' }} />
-                  <span>low (1–{LOW_STOCK_THRESHOLD - 1})</span>
+                  <span>low (1–{lowInventoryThreshold - 1})</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="h-2.5 w-2.5 rounded-sm" style={{ background: '#ef4444' }} />
