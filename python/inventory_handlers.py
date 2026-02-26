@@ -280,7 +280,7 @@ def inventory_set_key_count(data):
         if capacity is None:
             keyme.log.error(f"inventory_set_key_count: missing capacity for {milling}-{style}")
             return WebsocketError([SocketErrors.OTHER.value, f"Missing magazine capacity for {milling}-{style}"]).to_json()
-        if new_count > capacity:
+        if not data.get("force") and new_count > capacity:
             keyme.log.warning(f"inventory_set_key_count: count {new_count} exceeds capacity {capacity}")
             return WebsocketError([
                 SocketErrors.INVALID_INPUT.value,
@@ -379,12 +379,13 @@ def inventory_advanced_action(data):
             keyme.log.warning(f"inventory_advanced_action: validation failed (count): {e}")
             return WebsocketError([SocketErrors.INVALID_INPUT.value, str(e)]).to_json()
 
+        force = data.get("force")
         if action == 'add_magazine':
-            if mag_stock:
+            if not force and mag_stock:
                 keyme.log.warning(f"inventory_advanced_action: add_magazine but slot {magazine} already has key data")
                 return WebsocketError([SocketErrors.INVALID_INPUT.value, "Cannot add magazine: slot already has key data. Use Replace Keys or Replace Magazine."]).to_json()
         else:
-            if not mag_stock:
+            if not force and not mag_stock:
                 keyme.log.warning(f"inventory_advanced_action: replace on empty slot {magazine}")
                 return WebsocketError([SocketErrors.INVALID_INPUT.value, "Slot is empty. Use Add Magazine."]).to_json()
 
@@ -392,7 +393,7 @@ def inventory_advanced_action(data):
         if capacity is None:
             keyme.log.error(f"inventory_advanced_action: missing capacity for {milling}-{style}")
             return WebsocketError([SocketErrors.OTHER.value, f"Missing magazine capacity for {milling}-{style}"]).to_json()
-        if count > capacity:
+        if not force and count > capacity:
             keyme.log.warning(f"inventory_advanced_action: count {count} exceeds capacity {capacity}")
             return WebsocketError([
                 SocketErrors.INVALID_INPUT.value,
