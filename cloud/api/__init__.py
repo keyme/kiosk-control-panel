@@ -1,6 +1,4 @@
 import logging
-import os
-from re import A
 
 import boto3
 import httpx
