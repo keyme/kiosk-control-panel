@@ -540,7 +540,11 @@ def _run_log_analyze_filter_thread(client_id, send_callback, stream_id, files_to
         return
 
     awk_cmd = [
+<<<<<<< HEAD
         'nice', '-n', '100', 'awk',
+=======
+        'nice', '-n', '19', 'awk',
+>>>>>>> develop
         '-v', f'start={start_ts}', '-v', f'end={end_ts}',
         '-v', f'pname={pname}', '-v', f'log_level={log_level}', '-v', f'reg_message={reg_message}',
         '-f', script_path,
@@ -548,7 +552,11 @@ def _run_log_analyze_filter_thread(client_id, send_callback, stream_id, files_to
     buckets = {}
 
     for _day, filepath, is_gz in files_to_read:
+<<<<<<< HEAD
         reader_cmd = ['nice', '-n', '100', 'zcat', filepath] if is_gz else ['nice', '-n', '100', 'cat', filepath]
+=======
+        reader_cmd = ['nice', '-n', '19', 'zcat', filepath] if is_gz else ['nice', '-n', '19', 'cat', filepath]
+>>>>>>> develop
         reader = awk_proc = None
         try:
             reader = subprocess.Popen(
