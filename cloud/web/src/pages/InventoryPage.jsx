@@ -95,6 +95,7 @@ export default function InventoryPage({ connected, socket }) {
     if (!hasPendingPricingUpdate) return;
     const onBeforeUnload = (e) => {
       e.preventDefault();
+      e.returnValue = '';
     };
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
