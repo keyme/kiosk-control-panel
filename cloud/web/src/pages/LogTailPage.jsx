@@ -1132,7 +1132,7 @@ export default function LogTailPage({ socket }) {
       const labels = messagePresetIds.map((id) => ANALYZE_MESSAGE_PRESETS.find((m) => m.id === id)?.label).filter(Boolean);
       parts.push(`message:${labels.join(' OR ')}`);
     } else if (messageCustom.trim()) parts.push(`message:/${messageCustom.replace(/[/\\]/g, '\\$&')}/`);
-    return parts.length ? parts.join(' AND ') : '(no filter)';
+    return parts.length ? parts.join(' OR ') : '(no filter)';
   }, [analyzePresetId, analyzeBuilder]);
 
   const linesRef = useRef([]);
