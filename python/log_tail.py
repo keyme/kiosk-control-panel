@@ -494,6 +494,9 @@ def _parse_analyze_params(data):
     levels = [str(l).strip().lower() for l in (levels if isinstance(levels, (list, tuple)) else []) if str(l).strip()]
     message_regex = _sanitize_awk_var((data.get('message_regex') or '').strip())
 
+    combine_raw = (data.get('combine_mode') or 'AND_OR').strip().upper().replace('-', '_')
+    combine = 'AND' if combine_raw == 'AND' else ('AND_OR' if combine_raw == 'AND_OR' else 'OR')
+
     return {
         'start_dt': start_dt,
         'end_dt': end_dt,
@@ -502,6 +505,7 @@ def _parse_analyze_params(data):
         'pname': '|'.join(processes) if processes else '',
         'log_level': '|'.join(f'<{l}>' for l in levels) if levels else '',
         'reg_message': message_regex,
+        'combine': combine,
     }, None
 
 
@@ -528,7 +532,7 @@ def _merge_awk_line_into_buckets(buckets, line):
         buckets[hour_s]['byProcess'][process_s]['count'] += count_n
 
 
-def _run_log_analyze_filter_thread(client_id, send_callback, stream_id, files_to_read, start_ts, end_ts, pname, log_level, reg_message):
+def _run_log_analyze_filter_thread(client_id, send_callback, stream_id, files_to_read, start_ts, end_ts, pname, log_level, reg_message, combine):
     """Background: for each file zcat|awk, parse hour\\tprocess\\tcount; merge; send one push."""
     script_path = os.path.join(_LOG_ANALYZE_SCRIPTS_DIR, _LOG_FILTER_SCRIPT)
     if not os.path.isfile(script_path):
@@ -543,6 +547,7 @@ def _run_log_analyze_filter_thread(client_id, send_callback, stream_id, files_to
         'nice', '-n', '19', 'awk',
         '-v', f'start={start_ts}', '-v', f'end={end_ts}',
         '-v', f'pname={pname}', '-v', f'log_level={log_level}', '-v', f'reg_message={reg_message}',
+        '-v', f'combine={combine}',
         '-f', script_path,
     ]
     buckets = {}
@@ -606,6 +611,7 @@ def run_log_analyze(data, client_id, send_callback):
             client_id, send_callback, stream_id, files_to_read,
             params['start_ts'], params['end_ts'],
             params['pname'], params['log_level'], params['reg_message'],
+            params['combine'],
         ),
         daemon=True,
     )
