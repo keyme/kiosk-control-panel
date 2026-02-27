@@ -532,7 +532,7 @@ def _run_log_analyze_filter_thread(client_id, send_callback, stream_id, files_to
     """Background: for each file zcat|awk, parse hour\\tprocess\\tcount; merge; send one push."""
     script_path = os.path.join(_LOG_ANALYZE_SCRIPTS_DIR, _LOG_FILTER_SCRIPT)
     if not os.path.isfile(script_path):
-        keyme.log.warning("log_tail run_log_analyze script not found: %s", script_path)
+        keyme.log.warning(f"log_tail run_log_analyze script not found: {script_path}")
         send_callback(client_id, {
             'event': ws_protocol.PUSH_LOG_ANALYZE_RESULT,
             'data': {'stream_id': stream_id, 'buckets': {}},
@@ -569,7 +569,7 @@ def _run_log_analyze_filter_thread(client_id, send_callback, stream_id, files_to
             for line in (out or '').split('\n'):
                 _merge_awk_line_into_buckets(buckets, line)
         except (OSError, subprocess.TimeoutExpired) as e:
-            keyme.log.warning("log_tail run_log_analyze file %s: %s", filepath, e)
+            keyme.log.warning(f"log_tail run_log_analyze file {filepath}: {e}")
         finally:
             _terminate_and_wait(awk_proc)
             _terminate_and_wait(reader)
@@ -578,7 +578,7 @@ def _run_log_analyze_filter_thread(client_id, send_callback, stream_id, files_to
         'event': ws_protocol.PUSH_LOG_ANALYZE_RESULT,
         'data': {'stream_id': stream_id, 'buckets': buckets},
     })
-    keyme.log.info("log_tail run_log_analyze done stream_id=%r buckets=%d", stream_id, len(buckets))
+    keyme.log.info(f"log_tail run_log_analyze done stream_id={stream_id!r} buckets={len(buckets)}")
 
 
 def run_log_analyze(data, client_id, send_callback):
@@ -594,14 +594,11 @@ def run_log_analyze(data, client_id, send_callback):
     log_dir = os.path.dirname(_ALL_LOG_PATH)
     files_to_read = _log_files_for_range(log_dir, 'all.log', params['start_dt'], params['end_dt'])
     if not files_to_read:
-        keyme.log.warning("log_tail run_log_analyze no files for range %s..%s", params['start_dt'], params['end_dt'])
+        keyme.log.warning(f"log_tail run_log_analyze no files for range {params['start_dt']}..{params['end_dt']}")
         return {'success': False, 'errors': ['No log files found for the selected range']}
 
     stream_id = (data or {}).get('stream_id') or str(time.time())
-    keyme.log.info(
-        "log_tail run_log_analyze stream_id=%r files=%d",
-        stream_id, len(files_to_read),
-    )
+    keyme.log.info(f"log_tail run_log_analyze stream_id={stream_id!r} files={len(files_to_read)}")
 
     thread = threading.Thread(
         target=_run_log_analyze_filter_thread,

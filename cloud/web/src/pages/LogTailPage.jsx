@@ -2056,7 +2056,7 @@ export default function LogTailPage({ socket }) {
           </Card>
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Result</CardTitle>
+              <CardTitle className="text-base">Message count</CardTitle>
             </CardHeader>
             <CardContent>
               {analyzeLoading ? (
