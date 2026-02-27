@@ -1960,7 +1960,7 @@ export default function LogTailPage({ socket }) {
           <Card>
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Run an analysis on all.log for the selected datetime range. Select a preset or build your own query. Only aggregated output is shown.
+                Run an analysis on all.log for the selected datetime range. Select a preset or build your own query. Only aggregated output is shown. Query typing or direct editing is not available at this time.
               </p>
               <div className="flex flex-wrap items-end gap-3">
                 <label className="flex flex-col gap-1">
