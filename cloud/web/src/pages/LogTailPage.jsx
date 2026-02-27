@@ -1093,6 +1093,7 @@ export default function LogTailPage({ socket }) {
   const [analyzeEndDatetime, setAnalyzeEndDatetime] = useState('');
   const [analyzePresetId, setAnalyzePresetId] = useState(() => (ANALYZE_PRESETS[0]?.id ?? 'build'));
   const [analyzeBuilderOpen, setAnalyzeBuilderOpen] = useState(false);
+  const [analyzeCombineMode, setAnalyzeCombineMode] = useState('AND_OR');
   const [analyzeBuilder, setAnalyzeBuilder] = useState(() => ({
     processes: [],
     levels: [],
@@ -1107,7 +1108,7 @@ export default function LogTailPage({ socket }) {
   const currentAnalyzePayload = useMemo(() => {
     if (analyzePresetId && analyzePresetId !== 'build') {
       const preset = ANALYZE_PRESETS.find((p) => p.id === analyzePresetId);
-      return preset ? getPresetPayload(preset) : { processes: [], levels: [], message_regex: '' };
+      return preset ? getPresetPayload(preset) : { processes: [], levels: [], message_regex: '', combine_mode: 'AND_OR' };
     }
     const { processes, levels, messagePresetIds, messageCustom } = analyzeBuilder;
     const message_regex = messagePresetIds.length
@@ -1116,8 +1117,8 @@ export default function LogTailPage({ socket }) {
           .filter(Boolean)
           .join('|')
       : (messageCustom || '').trim();
-    return { processes: [...processes], levels: [...levels], message_regex };
-  }, [analyzePresetId, analyzeBuilder]);
+    return { processes: [...processes], levels: [...levels], message_regex, combine_mode: analyzeCombineMode };
+  }, [analyzePresetId, analyzeBuilder, analyzeCombineMode]);
 
   const currentQueryLabel = useMemo(() => {
     if (analyzePresetId && analyzePresetId !== 'build') {
@@ -1125,15 +1126,23 @@ export default function LogTailPage({ socket }) {
       return preset?.query ?? '';
     }
     const { processes, levels, messagePresetIds, messageCustom } = analyzeBuilder;
-    const parts = [];
-    if (processes.length) parts.push(`process_name:${processes.length === 1 ? processes[0] : '(' + processes.join(' OR ') + ')'}`);
-    if (levels.length) parts.push(`log_level:${levels.length === 1 ? levels[0] : '(' + levels.join(' OR ') + ')'}`);
-    if (messagePresetIds.length) {
-      const labels = messagePresetIds.map((id) => ANALYZE_MESSAGE_PRESETS.find((m) => m.id === id)?.label).filter(Boolean);
-      parts.push(`message:${labels.join(' OR ')}`);
-    } else if (messageCustom.trim()) parts.push(`message:/${messageCustom.replace(/[/\\]/g, '\\$&')}/`);
-    return parts.length ? parts.join(' OR ') : '(no filter)';
-  }, [analyzePresetId, analyzeBuilder]);
+    const processPart = processes.length ? `process_name:${processes.length === 1 ? processes[0] : '(' + processes.join(' OR ') + ')'}` : '';
+    const levelPart = levels.length ? `log_level:${levels.length === 1 ? levels[0] : '(' + levels.join(' OR ') + ')'}` : '';
+    const messagePart = messagePresetIds.length
+      ? `message:${messagePresetIds.map((id) => ANALYZE_MESSAGE_PRESETS.find((m) => m.id === id)?.label).filter(Boolean).join(' OR ')}`
+      : messageCustom.trim() ? `message:/${messageCustom.replace(/[/\\]/g, '\\$&')}/` : '';
+    if (!processPart && !levelPart && !messagePart) return '(no filter)';
+    if (analyzeCombineMode === 'AND') {
+      return [processPart, levelPart, messagePart].filter(Boolean).join(' AND ');
+    }
+    if (analyzeCombineMode === 'AND_OR') {
+      const rest = [levelPart, messagePart].filter(Boolean);
+      if (processPart && rest.length) return `${processPart} AND (${rest.join(' OR ')})`;
+      if (processPart) return processPart;
+      return rest.length === 2 ? `(${rest.join(' OR ')})` : rest[0];
+    }
+    return [processPart, levelPart, messagePart].filter(Boolean).join(' OR ');
+  }, [analyzePresetId, analyzeBuilder, analyzeCombineMode]);
 
   const linesRef = useRef([]);
   const onTailLineRef = useRef(null);
@@ -2073,6 +2082,19 @@ export default function LogTailPage({ socket }) {
               {analyzePresetId === 'build' && analyzeBuilderOpen && (
                 <div className="rounded-md border border-input bg-muted/20 p-4 space-y-4">
                   <span className="text-xs font-medium text-muted-foreground">Build custom query</span>
+                  <div className="flex flex-wrap items-center gap-4">
+                    <span className="text-xs text-muted-foreground">Combine:</span>
+                    <select
+                      value={analyzeCombineMode}
+                      onChange={(e) => setAnalyzeCombineMode(e.target.value)}
+                      className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      aria-label="Combine clauses"
+                    >
+                      <option value="AND_OR">Process and (level or message)</option>
+                      <option value="OR">Match any (OR)</option>
+                      <option value="AND">Match all (AND)</option>
+                    </select>
+                  </div>
                   <div className="flex flex-wrap gap-6">
                     <div className="flex flex-col gap-1">
                       <span className="text-xs text-muted-foreground">Processes</span>

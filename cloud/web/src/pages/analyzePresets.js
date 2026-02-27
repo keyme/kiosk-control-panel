@@ -75,6 +75,6 @@ export const ANALYZE_PRESETS = [
 ];
 
 export function getPresetPayload(preset) {
-  const { processes = [], levels = [], message_regex = '' } = preset;
-  return { processes: [...processes], levels: [...levels], message_regex };
+  const { processes = [], levels = [], message_regex = '', combine_mode } = preset;
+  return { processes: [...processes], levels: [...levels], message_regex, combine_mode: combine_mode || 'AND_OR' };
 }
