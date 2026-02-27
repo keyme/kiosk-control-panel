@@ -51,3 +51,13 @@ class ControlPanelParser(keyme.ipc.Parser):
 
     def handle_async_NOT_TAKEN(self, request):
         got_response.set()
+
+    def handle_async_MOVE_FINISHED(self, request):
+        """MOTION notifies that a move completed; deliver to motion result queue."""
+        from control_panel.python import server
+        server.deliver_motion_result(request)
+
+    def handle_async_MOTOR_ERROR(self, request):
+        """MOTION notifies that a move failed; deliver to motion result queue."""
+        from control_panel.python import server
+        server.deliver_motion_result(request)

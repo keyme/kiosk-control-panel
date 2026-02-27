@@ -10,6 +10,7 @@ import {
   Link as LinkIcon,
   Terminal,
   LogOut,
+  Menu,
 } from 'lucide-react';
 import { lazy, Suspense } from 'react';
 import Status from '@/pages/Status';
@@ -24,6 +25,7 @@ import ConfigPage from '@/pages/ConfigPage';
 import WellnessCheck from '@/pages/WellnessCheck';
 import DataUsage from '@/pages/DataUsage';
 import FleetCommands from '@/pages/FleetCommands';
+import InventoryPage from '@/pages/InventoryPage';
 import LogTailPage from '@/pages/LogTailPage';
 
 const TestcutsImagesPage = lazy(() => import('@/pages/TestcutsImagesPage'));
@@ -32,6 +34,8 @@ const RunBasedCalibrationImagesPage = lazy(() => import('@/pages/RunBasedCalibra
 const CalibrationRoiPage = lazy(() => import('@/pages/CalibrationRoiPage'));
 import { AppSidebar } from '@/components/AppSidebar';
 import { Separator } from '@/components/ui/separator';
+import { Dialog, DialogPortal, DialogOverlay } from '@/components/ui/dialog';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { cn } from '@/lib/utils';
 import { buildWsUrl, createDeviceSocket } from '@/lib/deviceSocket';
 import { getInitialDeviceHost, normalizeDeviceHost } from '@/lib/socketUrl';
@@ -110,7 +114,12 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
   const navigate = useNavigate();
   const location = useLocation();
   const [editValue, setEditValue] = useState(deviceHost);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const deviceHostInputRef = useRef(null);
+
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [location.pathname]);
 
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -152,8 +161,16 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
-      <header className="flex shrink-0 flex-col gap-3 border-b border-border bg-card px-4 py-3 md:flex-row md:items-center md:justify-between md:gap-4">
+      <header className="sticky top-0 z-10 flex shrink-0 flex-col gap-3 border-b border-border bg-card px-4 py-3 md:flex-row md:items-center md:justify-between md:gap-4">
         <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2 text-card-foreground md:gap-4">
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            className="flex md:hidden min-h-[44px] min-w-[44px] items-center justify-center rounded-md text-card-foreground hover:bg-muted focus:ring-2 focus:ring-ring focus:ring-offset-2"
+            aria-label="Open menu"
+          >
+            <Menu className="size-6" aria-hidden />
+          </button>
           <StatusDot variant={connected ? 'ok' : 'error'} />
           <input
             ref={deviceHostInputRef}
@@ -178,12 +195,12 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
             </button>
           )}
           {kioskName && (
-            <span className="min-w-0 text-sm text-muted-foreground md:truncate" title="Reported by device">
+            <span className="hidden min-w-0 text-sm text-muted-foreground md:inline md:truncate" title="Reported by device">
               ({kioskName})
             </span>
           )}
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2 text-card-foreground">
+        <div className="hidden flex-wrap items-center justify-end gap-x-4 gap-y-2 text-card-foreground md:flex">
           <TitleItem
             icon={Terminal}
             label="Terminals:"
@@ -284,11 +301,29 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
       )}
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <AppSidebar panelInfo={panelInfo} />
+        <div className="hidden md:flex shrink-0">
+          <AppSidebar panelInfo={panelInfo} />
+        </div>
         <main className="content min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-6">
           {children}
         </main>
       </div>
+
+      {/* Mobile drawer: slide-in from left, overlay, close on outside click */}
+      <Dialog open={drawerOpen} onOpenChange={setDrawerOpen}>
+        <DialogPortal>
+          <DialogOverlay />
+          <DialogPrimitive.Content
+            className={cn(
+              'fixed left-0 top-0 bottom-0 z-50 w-52 flex flex-col border-r border-sidebar-border bg-sidebar shadow-lg',
+              'transition-transform duration-200 ease-out',
+              'data-[state=open]:translate-x-0 data-[state=closed]:-translate-x-full'
+            )}
+          >
+            <AppSidebar panelInfo={panelInfo} />
+          </DialogPrimitive.Content>
+        </DialogPortal>
+      </Dialog>
     </div>
   );
 }
@@ -597,6 +632,7 @@ function AppContent() {
               <Route path="data-usage" element={<DataUsage socket={socket} />} />
               <Route path="wellness" element={<WellnessCheck socket={socket} />} />
               <Route path="fleet" element={<FleetCommands connected={connected} socket={socket} panelInfo={panelInfo} />} />
+              <Route path="inventory" element={<InventoryPage connected={connected} socket={socket} />} />
               <Route path="logs" element={<LogTailPage socket={socket} />} />
             </Route>
           </Routes>

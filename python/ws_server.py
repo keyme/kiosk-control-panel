@@ -143,6 +143,16 @@ def _dispatch_request(client_id, request_id, event, data, connection_count, conn
             ws_protocol.PUSH_LOG_TAIL_LINE,
         ),
         'log_tail_stop': lambda: handlers.log_tail_stop(client_id),
+        'get_log_range': lambda: handlers.get_log_range(
+            client_id,
+            data or {},
+            lambda cid, obj: _schedule_send(cid, obj),
+        ),
+        'run_log_analyze': lambda: handlers.run_log_analyze(
+            client_id,
+            data or {},
+            lambda cid, obj: _schedule_send(cid, obj),
+        ),
         'fleet_restart_process': lambda: handlers.fleet_restart_process(
             data or {},
             **(
@@ -162,6 +172,15 @@ def _dispatch_request(client_id, request_id, event, data, connection_count, conn
         'fleet_restore_cutting': lambda: handlers.fleet_restore_cutting(data or {}),
         'get_roi': lambda: handlers.get_roi(data or {}),
         'save_roi': lambda: handlers.save_roi(data or {}),
+        'get_inventory_list': lambda: handlers.get_inventory_list(),
+        'get_inventory_disabled_reasons': lambda: handlers.get_inventory_disabled_reasons(),
+        'get_inventory_millings_styles': lambda: handlers.get_inventory_millings_styles(),
+        'inventory_enable_magazine': lambda: handlers.inventory_enable_magazine(data or {}),
+        'inventory_disable_magazine': lambda: handlers.inventory_disable_magazine(data or {}),
+        'inventory_set_key_count': lambda: handlers.inventory_set_key_count(data or {}),
+        'inventory_advanced_action': lambda: handlers.inventory_advanced_action(data or {}),
+        'inventory_update_api_pricing': lambda: handlers.inventory_update_api_pricing(data or {}),
+        'inventory_rotate_and_capture': lambda: handlers.inventory_rotate_and_capture(data or {}),
     }
     if event not in ws_protocol.SUPPORTED_REQUEST_EVENTS:
         return {'id': request_id, 'success': False, 'errors': [ws_protocol.ERROR_UNSUPPORTED_COMMAND]}

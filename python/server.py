@@ -2,6 +2,7 @@
 import base64
 import os
 import platform
+import queue
 import random
 import subprocess
 import sys
@@ -621,6 +622,119 @@ def get_all_configs():
     return WebsocketSuccess({'configs': configs, 'hardware': hardware}).to_json()
 
 
+# Inventory handlers live in inventory_handlers; re-export for ws_server.
+from control_panel.python.inventory_handlers import (
+    get_inventory_list,
+    get_inventory_disabled_reasons,
+    get_inventory_millings_styles,
+    inventory_enable_magazine,
+    inventory_disable_magazine,
+    inventory_set_key_count,
+    inventory_advanced_action,
+    inventory_update_api_pricing,
+)
+
+# Motion result queue for inventory_rotate_and_capture (carousel HOME/GOTO). Parser puts (ok, err) on queue; handler waits with get(timeout=...).
+from control_panel.python.fleet_commands import check_fleet_command_allowed
+
+_MOTION_WAIT_TIMEOUT = 60
+_motion_result_queue = queue.Queue()
+_motion_lock = threading.Lock()
+
+
+def deliver_motion_result(request):
+    """Called from parser when MOVE_FINISHED or MOTOR_ERROR is received. Puts (True, None) or (False, error_message) on queue."""
+    action = request.get('action')
+    data = request.get('data') or {}
+    if action == 'MOVE_FINISHED':
+        _motion_result_queue.put((True, None))
+    elif action == 'MOTOR_ERROR':
+        err = data.get('error') or data.get('message') or 'Motion error'
+        _motion_result_queue.put((False, str(err)))
+
+
+def _send_motion_async(action, data):
+    """Send async MOTION request. Caller waits on _motion_result_queue.get(timeout=...) after."""
+    from pylib.ipc import message
+    channel = keyme.ipc.shared.default_channel
+    req = message.Request(keyme.process.name, "MOTION", action, data)
+    if getattr(channel, "_tx_q", None) is not None:
+        channel._tx_q.put("{} {}".format(req["to"], req.to_json()))
+    else:
+        def _send():
+            try:
+                channel.send_request(req, logging=True)
+            except Exception:
+                pass  # MOTION does not reply to this request; we wait on queue for MOVE_FINISHED/MOTOR_ERROR
+        t = threading.Thread(target=_send, daemon=True)
+        t.start()
+
+
+def inventory_rotate_and_capture(data):
+    """Rotate carousel to magazine (for inventory camera view), then take overhead and inventory camera images.
+    Gate: same as fleet (kiosk in use / remote session). Waits on MOVE_FINISHED (no fixed sleeps)."""
+    data = data if isinstance(data, dict) else {}
+    keyme.log.info("WS: requesting inventory_rotate_and_capture")
+    allowed, errors = check_fleet_command_allowed(data)
+    if not allowed:
+        return WebsocketError([SocketErrors.OTHER.value, (errors or ["Not allowed"])[0]]).to_json()
+    magazine = data.get("magazine")
+    if magazine is None:
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "magazine required"]).to_json()
+    try:
+        magazine = int(magazine)
+    except (TypeError, ValueError):
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "magazine must be 1-20"]).to_json()
+    if not (1 <= magazine <= 20):
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "magazine must be 1-20"]).to_json()
+
+    if not _motion_lock.acquire(blocking=False):
+        return WebsocketError([SocketErrors.OTHER.value, "Another rotate/capture in progress"]).to_json()
+
+    try:
+        # HOME carousel
+        _send_motion_async("HOME", {"axis": "carousel", "direction": "negative"})
+        try:
+            ok, err = _motion_result_queue.get(timeout=_MOTION_WAIT_TIMEOUT)
+        except queue.Empty:
+            keyme.log.warning("inventory_rotate_and_capture: HOME timed out")
+            return WebsocketError([SocketErrors.OTHER.value, "Carousel move timed out"]).to_json()
+        if not ok:
+            keyme.log.warning("inventory_rotate_and_capture: HOME failed: %s", err)
+            return WebsocketError([SocketErrors.OTHER.value, err or "Carousel move timed out"]).to_json()
+
+        # GOTO carousel (magazine + 3 for inventory camera view)
+        position = (magazine + 3 - 1) % 20 + 1
+        position_name = "magazine{}".format(position)
+        _send_motion_async("GOTO", {"axis": "carousel", "position": position_name})
+        try:
+            ok, err = _motion_result_queue.get(timeout=_MOTION_WAIT_TIMEOUT)
+        except queue.Empty:
+            keyme.log.warning("inventory_rotate_and_capture: GOTO timed out")
+            return WebsocketError([SocketErrors.OTHER.value, "Carousel move timed out"]).to_json()
+        if not ok:
+            keyme.log.warning("inventory_rotate_and_capture: GOTO failed: %s", err)
+            return WebsocketError([SocketErrors.OTHER.value, err or "Carousel move timed out"]).to_json()
+
+        # Take images
+        resize = 1.0
+        overhead_b64, overhead_err = _take_image_on_device("overhead_camera", resize)
+        if overhead_err:
+            keyme.log.warning("inventory_rotate_and_capture: overhead_camera failed: %s", overhead_err)
+            return WebsocketError([SocketErrors.OTHER.value, "Overhead camera: " + overhead_err]).to_json()
+        inv_b64, inv_err = _take_image_on_device("inventory_camera", resize)
+        if inv_err:
+            keyme.log.warning("inventory_rotate_and_capture: inventory_camera failed: %s", inv_err)
+            return WebsocketError([SocketErrors.OTHER.value, "Inventory camera: " + inv_err]).to_json()
+
+        return WebsocketSuccess({
+            "overheadImageBase64": overhead_b64,
+            "inventoryImageBase64": inv_b64,
+        }).to_json()
+    finally:
+        _motion_lock.release()
+
+
 def clear_cache():
     """Clear TTL cache (e.g. when last client disconnects)."""
     with _cache_lock:
@@ -897,6 +1011,18 @@ def log_tail_stop(client_id):
     """Stop active tail for client_id. Called on log_tail_stop request or client disconnect."""
     keyme.log.info(f"WS: requesting log_tail_stop client_id={client_id}")
     return _log_tail_module.log_tail_stop(client_id)
+
+
+def get_log_range(client_id, data, send_callback):
+    """Return log lines for a date range (process main logs only, max 4 days). Streams batches via send_callback."""
+    keyme.log.info("WS: requesting get_log_range")
+    return _log_tail_module.get_log_range(data or {}, client_id, send_callback)
+
+
+def run_log_analyze(client_id, data, send_callback):
+    """Run an allowlisted awk analysis on all.log; streams batches via send_callback. Returns { success, data: { started, stream_id } } or { success: False, errors }."""
+    keyme.log.info("WS: requesting run_log_analyze")
+    return _log_tail_module.run_log_analyze(data or {}, client_id, send_callback)
 
 
 # Fleet commands (state-changing) live in fleet_commands.py; re-export so ws_server and parser keep working.
