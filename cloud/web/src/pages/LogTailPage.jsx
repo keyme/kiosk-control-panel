@@ -737,6 +737,8 @@ function AnalyzeSummaryView({ buckets }) {
     return () => document.removeEventListener('click', onDocClick, true);
   }, [processDropdownOpen]);
 
+  const [chartFullscreen, setChartFullscreen] = useState(false);
+
   const processLabel =
     selectedProcesses === null
       ? 'All'
@@ -744,11 +746,40 @@ function AnalyzeSummaryView({ buckets }) {
         ? 'None'
         : `${selectedProcesses.size} selected`;
 
+  const chartElement = chartData.length > 0 ? (
+    <ResponsiveContainer width="100%" height="100%">
+      <AreaChart data={chartData}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+        <XAxis dataKey="hour" tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" />
+        <YAxis tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" allowDecimals={false} />
+        <Tooltip
+          contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}
+          labelStyle={{ color: 'var(--foreground)' }}
+        />
+        <Legend wrapperStyle={{ fontSize: 11 }} />
+        <Area type="monotone" dataKey="count" name="Matches" fill="var(--chart-1)" stroke="var(--chart-1)" />
+      </AreaChart>
+    </ResponsiveContainer>
+  ) : null;
+
   return (
     <div className="space-y-6">
-      <p className="text-sm text-muted-foreground">
-        Total: {total}
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          Total: {total}
+        </p>
+        {chartData.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setChartFullscreen(true)}
+            className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-2.5 py-1.5 text-xs hover:bg-muted/50"
+            title="Fullscreen graph"
+          >
+            <Maximize2 className="size-3.5" aria-hidden />
+            Fullscreen
+          </button>
+        )}
+      </div>
       <div className="flex flex-wrap items-start gap-4">
         <div className="relative" ref={processDropdownRef}>
           <span className="text-xs font-medium text-muted-foreground block mb-1">Processes</span>
@@ -790,22 +821,32 @@ function AnalyzeSummaryView({ buckets }) {
       </div>
       {chartData.length > 0 ? (
         <div className="h-[300px] w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="hour" tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" />
-              <YAxis tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" allowDecimals={false} />
-              <Tooltip
-                contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}
-                labelStyle={{ color: 'var(--foreground)' }}
-              />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Area type="monotone" dataKey="count" name="Matches" fill="var(--chart-1)" stroke="var(--chart-1)" />
-            </AreaChart>
-          </ResponsiveContainer>
+          {chartElement}
         </div>
       ) : (
         <p className="text-sm text-muted-foreground py-4">No matches in selected range.</p>
+      )}
+      {chartFullscreen && chartElement && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col bg-background"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Graph fullscreen"
+        >
+          <div className="flex items-center justify-end gap-2 p-2 border-b border-border shrink-0">
+            <button
+              type="button"
+              onClick={() => setChartFullscreen(false)}
+              className="rounded-md p-2 hover:bg-muted"
+              aria-label="Close fullscreen"
+            >
+              <X className="size-5" />
+            </button>
+          </div>
+          <div className="flex-1 min-h-0 p-4">
+            {chartElement}
+          </div>
+        </div>
       )}
       <p className="text-sm text-muted-foreground">
         Summary by hour. Narrow the date range to see an event list.
@@ -1805,11 +1846,11 @@ export default function LogTailPage({ socket }) {
           <Card>
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Run an analysis on all.log for the selected datetime range. Select a preset query or build your own below. Only aggregated output is shown.
+                Run an analysis on all.log for the selected datetime range. Select a preset or build your own query. Only aggregated output is shown.
               </p>
               <div className="flex flex-wrap items-end gap-3">
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-muted-foreground">Start</span>
+                  <span className="text-xs font-medium text-muted-foreground">Start date</span>
                   <input
                     type="datetime-local"
                     value={analyzeStartDatetime}
@@ -1817,8 +1858,9 @@ export default function LogTailPage({ socket }) {
                     className="rounded-md border border-input bg-background px-3 py-2 text-sm"
                   />
                 </label>
+                <span className="pb-2 text-muted-foreground">→</span>
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-muted-foreground">End</span>
+                  <span className="text-xs font-medium text-muted-foreground">End date</span>
                   <input
                     type="datetime-local"
                     value={analyzeEndDatetime}
@@ -1826,6 +1868,7 @@ export default function LogTailPage({ socket }) {
                     className="rounded-md border border-input bg-background px-3 py-2 text-sm"
                   />
                 </label>
+                <div className="flex-1 min-w-[120px]" />
                 <button
                   type="button"
                   onClick={() => {
@@ -1869,63 +1912,58 @@ export default function LogTailPage({ socket }) {
                   }}
                   disabled={!socket?.connected || analyzeLoading || !analyzeStartDatetime.trim() || !analyzeEndDatetime.trim()}
                   className={cn(
-                    'inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium',
+                    'shrink-0 inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium',
                     'bg-primary text-primary-foreground hover:bg-primary/90',
                     'disabled:opacity-50 disabled:pointer-events-none'
                   )}
                 >
                   {analyzeLoading ? <Loader2 className="size-4 animate-spin" /> : null}
-                  Run
+                  Run analysis
                 </button>
-              </div>
-              <div className="flex flex-wrap items-end gap-2">
-                <label className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-muted-foreground">Preset</span>
-                  <select
-                    value={analyzePresetId === 'build' ? '' : analyzePresetId}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setAnalyzePresetId(v || 'build');
-                      if (v) setAnalyzeBuilderOpen(false);
-                    }}
-                    className="min-w-[280px] rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  >
-                    {ANALYZE_PRESETS.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.query}
-                      </option>
-                    ))}
-                    <option value="">Custom (see query above)</option>
-                  </select>
-                </label>
-                {analyzePresetId === 'build' ? (
-                  <button
-                    type="button"
-                    onClick={() => setAnalyzeBuilderOpen((o) => !o)}
-                    className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-muted/50"
-                  >
-                    {analyzeBuilderOpen ? 'Close builder' : 'Edit query'}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAnalyzePresetId('build');
-                      setAnalyzeBuilderOpen(true);
-                    }}
-                    className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-muted/50"
-                  >
-                    Build custom
-                  </button>
-                )}
               </div>
               <div className="flex flex-col gap-1">
                 <span className="text-xs font-medium text-muted-foreground">Query</span>
                 <input
                   readOnly
                   value={currentQueryLabel}
-                  className="w-full rounded-md border border-input bg-muted/30 px-3 py-2 text-sm font-mono"
+                  placeholder="(no filter)"
+                  className="w-full rounded-md border border-input bg-muted/30 px-3 py-2 text-sm font-mono placeholder:text-muted-foreground"
                 />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground">Mode:</span>
+                <select
+                  value={analyzePresetId === 'build' ? '' : analyzePresetId}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setAnalyzePresetId(v || 'build');
+                    if (v) setAnalyzeBuilderOpen(false);
+                  }}
+                  className="rounded-md border border-input bg-background px-3 py-2 text-sm min-w-[180px]"
+                >
+                  {ANALYZE_PRESETS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                  <option value="">Custom</option>
+                </select>
+                <span className="text-muted-foreground text-sm">|</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAnalyzePresetId('build');
+                    setAnalyzeBuilderOpen(true);
+                  }}
+                  className={cn(
+                    'rounded-md border px-3 py-2 text-sm',
+                    analyzePresetId === 'build'
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-input bg-background hover:bg-muted/50'
+                  )}
+                >
+                  Custom
+                </button>
               </div>
               {analyzePresetId === 'build' && analyzeBuilderOpen && (
                 <div className="rounded-md border border-input bg-muted/20 p-4 space-y-4">

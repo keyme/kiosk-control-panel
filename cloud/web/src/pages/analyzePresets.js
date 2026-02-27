@@ -36,12 +36,13 @@ export const ANALYZE_MESSAGE_PRESETS = [
 ];
 
 /**
- * Presets: { id, query, processes, levels, message_regex }.
- * query = human-readable label (shown in UI). Backend receives processes, levels, message_regex.
+ * Presets: { id, name, query, processes, levels, message_regex }.
+ * name = short label in preset dropdown. query = full query shown in Query field. Backend receives processes, levels, message_regex.
  */
 export const ANALYZE_PRESETS = [
   {
     id: 'errors_and_restarts',
+    name: 'Errors and restarts',
     query: '(log_level:e OR log_level:c) OR message:/async_STARTED to MANAGER/',
     processes: [],
     levels: ['e', 'c'],
@@ -49,6 +50,7 @@ export const ANALYZE_PRESETS = [
   },
   {
     id: 'errors_only',
+    name: 'Errors only',
     query: 'log_level:e OR log_level:c',
     processes: [],
     levels: ['e', 'c'],
@@ -56,6 +58,7 @@ export const ANALYZE_PRESETS = [
   },
   {
     id: 'restarts_only',
+    name: 'Restarts only',
     query: 'message:/async_STARTED to MANAGER/',
     processes: [],
     levels: [],
@@ -63,6 +66,7 @@ export const ANALYZE_PRESETS = [
   },
   {
     id: 'warnings_and_errors',
+    name: 'Warnings and errors',
     query: 'log_level:w OR log_level:e',
     processes: [],
     levels: ['w', 'e'],

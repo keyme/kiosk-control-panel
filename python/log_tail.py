@@ -7,7 +7,7 @@ import os
 import subprocess
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pylib as keyme
 
@@ -72,6 +72,25 @@ def _parse_datetime(s):
             except ValueError:
                 pass
     return None
+
+
+def _parse_range_datetime(data, max_days=None):
+    """Parse start/end from data; validate. Returns (start_dt, end_dt, start_ts, end_ts) or (None, None, None, None, error_response)."""
+    data = data or {}
+    start_raw = data.get('start_datetime') or data.get('start_date')
+    end_raw = data.get('end_datetime') or data.get('end_date')
+    if not start_raw or not end_raw:
+        return None, None, None, None, {'success': False, 'errors': ['Missing start_datetime and end_datetime (or start_date and end_date)']}
+    start_dt_parsed = _parse_datetime(start_raw)
+    end_dt_parsed = _parse_datetime(end_raw)
+    if start_dt_parsed is None or end_dt_parsed is None:
+        return None, None, None, None, {'success': False, 'errors': ['Invalid datetime; use YYYY-MM-DD or YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS']}
+    if start_dt_parsed >= end_dt_parsed:
+        return None, None, None, None, {'success': False, 'errors': ['start must be before end']}
+    start_dt, end_dt = start_dt_parsed.date(), end_dt_parsed.date()
+    if max_days is not None and (end_dt - start_dt).days >= max_days:
+        return None, None, None, None, {'success': False, 'errors': [f'Date range exceeds {max_days} days']}
+    return start_dt, end_dt, start_dt_parsed.strftime('%Y-%m-%dT%H:%M:%S'), end_dt_parsed.strftime('%Y-%m-%dT%H:%M:%S'), None
 
 
 # -----------------------------------------------------------------------------
@@ -253,6 +272,17 @@ def _archived_files_overlapping_range(log_dir, base_name, start_dt, end_dt):
     return result, last_archive_date
 
 
+def _log_files_for_range(log_dir, base_name, start_dt, end_dt):
+    """Return list of (day, filepath, is_gz) for base_name and its archives overlapping [start_dt, end_dt]."""
+    files_to_read, last_archive_date = _archived_files_overlapping_range(log_dir, base_name, start_dt, end_dt)
+    today = datetime.utcnow().date()
+    if start_dt <= today and (last_archive_date is None or end_dt > last_archive_date):
+        current_path = os.path.join(log_dir, base_name)
+        if os.path.isfile(current_path):
+            files_to_read.append((today, current_path, False))
+    return files_to_read
+
+
 # -----------------------------------------------------------------------------
 # Date-range fetch: stream thread (awk for timestamp + optional process filter)
 # -----------------------------------------------------------------------------
@@ -273,9 +303,9 @@ def _awk_script_with_process_filter(process_list):
 
 def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_read, max_lines, start_ts, end_ts, process_filter=None):
     """Background: for each file, pipe through awk (timestamp + optional process match), stream batches."""
-    process_list = [str(p).strip() for p in (process_filter or []) if str(p).strip()]
+    process_list = process_filter or []
     awk_script = _awk_script_with_process_filter(process_list)
-    procs_str = ','.join(process_list) if process_list else ''
+    procs_str = ','.join(_sanitize_awk_var(p).replace(',', '') for p in process_list) if process_list else ''
     total_emitted = 0
     truncated = False
     start_time = time.time()
@@ -383,24 +413,9 @@ def get_log_range(data, client_id, send_callback):
         return {'success': False, 'errors': ['Invalid or missing log_id']}
     path = allowlist[log_id]
 
-    start_raw = data.get('start_datetime') or data.get('start_date')
-    end_raw = data.get('end_datetime') or data.get('end_date')
-    if not start_raw or not end_raw:
-        return {'success': False, 'errors': ['Missing start_datetime and end_datetime (or start_date and end_date)']}
-
-    start_dt_parsed = _parse_datetime(start_raw)
-    end_dt_parsed = _parse_datetime(end_raw)
-    if start_dt_parsed is None or end_dt_parsed is None:
-        return {'success': False, 'errors': ['Invalid datetime; use YYYY-MM-DD or YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS']}
-    if start_dt_parsed >= end_dt_parsed:
-        return {'success': False, 'errors': ['start must be before end']}
-    start_dt = start_dt_parsed.date()
-    end_dt = end_dt_parsed.date()
-    if (end_dt - start_dt).days >= _RANGE_MAX_DAYS:
-        return {'success': False, 'errors': [f'Date range exceeds {_RANGE_MAX_DAYS} days']}
-
-    start_ts = start_dt_parsed.strftime('%Y-%m-%dT%H:%M:%S')
-    end_ts = end_dt_parsed.strftime('%Y-%m-%dT%H:%M:%S')
+    start_dt, end_dt, start_ts, end_ts, err = _parse_range_datetime(data, max_days=_RANGE_MAX_DAYS)
+    if err is not None:
+        return err
 
     max_lines = data.get('max_lines', _RANGE_MAX_LINES_DEFAULT)
     try:
@@ -415,13 +430,7 @@ def get_log_range(data, client_id, send_callback):
         log_dir = _LOG_DIR
         base_name = log_id.replace('process/', '', 1) + '.log'
 
-    files_to_read, last_archive_date = _archived_files_overlapping_range(log_dir, base_name, start_dt, end_dt)
-    today = datetime.utcnow().date()
-    if start_dt <= today and (last_archive_date is None or end_dt > last_archive_date):
-        current_path = os.path.join(log_dir, base_name)
-        if os.path.isfile(current_path):
-            files_to_read.append((today, current_path, False))
-
+    files_to_read = _log_files_for_range(log_dir, base_name, start_dt, end_dt)
     if not files_to_read:
         keyme.log.warning(f"log_tail get_log_range no files for range {start_dt}..{end_dt}")
         return {'success': False, 'errors': ['No log files found for the selected range']}
@@ -429,10 +438,9 @@ def get_log_range(data, client_id, send_callback):
     process_filter = None
     if log_id == 'all':
         pf = data.get('process_filter')
-        if isinstance(pf, (list, tuple)) and len(pf) > 0:
-            process_filter = [str(p).strip() for p in pf if str(p).strip()]
-            if process_filter:
-                keyme.log.info(f"log_tail get_log_range process_filter={process_filter}")
+        process_filter = [str(p).strip() for p in (pf if isinstance(pf, (list, tuple)) else []) if str(p).strip()]
+        if process_filter:
+            keyme.log.info(f"log_tail get_log_range process_filter={process_filter}")
 
     stream_id = data.get('stream_id') or str(time.time())
     dates_with_data = [t[0].isoformat() for t in files_to_read]
@@ -455,7 +463,6 @@ def get_log_range(data, client_id, send_callback):
             'requested_start': start_dt.isoformat(),
             'requested_end': end_dt.isoformat(),
             'dates_with_data': dates_with_data,
-            'missing_dates': [] if files_to_read else [f"{start_dt.isoformat()}..{end_dt.isoformat()}"],
         },
     }
 
@@ -477,16 +484,9 @@ def _sanitize_awk_var(s):
 def _parse_analyze_params(data):
     """Parse and validate run_log_analyze payload. Returns (params_dict, None) or (None, error_response)."""
     data = data or {}
-    start_raw = data.get('start_datetime') or data.get('start_date')
-    end_raw = data.get('end_datetime') or data.get('end_date')
-    if not start_raw or not end_raw:
-        return None, {'success': False, 'errors': ['Missing start_datetime and end_datetime']}
-    start_dt_parsed = _parse_datetime(start_raw)
-    end_dt_parsed = _parse_datetime(end_raw)
-    if start_dt_parsed is None or end_dt_parsed is None:
-        return None, {'success': False, 'errors': ['Invalid datetime; use YYYY-MM-DD or YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS']}
-    if start_dt_parsed >= end_dt_parsed:
-        return None, {'success': False, 'errors': ['start must be before end']}
+    start_dt, end_dt, start_ts, end_ts, err = _parse_range_datetime(data)
+    if err is not None:
+        return None, err
 
     processes = data.get('processes')
     processes = [str(p).strip() for p in (processes if isinstance(processes, (list, tuple)) else []) if str(p).strip()]
@@ -495,25 +495,14 @@ def _parse_analyze_params(data):
     message_regex = _sanitize_awk_var((data.get('message_regex') or '').strip())
 
     return {
-        'start_dt': start_dt_parsed.date(),
-        'end_dt': end_dt_parsed.date(),
-        'start_ts': start_dt_parsed.strftime('%Y-%m-%dT%H:%M:%S'),
-        'end_ts': end_dt_parsed.strftime('%Y-%m-%dT%H:%M:%S'),
+        'start_dt': start_dt,
+        'end_dt': end_dt,
+        'start_ts': start_ts,
+        'end_ts': end_ts,
         'pname': '|'.join(processes) if processes else '',
         'log_level': '|'.join(f'<{l}>' for l in levels) if levels else '',
         'reg_message': message_regex,
     }, None
-
-
-def _all_log_files_for_range(log_dir, start_dt, end_dt):
-    """Return list of (day, filepath, is_gz) for all.log and its archives overlapping [start_dt, end_dt]."""
-    files_to_read, last_archive_date = _archived_files_overlapping_range(log_dir, 'all.log', start_dt, end_dt)
-    today = datetime.utcnow().date()
-    if start_dt <= today and (last_archive_date is None or end_dt > last_archive_date):
-        current_path = os.path.join(log_dir, 'all.log')
-        if os.path.isfile(current_path):
-            files_to_read.append((today, current_path, False))
-    return files_to_read
 
 
 def _merge_awk_line_into_buckets(buckets, line):
@@ -603,7 +592,7 @@ def run_log_analyze(data, client_id, send_callback):
         return err
 
     log_dir = os.path.dirname(_ALL_LOG_PATH)
-    files_to_read = _all_log_files_for_range(log_dir, params['start_dt'], params['end_dt'])
+    files_to_read = _log_files_for_range(log_dir, 'all.log', params['start_dt'], params['end_dt'])
     if not files_to_read:
         keyme.log.warning("log_tail run_log_analyze no files for range %s..%s", params['start_dt'], params['end_dt'])
         return {'success': False, 'errors': ['No log files found for the selected range']}
