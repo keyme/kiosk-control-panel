@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageTitle } from '@/components/PageTitle';
 import { ScrollText, Play, Square, Download, AlertTriangle, Loader2, HelpCircle, Maximize2, X } from 'lucide-react';
@@ -6,7 +7,8 @@ import { cn } from '@/lib/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import {
   ANALYZE_PRESETS,
@@ -678,10 +680,16 @@ function ViewTab({ socket }) {
   );
 }
 
+const CHART_COLORS = [
+  'var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)',
+  '#6366f1', '#14b8a6', '#f97316', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16',
+];
+
 /** Per-hour summary: buckets = { "2026-02-01T00": { count, byProcess: { PROCESS: { count } } }, ... }. Single metric. */
 function AnalyzeSummaryView({ buckets }) {
   const [selectedProcesses, setSelectedProcesses] = useState(() => null);
   const [processDropdownOpen, setProcessDropdownOpen] = useState(false);
+  const [chartType, setChartType] = useState('area'); // 'area' | 'bar' | 'pie'
   const processDropdownRef = useRef(null);
 
   const uniqueProcesses = useMemo(() => {
@@ -712,6 +720,31 @@ function AnalyzeSummaryView({ buckets }) {
     });
     return entries.sort((a, b) => a.hour.localeCompare(b.hour));
   }, [buckets, selectedProcesses]);
+
+  /** Per-process totals (respects process filter) for bar/pie. */
+  const perProcessData = useMemo(() => {
+    if (!buckets || typeof buckets !== 'object') return [];
+    const processes = selectedProcesses === null
+      ? uniqueProcesses
+      : selectedProcesses.size === 0
+        ? []
+        : Array.from(selectedProcesses).sort();
+    const totals = {};
+    for (const p of processes) {
+      totals[p] = 0;
+    }
+    for (const v of Object.values(buckets)) {
+      const byProcess = v?.byProcess;
+      if (!byProcess || typeof byProcess !== 'object') continue;
+      for (const p of processes) {
+        totals[p] = (totals[p] ?? 0) + (byProcess[p]?.count ?? 0);
+      }
+    }
+    return processes
+      .map((p) => ({ process: p, count: totals[p] ?? 0 }))
+      .filter((d) => d.count > 0)
+      .sort((a, b) => b.count - a.count);
+  }, [buckets, selectedProcesses, uniqueProcesses]);
 
   const total = chartData.reduce((s, d) => s + d.count, 0);
 
@@ -746,21 +779,68 @@ function AnalyzeSummaryView({ buckets }) {
         ? 'None'
         : `${selectedProcesses.size} selected`;
 
-  const chartElement = chartData.length > 0 ? (
-    <ResponsiveContainer width="100%" height="100%">
-      <AreaChart data={chartData}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-        <XAxis dataKey="hour" tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" />
-        <YAxis tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" allowDecimals={false} />
-        <Tooltip
-          contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}
-          labelStyle={{ color: 'var(--foreground)' }}
-        />
-        <Legend wrapperStyle={{ fontSize: 11 }} />
-        <Area type="monotone" dataKey="count" name="Matches" fill="var(--chart-1)" stroke="var(--chart-1)" />
-      </AreaChart>
-    </ResponsiveContainer>
-  ) : null;
+  const hasAreaData = chartData.length > 0;
+  const hasPerProcessData = perProcessData.length > 0;
+
+  const chartElement = (() => {
+    const tooltipStyle = { backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 };
+    const labelStyle = { color: 'var(--foreground)' };
+    if (chartType === 'area' && hasAreaData) {
+      return (
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+            <XAxis dataKey="hour" tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" />
+            <YAxis tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" allowDecimals={false} />
+            <Tooltip contentStyle={tooltipStyle} labelStyle={labelStyle} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Area type="monotone" dataKey="count" name="Matches" fill="var(--chart-1)" stroke="var(--chart-1)" />
+          </AreaChart>
+        </ResponsiveContainer>
+      );
+    }
+    if (chartType === 'bar' && hasPerProcessData) {
+      return (
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={perProcessData} layout="vertical" margin={{ left: 8, right: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
+            <XAxis type="number" tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" allowDecimals={false} />
+            <YAxis type="category" dataKey="process" width={120} tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" />
+            <Tooltip contentStyle={tooltipStyle} labelStyle={labelStyle} />
+            <Bar dataKey="count" name="Matches" fill="var(--chart-1)" radius={[0, 4, 4, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+    if (chartType === 'pie' && hasPerProcessData) {
+      return (
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={perProcessData}
+              dataKey="count"
+              nameKey="process"
+              cx="50%"
+              cy="50%"
+              outerRadius="70%"
+              label={({ process, percent }) => `${process} ${(percent * 100).toFixed(1)}%`}
+              labelLine
+              fontSize={11}
+            >
+              {perProcessData.map((_, i) => (
+                <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+              ))}
+            </Pie>
+            <Tooltip contentStyle={tooltipStyle} labelStyle={labelStyle} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+          </PieChart>
+        </ResponsiveContainer>
+      );
+    }
+    return null;
+  })();
+
+  const hasChart = chartElement != null;
 
   return (
     <div className="space-y-6">
@@ -768,7 +848,7 @@ function AnalyzeSummaryView({ buckets }) {
         <p className="text-sm text-muted-foreground">
           Total: {total}
         </p>
-        {chartData.length > 0 && (
+        {hasChart && (
           <button
             type="button"
             onClick={() => setChartFullscreen(true)}
@@ -780,7 +860,7 @@ function AnalyzeSummaryView({ buckets }) {
           </button>
         )}
       </div>
-      <div className="flex flex-wrap items-start gap-4">
+      <div className="flex flex-wrap items-center gap-3">
         <div className="relative" ref={processDropdownRef}>
           <span className="text-xs font-medium text-muted-foreground block mb-1">Processes</span>
           <button
@@ -818,15 +898,39 @@ function AnalyzeSummaryView({ buckets }) {
             </div>
           )}
         </div>
+        <div className="flex items-end gap-1">
+          <span className="text-xs font-medium text-muted-foreground block mb-1 mr-2">Chart</span>
+          <div className="flex rounded-md border border-input bg-muted/30 p-0.5">
+            {[
+              { id: 'area', label: 'By hour' },
+              { id: 'bar', label: 'Bar (process)' },
+              { id: 'pie', label: 'Pie (process)' },
+            ].map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setChartType(id)}
+                className={cn(
+                  'rounded px-2.5 py-1.5 text-xs font-medium transition-colors',
+                  chartType === id ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
-      {chartData.length > 0 ? (
+      {hasChart ? (
         <div className="h-[300px] w-full">
           {chartElement}
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground py-4">No matches in selected range.</p>
+        <p className="text-sm text-muted-foreground py-4">
+          {chartType === 'area' ? 'No matches in selected range.' : 'No per-process data for selected processes.'}
+        </p>
       )}
-      {chartFullscreen && chartElement && (
+      {chartFullscreen && chartElement && createPortal(
         <div
           className="fixed inset-0 z-50 flex flex-col bg-background"
           role="dialog"
@@ -846,7 +950,8 @@ function AnalyzeSummaryView({ buckets }) {
           <div className="flex-1 min-h-0 p-4">
             {chartElement}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
       <p className="text-sm text-muted-foreground">
         Summary by hour. Narrow the date range to see an event list.
