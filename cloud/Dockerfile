@@ -54,11 +54,13 @@ ENV LOG_ANALYSIS_WORKSPACE_BASE=/app/workspace
 ENV LOG_ANALYSIS_CACHE_DIR=/app/log_analysis_cache
 ENV LOG_ANALYSIS_CACHE_TTL_DAYS=2
 
-# Runtime deps: opencv; git for log-analysis worktrees
+# Runtime deps: opencv; git for log-analysis worktrees; nodejs/npm for Codex CLI
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
     git \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Clone kiosk repo with submodules for log-analysis Codex context (build-arg for URL/auth)
@@ -68,8 +70,12 @@ RUN git clone --recurse-submodules --depth 1 "${KIOSK_REPO_URL}" /app/kiosk_repo
 # Workspace base for log-analysis worktrees; cache dir for log slices (TTL in days above)
 RUN mkdir -p /app/workspace /app/log_analysis_cache
 
-# Install Codex CLI (adjust if using a different installer or internal package)
-RUN pip install codex 2>/dev/null || true
+# Install Codex CLI via npm (OpenAI Codex; requires Node 18+)
+RUN npm install -g @openai/codex
+
+# Entrypoint: require OPENAI_API_KEY and run codex login before starting the app
+COPY cloud/docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
 
 # Copy installed Python env from builder
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
@@ -89,4 +95,5 @@ USER appuser
 
 EXPOSE 8080
 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["uvicorn", "control_panel.cloud.main:app", "--host", "0.0.0.0", "--port", "8080"]

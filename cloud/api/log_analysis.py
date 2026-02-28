@@ -218,7 +218,7 @@ def run_codex(
     if log_file_path:
         prompt = f"The log file you must analyze is: {log_file_path} (it is in this workspace).\n\n{prompt}"
     out_path = os.path.join(workspace_path, _RES_OUT)
-    cmd = ["codex", "-C", workspace_path, "exec", prompt, "-o", _RES_OUT]
+    cmd = ["codex", "-C", workspace_path, "exec", "--skip-git-repo-check", prompt, "-o", _RES_OUT]
     prompt_preview = (prompt[:80] + "…") if len(prompt) > 80 else prompt
     log.info(
         "log_analysis run_codex external_cmd=codex -C <workspace> exec '<prompt>' -o res.out workspace=%s timeout=%s prompt_len=%s prompt_preview=%s",
