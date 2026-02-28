@@ -437,7 +437,7 @@ def create_router():
     @router.post("/log-analysis")
     async def log_analysis(body: dict = Body(default=None)):
         """Two-trip AI log analysis: extract identifiers, find datetime on device, pull log slice, run Codex."""
-        from datetime import datetime as dt
+        from datetime import datetime as dt, timedelta
 
         from control_panel.cloud.api import device_log_client, log_analysis as log_analysis_module
         from control_panel.cloud.api.main import _device_ws_backend, _get_wss_api_key
@@ -462,7 +462,7 @@ def create_router():
         if not wss_key:
             return JSONResponse({"error": "Server configuration error"}, status_code=502)
 
-        # Parse approximate_date for date hint (that day)
+        # Parse approximate_date for date hint. Device requires start < end, so use that day and next.
         try:
             if "T" in approximate_date:
                 parsed = dt.fromisoformat(approximate_date.replace("Z", "+00:00"))
@@ -470,7 +470,8 @@ def create_router():
                 parsed = dt.strptime(approximate_date[:10], "%Y-%m-%d")
             date_str = parsed.strftime("%Y-%m-%d")
             date_hint_start = date_str
-            date_hint_end = date_str
+            next_day = (parsed.date() + timedelta(days=1)).strftime("%Y-%m-%d")
+            date_hint_end = next_day
         except (ValueError, TypeError):
             return JSONResponse({"error": "Invalid approximate_date; use YYYY-MM-DD or ISO datetime"}, status_code=400)
 
@@ -501,9 +502,16 @@ def create_router():
                     {"error": "Identifier not found in logs for the selected date range"},
                     status_code=404,
                 )
+            # Device returns first token of the matching line; reject if not a valid ISO datetime (e.g. "Binary")
+            if not isinstance(exact_datetime, str) or len(exact_datetime) < 10 or not exact_datetime[:4].isdigit():
+                _log.warning("search_log returned invalid datetime value: %s", exact_datetime)
+                return JSONResponse(
+                    {"error": "Identifier found but log line had no valid timestamp for the selected date range"},
+                    status_code=404,
+                )
 
             # Date for cache key (YYYY-MM-DD from exact_datetime)
-            exact_date_str = exact_datetime[:10] if len(exact_datetime) >= 10 else exact_datetime
+            exact_date_str = exact_datetime[:10]
 
             # Trip 2: pull log (from cache or device); device streams to file to avoid loading into memory
             cache_dir = log_analysis_module.get_cache_dir()

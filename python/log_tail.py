@@ -428,7 +428,10 @@ def _extract_timestamp_from_log_line(line):
     parts = line.strip().split(None, 1)
     if not parts:
         return None
-    return parts[0] if parts[0] else None
+    first = parts[0] if parts[0] else None
+    if not first or len(first) < 10 or not first[:4].isdigit():
+        return None
+    return first
 
 
 def search_log(data):
@@ -495,7 +498,7 @@ def search_log(data):
                     universal_newlines=True,
                 )
                 grep_proc = subprocess.Popen(
-                    _nice_cmd(['grep', '-m', '1', '-F', query]),
+                    _nice_cmd(['grep', '-a', '-m', '1', '-F', query]),
                     stdin=reader.stdout,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
@@ -506,7 +509,7 @@ def search_log(data):
                 cmd_desc = f"grep -m 1 -F {query!r} {filepath!r}"
                 keyme.log.info(f"log_tail search_log external_cmd={cmd_desc}")
                 grep_proc = subprocess.Popen(
-                    _nice_cmd(['grep', '-m', '1', '-F', query, filepath]),
+                    _nice_cmd(['grep', '-a', '-m', '1', '-F', query, filepath]),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     universal_newlines=True,
@@ -519,7 +522,7 @@ def search_log(data):
                 ts = _extract_timestamp_from_log_line(line)
                 if ts:
                     return {'success': True, 'data': {'datetime': ts, 'line': line.strip()}}
-                return {'success': True, 'data': {'datetime': None, 'line': line.strip()}}
+                keyme.log.debug("log_tail search_log match had no valid timestamp first field, continuing to next file")
         except subprocess.TimeoutExpired:
             keyme.log.warning("log_tail search_log timeout on file")
         except (OSError, ValueError) as e:
@@ -572,7 +575,7 @@ def _get_log_around_stream_thread(client_id, send_callback, stream_id, files_to_
                     universal_newlines=True,
                 )
                 grep_proc = subprocess.Popen(
-                    _nice_cmd(['grep', '-m', '1', '-B', str(lines_before), '-A', str(lines_after), '-E', pattern]),
+                    _nice_cmd(['grep', '-a', '-m', '1', '-B', str(lines_before), '-A', str(lines_after), '-E', pattern]),
                     stdin=reader.stdout,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
@@ -583,7 +586,7 @@ def _get_log_around_stream_thread(client_id, send_callback, stream_id, files_to_
                 cmd_desc = f"grep -m 1 -B {lines_before} -A {lines_after} -E {pattern!r} {filepath!r}"
                 keyme.log.info(f"log_tail get_log_around_datetime external_cmd={cmd_desc}")
                 grep_proc = subprocess.Popen(
-                    _nice_cmd(['grep', '-m', '1', '-B', str(lines_before), '-A', str(lines_after), '-E', pattern, filepath]),
+                    _nice_cmd(['grep', '-a', '-m', '1', '-B', str(lines_before), '-A', str(lines_after), '-E', pattern, filepath]),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     universal_newlines=True,
