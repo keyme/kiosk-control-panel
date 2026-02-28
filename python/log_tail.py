@@ -488,13 +488,13 @@ def _run_grep_first_match(filepath, is_gz, query, timeout_sec):
         out, _ = grep_proc.communicate(timeout=timeout_sec)
         if out:
             line = out.strip().split('\n')[0]
-            keyme.log.info("log_tail search_log result path=%s bytes=%s", filepath, len(out))
+            keyme.log.info(f"log_tail search_log result path={filepath!r} bytes={len(out)}")
             return line.strip()
         return None
     except subprocess.TimeoutExpired:
         return None
     except (OSError, ValueError) as e:
-        keyme.log.warning("log_tail search_log path=%s: %s", filepath, e)
+        keyme.log.warning(f"log_tail search_log path={filepath!r}: {e}")
         return None
     finally:
         _terminate_and_wait(grep_proc)
@@ -527,7 +527,7 @@ def search_log(data):
             keyme.log.warning("log_tail search_log timeout")
             return {'success': False, 'errors': ['Search timed out']}
         timeout_remaining = max(1, _SEARCH_LOG_TIMEOUT_SEC - int(time.time() - start_time))
-        keyme.log.info("log_tail search_log file=%s is_gz=%s", filepath, is_gz)
+        keyme.log.info(f"log_tail search_log file={filepath!r} is_gz={is_gz}")
         line = _run_grep_first_match(filepath, is_gz, query, timeout_remaining)
         if line:
             ts = _extract_timestamp_from_log_line(line)
@@ -575,7 +575,7 @@ def _stream_grep_context_around(filepath, is_gz, lines_before, lines_after, patt
             on_chunk(chunk)
         return total
     except (OSError, ValueError) as e:
-        keyme.log.warning("log_tail get_log_around path=%s: %s", filepath, e)
+        keyme.log.warning(f"log_tail get_log_around path={filepath!r}: {e}")
         return 0
     finally:
         _terminate_and_wait(grep_proc)
@@ -594,16 +594,16 @@ def _get_log_around_stream_thread(client_id, send_callback, stream_id, files_to_
         send_callback(client_id, {'event': ws_protocol.PUSH_LOG_AROUND_DONE, 'data': {'stream_id': stream_id}})
 
     for _day, filepath, is_gz in files_to_read:
-        keyme.log.info("log_tail get_log_around file=%s is_gz=%s", filepath, is_gz)
+        keyme.log.info(f"log_tail get_log_around file={filepath!r} is_gz={is_gz}")
         total = _stream_grep_context_around(
             filepath, is_gz, lines_before, lines_after, pattern, _LOG_AROUND_CHUNK_SIZE, send_chunk
         )
         if total > 0:
-            keyme.log.info("log_tail get_log_around done stream_id=%s file=%s total_bytes=%s", stream_id, filepath, total)
+            keyme.log.info(f"log_tail get_log_around done stream_id={stream_id!r} file={filepath!r} total_bytes={total}")
             send_done()
             return
     send_done()
-    keyme.log.info("log_tail get_log_around done stream_id=%s no match", stream_id)
+    keyme.log.info(f"log_tail get_log_around done stream_id={stream_id!r} no match")
 
 
 def _clamp_int(val, default, cap):
