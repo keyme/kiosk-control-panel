@@ -35,7 +35,8 @@ RUN uv pip install --system \
     numpy \
     opencv-python-headless \
     httpx \
-    cachetools
+    cachetools \
+    "websockets>=12.0"
 
 # Stage 3: Runtime
 FROM 821954540415.dkr.ecr.us-east-1.amazonaws.com/python:3.13-slim
@@ -47,12 +48,28 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
+# Log analysis: full kiosk repo (with submodules), workspace for worktrees, cache for log slices
+ENV KIOSK_REPO_PATH=/app/kiosk_repo
+ENV LOG_ANALYSIS_WORKSPACE_BASE=/app/workspace
+ENV LOG_ANALYSIS_CACHE_DIR=/app/log_analysis_cache
+ENV LOG_ANALYSIS_CACHE_TTL_DAYS=2
 
-# Runtime deps for opencv (used by calibration_trace). libgl1 replaces libgl1-mesa-glx on newer Debian
+# Runtime deps: opencv; git for log-analysis worktrees
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
+    git \
     && rm -rf /var/lib/apt/lists/*
+
+# Clone kiosk repo with submodules for log-analysis Codex context (build-arg for URL/auth)
+ARG KIOSK_REPO_URL=https://github.com/keyme/kiosk.git
+RUN git clone --recurse-submodules --depth 1 "${KIOSK_REPO_URL}" /app/kiosk_repo || true
+
+# Workspace base for log-analysis worktrees; cache dir for log slices (TTL in days above)
+RUN mkdir -p /app/workspace /app/log_analysis_cache
+
+# Install Codex CLI (adjust if using a different installer or internal package)
+RUN pip install codex 2>/dev/null || true
 
 # Copy installed Python env from builder
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
@@ -66,7 +83,7 @@ COPY --from=web-build /web-build/dist ./control_panel/cloud/web/dist
 
 RUN python -m compileall control_panel/
 
-# Non-root user
+# Non-root user; ensure workspace and kiosk_repo are writable for worktrees
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 

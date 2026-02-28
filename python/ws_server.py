@@ -148,6 +148,12 @@ def _dispatch_request(client_id, request_id, event, data, connection_count, conn
             data or {},
             lambda cid, obj: _schedule_send(cid, obj),
         ),
+        'search_log': lambda: handlers.search_log(data or {}),
+        'get_log_around_datetime': lambda: handlers.get_log_around_datetime(
+            client_id,
+            data or {},
+            lambda cid, obj: _schedule_send(cid, obj),
+        ),
         'run_log_analyze': lambda: handlers.run_log_analyze(
             client_id,
             data or {},
