@@ -82,6 +82,13 @@ async def search_log(
         data["date_hint_start"] = date_hint_start
     if date_hint_end:
         data["date_hint_end"] = date_hint_end
+    log.info(
+        "search_log request backend_url=%s queries=%s date_hint_start=%s date_hint_end=%s",
+        backend_url,
+        data.get("queries") or data.get("query"),
+        date_hint_start,
+        date_hint_end,
+    )
     try:
         resp, _ = await _connect_and_request(
             backend_url, ssl_ctx, wss_key, "search_log", data, timeout=timeout
@@ -90,9 +97,13 @@ async def search_log(
         log.warning("search_log request failed: %s", e)
         return None
     if not resp.get("success") or not isinstance(resp.get("data"), dict):
+        log.warning("search_log response success=%s data=%s", resp.get("success"), resp.get("data"))
         return None
     dt = resp["data"].get("datetime")
-    log.info("search_log datetime=%s", dt)
+    if not dt:
+        log.warning("search_log no datetime in response (no match in log) success=%s data=%s", resp.get("success"), resp.get("data"))
+    else:
+        log.info("search_log datetime=%s", dt)
     return dt
 
 
@@ -164,14 +175,17 @@ async def get_log_around_datetime(
             finally:
                 if f is not None:
                     f.close()
+            success = response_msg is not None and response_msg.get("success") is True
             log.info(
                 "get_log_around_datetime stream_id=%s bytes_received=%s output_path=%s success=%s",
                 stream_id,
                 bytes_received,
                 output_path or "(none)",
-                response_msg.get("success") if response_msg else False,
+                success,
             )
-            return response_msg is not None and response_msg.get("success") is True
+            if not success and response_msg is not None:
+                log.warning("get_log_around_datetime response success=False response=%s", response_msg)
+            return success
     except Exception as e:
-        log.warning(f"get_log_around_datetime request failed: {e}")
+        log.warning("get_log_around_datetime request failed: %s", e)
         return False

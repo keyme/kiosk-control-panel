@@ -4,11 +4,13 @@ Cloud API: FastAPI app, REST router, static JS serving. WebSocket proxy to devic
 Run with static root and port via env (see README). Entrypoint for uvicorn is control_panel.cloud.main:app.
 """
 import asyncio
+import datetime
 import json
 import logging
 import os
 import re
 import ssl
+import tempfile
 import time
 from typing import Any, Callable, Optional, Tuple
 
@@ -53,6 +55,10 @@ from control_panel.shared import (
     WS_PORT,
     WS_PATH,
 )
+
+from control_panel.cloud.api import codex_app_server_client
+from control_panel.cloud.api import device_log_client
+from control_panel.cloud.api import log_analysis
 
 log = logging.getLogger(__name__)
 
@@ -807,6 +813,277 @@ async def ws_proxy(websocket: WebSocket):
             pass
     finally:
         await _dec_active_ws_connections()
+
+
+@app.websocket("/ai")
+async def ws_ai(websocket: WebSocket):
+    """AI log analysis WebSocket. Query param: token (required). Events: ai_get_identifiers, ai_log_session, ai_turn."""
+    token = (websocket.query_params.get("token") or "").strip()
+    if not token:
+        await websocket.close(code=4401, reason="missing token")
+        return
+    app = websocket.scope["app"]
+    client = app.state.httpx_client
+    try:
+        await validate_token_async(client, token)
+    except HTTPException:
+        log.info("ws_ai token validation failed")
+        await websocket.close(code=4401, reason="invalid token")
+        return
+
+    codex_ws = None
+    thread_to_workspace: dict[str, str] = {}
+
+    def _reply(rid: Any, success: bool, result: Any = None, error: str = "") -> dict:
+        out = {"id": rid, "success": success}
+        if success:
+            out["result"] = result
+        else:
+            out["error"] = error or "Request failed"
+        return out
+
+    async def _send_reply(rid: Any, success: bool, result: Any = None, error: str = "") -> None:
+        await websocket.send_text(json.dumps(_reply(rid, success, result=result, error=error)))
+
+    try:
+        await websocket.accept()
+        log.info("ws_ai connection accepted")
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                msg = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                log.warning("ws_ai invalid JSON")
+                await _send_reply(None, False, error="Invalid JSON")
+                continue
+            if not isinstance(msg, dict):
+                await _send_reply(None, False, error="Message must be an object")
+                continue
+            rid = msg.get("id")
+            event = msg.get("event")
+            data = msg.get("data") if isinstance(msg.get("data"), dict) else {}
+            log.info("ws_ai event=%s id=%s", event, rid)
+
+            if event == "ai_get_identifiers":
+                question = (data.get("question") or "").strip()
+                if not question:
+                    await _send_reply(rid, False, error="question is required")
+                    continue
+                log.info("ws_ai ai_get_identifiers question_len=%s", len(question))
+                try:
+                    workspace = log_analysis.get_empty_workspace()
+                    result = await asyncio.to_thread(
+                        log_analysis.extract_identifiers_json,
+                        workspace,
+                        question,
+                        60,
+                    )
+                except Exception as e:
+                    log.exception("ai_get_identifiers extract_identifiers_json failed")
+                    await _send_reply(rid, False, error=str(e))
+                    continue
+                if result.get("success"):
+                    identifiers = result.get("identifiers") or []
+                    log.info("ws_ai ai_get_identifiers success identifiers=%s", identifiers)
+                    await _send_reply(rid, True, result={"identifiers": identifiers})
+                else:
+                    err_msg = result.get("error_message") or "Could not extract identifiers."
+                    log.info("ws_ai ai_get_identifiers failed error_message=%s", err_msg)
+                    await _send_reply(rid, False, error=err_msg)
+                continue
+
+            if event == "ai_log_session":
+                kiosk_name = (data.get("kiosk_name") or "").strip()
+                approximate_date = (data.get("approximate_date") or "").strip()
+                identifiers = data.get("identifiers")
+                first_question = (data.get("first_question") or "").strip()
+                if not kiosk_name or not approximate_date or not first_question:
+                    await _send_reply(
+                        rid,
+                        False,
+                        error="kiosk_name, approximate_date, and first_question are required",
+                    )
+                    continue
+                if not isinstance(identifiers, list) or not identifiers:
+                    await _send_reply(rid, False, error="identifiers must be a non-empty list")
+                    continue
+                identifiers = [str(x).strip() for x in identifiers if x is not None and str(x).strip()]
+                if not identifiers:
+                    await _send_reply(rid, False, error="identifiers must be a non-empty list")
+                    continue
+
+                log.info(
+                    "ws_ai ai_log_session kiosk_name=%s approximate_date=%s identifiers=%s first_question_len=%s",
+                    kiosk_name,
+                    approximate_date,
+                    identifiers,
+                    len(first_question),
+                )
+
+                backend_url, _, _, ssl_ctx, _ = _device_ws_backend(kiosk_name)
+                if not backend_url:
+                    log.warning("ws_ai ai_log_session invalid device kiosk_name=%s", kiosk_name)
+                    await _send_reply(rid, False, error="invalid device")
+                    continue
+                wss_key = _get_wss_api_key()
+                if not wss_key:
+                    log.warning("ws_ai ai_log_session WSS API key missing")
+                    await _send_reply(rid, False, error="server config")
+                    continue
+
+                date_hint_start = approximate_date
+                date_hint_end = approximate_date
+                if "T" not in approximate_date and approximate_date:
+                    parts = approximate_date.split("-")
+                    if len(parts) >= 3:
+                        try:
+                            y, m, d = int(parts[0]), int(parts[1]), int(parts[2])
+                            next_d = datetime.date(y, m, d) + datetime.timedelta(days=1)
+                            date_hint_end = next_d.isoformat()
+                        except (ValueError, TypeError):
+                            pass
+
+                log.info(
+                    "ws_ai ai_log_session search_log backend_url=%s date_hint_start=%s date_hint_end=%s",
+                    backend_url,
+                    date_hint_start,
+                    date_hint_end,
+                )
+                central_datetime = await device_log_client.search_log(
+                    backend_url,
+                    ssl_ctx,
+                    wss_key,
+                    queries=identifiers,
+                    date_hint_start=date_hint_start or None,
+                    date_hint_end=date_hint_end or None,
+                )
+                if not central_datetime:
+                    log.warning(
+                        "ws_ai ai_log_session search_log returned no datetime (no match) kiosk_name=%s identifiers=%s date_hint=%s..%s",
+                        kiosk_name,
+                        identifiers,
+                        date_hint_start,
+                        date_hint_end,
+                    )
+                    await _send_reply(rid, False, error="No log found for the given identifiers and date")
+                    continue
+                log.info("ws_ai ai_log_session search_log central_datetime=%s", central_datetime)
+
+                fd, temp_path = tempfile.mkstemp(suffix=".log", prefix="log_analysis_")
+                try:
+                    os.close(fd)
+                    log.info("ws_ai ai_log_session get_log_around_datetime central_datetime=%s", central_datetime)
+                    ok = await device_log_client.get_log_around_datetime(
+                        backend_url,
+                        ssl_ctx,
+                        wss_key,
+                        central_datetime,
+                        output_path=temp_path,
+                    )
+                    if not ok:
+                        log.warning("ws_ai ai_log_session get_log_around_datetime failed")
+                        await _send_reply(rid, False, error="Failed to fetch log from device")
+                        continue
+                    log.info("ws_ai ai_log_session get_log_around_datetime ok")
+                    with open(temp_path, "r", encoding="utf-8", errors="replace") as f:
+                        lines = [line.rstrip("\n\r") for line in f]
+                finally:
+                    try:
+                        os.remove(temp_path)
+                    except OSError:
+                        pass
+
+                # Each session gets a fresh workspace and fresh log fetch; no reuse of previous
+                # session's logs (thread_to_workspace is per-connection, each thread has its own cwd).
+                workspace_path = log_analysis.create_workspace()
+                log.info("ws_ai ai_log_session workspace_path=%s lines=%s", workspace_path, len(lines))
+                try:
+                    log_analysis.write_all_log(workspace_path, lines)
+                    log_analysis.ensure_codex_context(workspace_path)
+                except Exception as e:
+                    log_analysis.cleanup_workspace(workspace_path)
+                    log.exception("ai_log_session write_all_log failed")
+                    await _send_reply(rid, False, error=str(e))
+                    continue
+
+                if codex_ws is None:
+                    try:
+                        log.info("ws_ai ai_log_session connecting to Codex app-server")
+                        codex_ws = await codex_app_server_client.connect_and_handshake()
+                        log.info("ws_ai ai_log_session Codex app-server connected")
+                    except Exception as e:
+                        log_analysis.cleanup_workspace(workspace_path)
+                        log.exception("ai_log_session Codex connect failed")
+                        await _send_reply(rid, False, error=str(e))
+                        continue
+
+                try:
+                    log.info("ws_ai ai_log_session thread_start cwd=%s", workspace_path)
+                    thread_id = await codex_app_server_client.thread_start(codex_ws, workspace_path)
+                    log.info("ws_ai ai_log_session thread_start thread_id=%s", thread_id)
+                except Exception as e:
+                    log_analysis.cleanup_workspace(workspace_path)
+                    log.exception("ai_log_session thread_start failed")
+                    await _send_reply(rid, False, error=str(e))
+                    continue
+
+                first_prompt = first_question + "\n\nThe log file to analyze is ./all.log"
+                try:
+                    log.info("ws_ai ai_log_session turn_start thread_id=%s", thread_id)
+                    result_text = await codex_app_server_client.turn_start(codex_ws, thread_id, first_prompt)
+                    log.info("ws_ai ai_log_session turn_start done result_len=%s", len(result_text or ""))
+                except Exception as e:
+                    log_analysis.cleanup_workspace(workspace_path)
+                    log.exception("ai_log_session turn_start failed")
+                    await _send_reply(rid, False, error=str(e))
+                    continue
+
+                thread_to_workspace[thread_id] = workspace_path
+                await _send_reply(
+                    rid,
+                    True,
+                    result={"thread_id": thread_id, "result": result_text or ""},
+                )
+                continue
+
+            if event == "ai_turn":
+                thread_id = (data.get("thread_id") or "").strip()
+                text = (data.get("text") or "").strip()
+                if not thread_id:
+                    await _send_reply(rid, False, error="thread_id is required")
+                    continue
+                if thread_id not in thread_to_workspace:
+                    log.warning("ws_ai ai_turn unknown thread_id=%s", thread_id)
+                    await _send_reply(rid, False, error="unknown thread_id")
+                    continue
+                if not codex_ws:
+                    await _send_reply(rid, False, error="no active session")
+                    continue
+                try:
+                    log.info("ws_ai ai_turn thread_id=%s text_len=%s", thread_id, len(text))
+                    result_text = await codex_app_server_client.turn_start(codex_ws, thread_id, text)
+                    log.info("ws_ai ai_turn done result_len=%s", len(result_text or ""))
+                except Exception as e:
+                    log.exception("ai_turn turn_start failed")
+                    await _send_reply(rid, False, error=str(e))
+                    continue
+                await _send_reply(rid, True, result=result_text or "")
+                continue
+
+            await _send_reply(rid, False, error=f"unknown event: {event!r}")
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        log.exception("ws_ai error: %s", e)
+    finally:
+        if codex_ws is not None:
+            try:
+                await codex_ws.close()
+            except Exception:
+                pass
+        for wp in thread_to_workspace.values():
+            log_analysis.cleanup_workspace(wp)
+        thread_to_workspace.clear()
 
 
 def _send_index_html():

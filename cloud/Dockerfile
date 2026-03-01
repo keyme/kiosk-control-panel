@@ -54,13 +54,14 @@ ENV LOG_ANALYSIS_WORKSPACE_BASE=/app/workspace
 ENV LOG_ANALYSIS_CACHE_DIR=/app/log_analysis_cache
 ENV LOG_ANALYSIS_CACHE_TTL_DAYS=2
 
-# Runtime deps: opencv; git for log-analysis worktrees; nodejs/npm for Codex CLI
+# Runtime deps: opencv; git for log-analysis worktrees; nodejs/npm for Codex CLI; ripgrep (rg) for log search
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
     git \
     nodejs \
     npm \
+    ripgrep \
     && rm -rf /var/lib/apt/lists/*
 
 # Clone kiosk repo with submodules for log-analysis Codex context (build-arg for URL/auth)
