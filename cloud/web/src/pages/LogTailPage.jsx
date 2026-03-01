@@ -1108,7 +1108,7 @@ export default function LogTailPage({ socket }) {
   const [analyzeError, setAnalyzeError] = useState(null);
   const analyzeStreamIdRef = useRef(null);
 
-  // AI log assist tab state
+  // AI Log Analysis tab state
   const [aiQuestion, setAiQuestion] = useState('');
   const [aiIdentifiers, setAiIdentifiers] = useState([]);
   const [aiApproximateDate, setAiApproximateDate] = useState('');
@@ -1536,7 +1536,7 @@ export default function LogTailPage({ socket }) {
               : 'border-transparent text-muted-foreground hover:text-foreground'
           )}
         >
-          AI log assist
+          AI Log Analysis
         </button>
       </div>
 
