@@ -477,23 +477,28 @@ def create_router():
 
         workspace_path = None
         try:
-            workspace_path = log_analysis_module.create_workspace()
-            if not workspace_path:
-                return JSONResponse({"error": "Failed to create workspace"}, status_code=503)
+            # Trip 1a: extract identifiers in fixed empty workspace (minimal context, fast)
+            empty_workspace = log_analysis_module.get_empty_workspace()
+            parsed = log_analysis_module.extract_identifiers_json(
+                empty_workspace, question, approximate_date_hint=approximate_date, timeout=60
+            )
 
-            # Trip 1: get identifier and exact datetime
-            identifier = session_id
-            if not identifier:
-                identifiers = log_analysis_module.extract_identifiers_with_codex(workspace_path, question, timeout=60)
-                identifier = identifiers[0] if identifiers else None
-            if not identifier:
+            if not parsed.get("success") or parsed.get("error_message"):
                 return JSONResponse(
-                    {"error": "Could not extract an identifier (e.g. session ID) from the question"},
+                    {"error": parsed.get("error_message") or "Could not extract identifiers."},
                     status_code=422,
                 )
+            identifiers = parsed.get("identifiers") or []
+            if not identifiers:
+                return JSONResponse(
+                    {"error": "No identifiers found; please include a session ID, scan ID, transaction ID, or date and time."},
+                    status_code=422,
+                )
+            identifier = identifiers[0]  # for cache key and logging
 
+            # Trip 1b: search device with identifier list
             exact_datetime = await device_log_client.search_log(
-                backend_url, ssl_ctx, wss_key, identifier,
+                backend_url, ssl_ctx, wss_key, queries=identifiers,
                 date_hint_start=date_hint_start, date_hint_end=date_hint_end,
                 timeout=device_log_client.SEARCH_LOG_TIMEOUT,
             )
@@ -509,6 +514,11 @@ def create_router():
                     {"error": "Identifier found but log line had no valid timestamp for the selected date range"},
                     status_code=404,
                 )
+
+            # Trip 2: kiosk repo workspace for log fetch and Codex log analysis (with --skip-git-repo-check)
+            workspace_path = log_analysis_module.create_workspace()
+            if not workspace_path:
+                return JSONResponse({"error": "Failed to create workspace"}, status_code=503)
 
             # Date for cache key (YYYY-MM-DD from exact_datetime)
             exact_date_str = exact_datetime[:10]

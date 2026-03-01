@@ -501,16 +501,65 @@ def _run_grep_first_match(filepath, is_gz, query, timeout_sec):
         _terminate_and_wait(reader)
 
 
+def _run_grep_first_match_regex(filepath, is_gz, pattern, timeout_sec):
+    """Run zcat|grep or grep -E for first match. Returns first line of stdout or None."""
+    reader = None
+    grep_proc = None
+    try:
+        if is_gz:
+            reader = subprocess.Popen(
+                _nice_cmd(['zcat', filepath]),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True,
+            )
+            grep_proc = subprocess.Popen(
+                _nice_cmd(['grep'] + _GREP_FIRST_MATCH + ['-E', pattern]),
+                stdin=reader.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True,
+            )
+            reader.stdout.close()
+        else:
+            grep_proc = subprocess.Popen(
+                _nice_cmd(['grep'] + _GREP_FIRST_MATCH + ['-E', pattern, filepath]),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True,
+            )
+        out, _ = grep_proc.communicate(timeout=timeout_sec)
+        if out:
+            line = out.strip().split('\n')[0]
+            keyme.log.info(f"log_tail search_log result path={filepath!r} bytes={len(out)}")
+            return line.strip()
+        return None
+    except subprocess.TimeoutExpired:
+        return None
+    except (OSError, ValueError) as e:
+        keyme.log.warning(f"log_tail search_log path={filepath!r}: {e}")
+        return None
+    finally:
+        _terminate_and_wait(grep_proc)
+        _terminate_and_wait(reader)
+
+
 def search_log(data):
-    """Find exact datetime when query appears in log. data: log_id, query, date_hint_start, date_hint_end."""
+    """Find exact datetime when query or queries appear in log. data: log_id, query or queries, date_hint_*."""
     data = data or {}
     _, allowlist = _build_log_list()
     log_id = (data.get('log_id') or 'all').strip()
     if log_id != 'all' or log_id not in allowlist:
         return {'success': False, 'errors': ['search_log only supports log_id "all"']}
+    # Prefer queries (list); fall back to single query
+    queries_raw = data.get('queries')
     query = (data.get('query') or '').strip()
-    if not query:
-        return {'success': False, 'errors': ['Missing query']}
+    if queries_raw is not None:
+        queries = [str(q).strip() for q in queries_raw if q is not None and str(q).strip()]
+    else:
+        queries = [query] if query else []
+    if not queries:
+        return {'success': False, 'errors': ['Missing query or queries']}
 
     start_dt, end_dt, err = _resolve_search_date_range(data)
     if err is not None:
@@ -521,6 +570,10 @@ def search_log(data):
     if not files_to_read:
         return {'success': False, 'errors': ['No log files found for the selected range']}
 
+    use_regex = len(queries) > 1
+    pattern = '|'.join(re.escape(q) for q in queries) if use_regex else None
+    single_query = queries[0] if queries else ''
+
     start_time = time.time()
     for _day, filepath, is_gz in files_to_read:
         if time.time() - start_time > _SEARCH_LOG_TIMEOUT_SEC:
@@ -528,7 +581,11 @@ def search_log(data):
             return {'success': False, 'errors': ['Search timed out']}
         timeout_remaining = max(1, _SEARCH_LOG_TIMEOUT_SEC - int(time.time() - start_time))
         keyme.log.info(f"log_tail search_log file={filepath!r} is_gz={is_gz}")
-        line = _run_grep_first_match(filepath, is_gz, query, timeout_remaining)
+        line = (
+            _run_grep_first_match_regex(filepath, is_gz, pattern, timeout_remaining)
+            if use_regex
+            else _run_grep_first_match(filepath, is_gz, single_query, timeout_remaining)
+        )
         if line:
             ts = _extract_timestamp_from_log_line(line)
             if ts:

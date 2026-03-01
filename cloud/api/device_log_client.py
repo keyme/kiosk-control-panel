@@ -65,13 +65,19 @@ async def search_log(
     backend_url: str,
     ssl_ctx: Optional[Any],
     wss_key: str,
-    query: str,
+    query: Optional[str] = None,
+    queries: Optional[List[str]] = None,
     date_hint_start: Optional[str] = None,
     date_hint_end: Optional[str] = None,
     timeout: float = SEARCH_LOG_TIMEOUT,
 ) -> Optional[str]:
-    """Find exact datetime when query appears in device log. Returns datetime string or None on error/not found."""
-    data = {"log_id": "all", "query": query.strip()}
+    """Find exact datetime when query or queries appear in device log. Returns datetime string or None on error/not found."""
+    if queries:
+        data = {"log_id": "all", "queries": [str(q).strip() for q in queries if q is not None and str(q).strip()]}
+    else:
+        data = {"log_id": "all", "query": (query or "").strip()}
+    if not data.get("query") and not data.get("queries"):
+        return None
     if date_hint_start:
         data["date_hint_start"] = date_hint_start
     if date_hint_end:
@@ -86,7 +92,7 @@ async def search_log(
     if not resp.get("success") or not isinstance(resp.get("data"), dict):
         return None
     dt = resp["data"].get("datetime")
-    log.info("search_log query=%s datetime=%s", query[:64] if query else "", dt)
+    log.info("search_log datetime=%s", dt)
     return dt
 
 

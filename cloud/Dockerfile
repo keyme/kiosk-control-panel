@@ -64,8 +64,10 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Clone kiosk repo with submodules for log-analysis Codex context (build-arg for URL/auth)
-ARG KIOSK_REPO_URL=https://github.com/keyme/kiosk.git
-RUN git clone --recurse-submodules --depth 1 "${KIOSK_REPO_URL}" /app/kiosk_repo || true
+# Trust GitHub host key so SSH clone works when build is run with --ssh default
+RUN mkdir -p -m 0700 /root/.ssh && ssh-keyscan -t ed25519,rsa github.com >> /root/.ssh/known_hosts 2>/dev/null
+ARG KIOSK_REPO_URL=git@github.com:keyme/kiosk.git
+RUN --mount=type=ssh git clone --recurse-submodules --depth 1 "${KIOSK_REPO_URL}" /app/kiosk_repo
 
 # Workspace base for log-analysis worktrees; cache dir for log slices (TTL in days above)
 RUN mkdir -p /app/workspace /app/log_analysis_cache

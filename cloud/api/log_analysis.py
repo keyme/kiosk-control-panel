@@ -1,6 +1,7 @@
 # Log analysis workspace and Codex runner for AI kiosk log analysis (two-trip).
 # Uses git worktree when KIOSK_REPO_PATH and LOG_ANALYSIS_WORKSPACE_BASE are set; else temp dir.
 
+import json
 import os
 import re
 import shutil
@@ -8,7 +9,7 @@ import subprocess
 import tempfile
 import time
 import uuid
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import logging
 
@@ -146,8 +147,18 @@ def cleanup_log_cache(cache_dir: str, max_age_seconds: int) -> None:
         log.warning("cleanup_log_cache failed: %s", e)
 
 
+def get_empty_workspace() -> str:
+    """Return the path of a fixed empty directory for lightweight Codex runs (e.g. identifier extraction). No repo, minimal context. Directory is created once and reused."""
+    if LOG_ANALYSIS_WORKSPACE_BASE and os.path.isdir(LOG_ANALYSIS_WORKSPACE_BASE):
+        path = os.path.join(LOG_ANALYSIS_WORKSPACE_BASE, "empty")
+    else:
+        path = os.path.join(tempfile.gettempdir(), "log_analysis_empty")
+    os.makedirs(path, mode=0o755, exist_ok=True)
+    return path
+
+
 def create_workspace() -> str:
-    """Create a workspace directory (worktree or temp). Returns absolute path. Caller must call cleanup_workspace."""
+    """Create a workspace directory (kiosk worktree or temp) for log analysis. Returns absolute path. Caller must call cleanup_workspace."""
     if KIOSK_REPO_PATH and os.path.isdir(KIOSK_REPO_PATH) and LOG_ANALYSIS_WORKSPACE_BASE:
         os.makedirs(LOG_ANALYSIS_WORKSPACE_BASE, mode=0o755, exist_ok=True)
         worktree_id = str(uuid.uuid4())[:8]
@@ -211,10 +222,13 @@ def run_codex(
     prompt: str,
     timeout: int = _CODEX_TIMEOUT_DEFAULT,
     log_file_path: Optional[str] = None,
+    use_codex_context: bool = True,
 ) -> str:
     """Run codex -C workspace_path exec 'prompt' -o res.out; return contents of res.out.
-    If log_file_path is set (e.g. './all.log'), prepend an instruction so Codex knows which file to analyze."""
-    ensure_codex_context(workspace_path)
+    If log_file_path is set (e.g. './all.log'), prepend an instruction so Codex knows which file to analyze.
+    Use use_codex_context=False for minimal-context runs (e.g. identifier extraction in empty workspace)."""
+    if use_codex_context:
+        ensure_codex_context(workspace_path)
     if log_file_path:
         prompt = f"The log file you must analyze is: {log_file_path} (it is in this workspace).\n\n{prompt}"
     out_path = os.path.join(workspace_path, _RES_OUT)
@@ -254,6 +268,75 @@ def run_codex(
         return out
     except OSError:
         return ""
+
+
+# Default response when Codex JSON extraction fails to parse
+_EXTRACT_JSON_PARSE_ERROR: Dict[str, Any] = {
+    "success": False,
+    "error_message": "Could not parse AI response.",
+    "identifiers": [],
+}
+
+
+def extract_identifiers_json(
+    workspace_path: str,
+    question: str,
+    approximate_date_hint: Optional[str] = None,
+    timeout: int = 60,
+) -> Dict[str, Any]:
+    """Run Codex to extract identifiers as JSON. Returns { success, error_message, identifiers }.
+    Identifiers include session_id (UUID), scan_id (number), transaction_id (number), datetime (YYYY-MM-DDTHH or full).
+    """
+    hint = f" Approximate date context: {approximate_date_hint}." if approximate_date_hint else ""
+    prompt = (
+        "You must output only valid JSON, no other text. Use this exact structure:\n"
+        '{"success": true or false, "error_message": null or "user-facing string", "identifiers": ["string", ...]}\n\n'
+        "Extract from the user question the following identifier types (treat datetime as an identifier):\n"
+        "- session_id: UUID format (e.g. 8a6a49b0-e430-11f0-b7d2-7bf5f7dc4479)\n"
+        "- scan_id: numeric id (e.g. 123123123)\n"
+        "- transaction_id: numeric id for transactions (same format as scan_id, only when user refers to a transaction)\n"
+        "- datetime: date and at least hour; normalize to YYYY-MM-DDTHH or YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS (e.g. 2025-12-28T17:21:16). "
+        "Date and hour are required; minutes and seconds may be omitted. Accept 2 PM, 14:00, Dec 28 afternoon, etc.\n\n"
+        "If the question cannot be interpreted or date/time is missing or ambiguous, set success to false and set error_message to a short user-facing sentence. "
+        "Otherwise set success true, error_message null, and identifiers to the list of extracted values (all of the above that appear).\n\n"
+        f"Example: {{\"success\": true, \"error_message\": null, \"identifiers\": [\"2025-12-28T17\", \"8a6a49b0-e430-11f0-b7d2-7bf5f7dc4479\"]}}\n\n"
+        f"Question:{hint}\n{(_truncate_question(question))}"
+    )
+    out = run_codex(workspace_path, prompt, timeout=timeout, use_codex_context=False)
+    if not out:
+        return {**_EXTRACT_JSON_PARSE_ERROR, "error_message": "AI extraction produced no output."}
+    raw = out.strip()
+    # Strip optional markdown code fence
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[-1] if "\n" in raw else raw[3:]
+        if raw.endswith("```"):
+            raw = raw[:-3].strip()
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        log.warning("extract_identifiers_json parse failed: %s", raw[:200])
+        return _EXTRACT_JSON_PARSE_ERROR
+    if not isinstance(parsed, dict):
+        return _EXTRACT_JSON_PARSE_ERROR
+    success = parsed.get("success")
+    error_message = parsed.get("error_message")
+    identifiers = parsed.get("identifiers")
+    if not isinstance(identifiers, list):
+        identifiers = []
+    else:
+        identifiers = [str(x).strip() for x in identifiers if x is not None and str(x).strip()]
+    return {
+        "success": bool(success),
+        "error_message": str(error_message).strip() if error_message else None,
+        "identifiers": identifiers,
+    }
+
+
+def _truncate_question(question: str, max_len: int = 2000) -> str:
+    if not question:
+        return ""
+    s = (question or "").strip()
+    return s[:max_len] if len(s) > max_len else s
 
 
 # UUID-like pattern to extract from Codex output (session IDs, etc.)
