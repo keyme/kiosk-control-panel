@@ -11,7 +11,13 @@ echo "$OPENAI_API_KEY" | codex login --with-api-key
 # set to kiosk repo so the server's default context is the kiosk repo.
 KIOSK_REPO="${KIOSK_REPO_PATH:-/app/kiosk_repo}"
 if [ -d "$KIOSK_REPO" ]; then
-  ( cd "$KIOSK_REPO" && codex app-server --listen ws://127.0.0.1:4500 ) &
+  (
+    cd "$KIOSK_REPO" && \
+    env -i \
+      PATH="/usr/bin:/bin:/usr/local/bin" \
+      HOME="$HOME" \
+      codex app-server --listen ws://127.0.0.1:4500
+  ) &
   sleep 1
 fi
 
