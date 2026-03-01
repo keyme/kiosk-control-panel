@@ -416,11 +416,11 @@ def _get_device_cert_from_s3(host_fqdn: str, kiosk_name_upper: str) -> Optional[
         return None
 
 
-def _device_ws_backend(device_host: str) -> Tuple[str, str, str, Optional[ssl.SSLContext], bool]:
-    """Resolve device to (wss_url, host_fqdn, kiosk_name_upper, ssl_ctx, used_cert). used_cert True if cert from S3/cache."""
+def _device_ws_backend(device_host: str) -> Tuple[str, str, str, Optional[ssl.SSLContext], bool, Optional[str]]:
+    """Resolve device to (wss_url, host_fqdn, kiosk_name_upper, ssl_ctx, used_cert, backend_fail_reason). used_cert True if cert from S3/cache. backend_fail_reason set when backend_url is empty (e.g. 'device_cert_unavailable')."""
     host = (device_host or "").strip()
     if not host:
-        return "", "", "", None, False
+        return "", "", "", None, False, None
     host_only = re.sub(r"^(https?://)?([^/]+).*", r"\2", host, flags=re.IGNORECASE)
     with_domain = (
         f"{host_only}.keymekiosk.com" if "." not in host_only else host_only
@@ -438,12 +438,9 @@ def _device_ws_backend(device_host: str) -> Tuple[str, str, str, Optional[ssl.SS
             ctx = ssl.create_default_context()
             ctx.load_verify_locations(cadata=pem)
             _device_ssl_ctx_cache[with_domain] = ctx
-        return url, with_domain, kiosk_name_upper, ctx, True
-    log.warning(f"No device cert for {with_domain}, using unverified TLS")
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    return url, with_domain, kiosk_name_upper, ctx, False
+        return url, with_domain, kiosk_name_upper, ctx, True, None
+    log.error(f"No device cert for {with_domain}, refusing to connect")
+    return "", with_domain, kiosk_name_upper, None, False, "device_cert_unavailable"
 
 
 def _device_connection_failure_reason(exc: BaseException) -> str:
@@ -735,9 +732,9 @@ async def ws_proxy(websocket: WebSocket):
     if not device:
         await websocket.close(code=4400, reason="missing device")
         return
-    backend_url, host_fqdn, kiosk_name_upper, ssl_ctx, used_cert = _device_ws_backend(device)
+    backend_url, host_fqdn, kiosk_name_upper, ssl_ctx, used_cert, backend_fail_reason = _device_ws_backend(device)
     if not backend_url:
-        await websocket.close(code=4400, reason="invalid device")
+        await websocket.close(code=4400, reason=backend_fail_reason or "invalid device")
         return
     t_after_backend = time.perf_counter()
     backend_ms = (t_after_backend - t_after_token) * 1000
@@ -923,10 +920,10 @@ async def ws_ai(websocket: WebSocket):
                     len(first_question),
                 )
 
-                backend_url, _, _, ssl_ctx, _ = _device_ws_backend(kiosk_name)
+                backend_url, _, _, ssl_ctx, _, backend_fail_reason = _device_ws_backend(kiosk_name)
                 if not backend_url:
-                    log.warning("ws_ai ai_log_session invalid device kiosk_name=%s", kiosk_name)
-                    await _send_reply(rid, False, error="invalid device")
+                    log.warning("ws_ai ai_log_session invalid device kiosk_name=%s reason=%s", kiosk_name, backend_fail_reason)
+                    await _send_reply(rid, False, error=backend_fail_reason or "invalid device")
                     continue
                 wss_key = _get_wss_api_key()
                 if not wss_key:
