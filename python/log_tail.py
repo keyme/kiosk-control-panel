@@ -424,12 +424,21 @@ _LINES_AFTER_CAP = 20000
 _LOG_AROUND_CHUNK_SIZE = 8192
 _GREP_FIRST_MATCH = ['-a', '-m', '1']  # treat as text, stop at first match
 
+# Leading chars to strip from grep -a lines (binary/control); keep \t\n\r and space for .strip()
+_LEADING_BINARY_CHARS = ''.join(
+    chr(i) for i in list(range(9)) + list(range(11, 13)) + list(range(14, 32)) + [127]
+)
+
 
 def _extract_timestamp_from_log_line(line):
     """First field (ISO8601) from log line, or None if not parseable."""
     if not line or not isinstance(line, str):
         return None
-    parts = line.strip().split(None, 1)
+    # Strip leading binary/control junk so grep -a lines still parse; then strip whitespace
+    line = line.lstrip(_LEADING_BINARY_CHARS).replace('\x00', '').strip()
+    if not line:
+        return None
+    parts = line.split(None, 1)
     first = parts[0] if parts else None
     if not first or len(first) < 10 or not first[:4].isdigit():
         return None
@@ -607,11 +616,12 @@ def search_log(data):
             else _run_grep_first_match(filepath, is_gz, single_query, timeout_remaining)
         )
         if line:
-            ts = _extract_timestamp_from_log_line(line)
+            line_clean = line.lstrip(_LEADING_BINARY_CHARS).replace('\x00', '').strip()
+            ts = _extract_timestamp_from_log_line(line_clean)
             if ts:
                 keyme.log.info(f"log_tail search_log found datetime={ts} in file={filepath!r}")
-                return {'success': True, 'data': {'datetime': ts, 'line': line}}
-            keyme.log.debug("log_tail search_log match had no valid timestamp, continuing")
+                return {'success': True, 'data': {'datetime': ts, 'line': line_clean}}
+            keyme.log.debug(f"log_tail search_log match had no valid timestamp, continuing: {line!r}")
         else:
             keyme.log.debug(f"log_tail search_log no match in file={filepath!r}")
 
