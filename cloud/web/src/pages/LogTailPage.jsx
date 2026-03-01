@@ -1122,6 +1122,11 @@ export default function LogTailPage({ socket }) {
   const aiSocketRef = useRef(null);
   const aiChatScrollRef = useRef(null);
 
+  const aiMaxDate = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }, []);
+
   const currentAnalyzePayload = useMemo(() => {
     if (analyzePresetId && analyzePresetId !== 'build') {
       const preset = ANALYZE_PRESETS.find((p) => p.id === analyzePresetId);
@@ -2270,7 +2275,8 @@ export default function LogTailPage({ socket }) {
                   type="date"
                   value={aiApproximateDate}
                   onChange={(e) => setAiApproximateDate(e.target.value)}
-                  title="All log for given date would be searched"
+                  max={aiMaxDate}
+                  title="Approximate log date (today or earlier)"
                   className="rounded-md border border-input bg-background px-2 py-1 text-sm"
                 />
                 <span className={cn(
@@ -2302,6 +2308,9 @@ export default function LogTailPage({ socket }) {
                   onClick={async () => {
                     setAiSessionError(null);
                     setAiGetIdsError(null);
+                    setAiMessages([]);
+                    setAiThreadId(null);
+                    setAiIdentifiers([]);
                     setAiSessionLoading(true);
                     const question = aiQuestion.trim();
                     try {
