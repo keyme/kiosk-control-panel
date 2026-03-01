@@ -2398,19 +2398,6 @@ export default function LogTailPage({ socket }) {
 
               {(aiThreadId || aiMessages.length > 0) && (
                 <div className="space-y-2">
-                  <div className="flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAiThreadId(null);
-                        setAiMessages([]);
-                        setAiIdentifiers([]);
-                      }}
-                      className="text-sm text-muted-foreground hover:text-foreground"
-                    >
-                      New session
-                    </button>
-                  </div>
                   <div
                     ref={aiChatScrollRef}
                     className="rounded-md border border-input bg-muted/20 min-h-[200px] max-h-[calc(100vh-280px)] overflow-y-auto p-3 space-y-3 flex flex-col"
