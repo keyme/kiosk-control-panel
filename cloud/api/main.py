@@ -845,6 +845,9 @@ async def ws_ai(websocket: WebSocket):
     async def _send_reply(rid: Any, success: bool, result: Any = None, error: str = "") -> None:
         await websocket.send_text(json.dumps(_reply(rid, success, result=result, error=error)))
 
+    async def _send_stream_delta(rid: Any, delta: str) -> None:
+        await websocket.send_text(json.dumps({"id": rid, "stream_delta": delta}))
+
     try:
         await websocket.accept()
         log.info("ws_ai connection accepted")
@@ -1028,9 +1031,15 @@ async def ws_ai(websocket: WebSocket):
                     continue
 
                 first_prompt = first_question + "\n\nThe log file to analyze is ./all.log"
+
+                async def _on_delta_log_session(d: str) -> None:
+                    await _send_stream_delta(rid, d)
+
                 try:
                     log.info("ws_ai ai_log_session turn_start thread_id=%s", thread_id)
-                    result_text = await codex_app_server_client.turn_start(codex_ws, thread_id, first_prompt)
+                    result_text = await codex_app_server_client.turn_start(
+                        codex_ws, thread_id, first_prompt, on_delta=_on_delta_log_session
+                    )
                     log.info("ws_ai ai_log_session turn_start done result_len=%s", len(result_text or ""))
                 except Exception as e:
                     log_analysis.cleanup_workspace(workspace_path)
@@ -1059,9 +1068,14 @@ async def ws_ai(websocket: WebSocket):
                 if not codex_ws:
                     await _send_reply(rid, False, error="no active session")
                     continue
+                async def _on_delta_turn(d: str) -> None:
+                    await _send_stream_delta(rid, d)
+
                 try:
                     log.info("ws_ai ai_turn thread_id=%s text_len=%s", thread_id, len(text))
-                    result_text = await codex_app_server_client.turn_start(codex_ws, thread_id, text)
+                    result_text = await codex_app_server_client.turn_start(
+                        codex_ws, thread_id, text, on_delta=_on_delta_turn
+                    )
                     log.info("ws_ai ai_turn done result_len=%s", len(result_text or ""))
                 except Exception as e:
                     log.exception("ai_turn turn_start failed")

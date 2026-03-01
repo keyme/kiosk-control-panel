@@ -41,13 +41,17 @@ export function createAiSocket() {
     if (msg == null || typeof msg !== 'object') return;
     const id = msg.id;
     if (id === undefined || id === null) return;
-    const settle = pending.get(id);
-    if (!settle) return;
+    const entry = pending.get(id);
+    if (!entry) return;
+    if ('stream_delta' in msg && typeof msg.stream_delta === 'string') {
+      if (entry.onStreamDelta) entry.onStreamDelta(msg.stream_delta);
+      return;
+    }
     pending.delete(id);
     if (msg.success === false) {
-      settle.reject(new Error(msg.error || 'Request failed'));
+      entry.reject(new Error(msg.error || 'Request failed'));
     } else {
-      settle.resolve(msg);
+      entry.resolve(msg);
     }
   }
 
@@ -68,7 +72,7 @@ export function createAiSocket() {
     };
     ws.onclose = () => {
       ws = null;
-      pending.forEach((s) => s.reject(new Error('Connection closed')));
+      pending.forEach((entry) => entry.reject(new Error('Connection closed')));
       pending.clear();
       if (onDisconnectCb) onDisconnectCb();
     };
@@ -91,10 +95,14 @@ export function createAiSocket() {
       }
     },
 
-    request(event, data) {
+    request(event, data, options = {}) {
       return new Promise((resolve, reject) => {
         const id = nextId++;
-        pending.set(id, { resolve, reject });
+        pending.set(id, {
+          resolve,
+          reject,
+          onStreamDelta: options.onStreamDelta || null,
+        });
         sendMessage({ id, event, data: data || undefined });
         setTimeout(() => {
           if (pending.has(id)) {

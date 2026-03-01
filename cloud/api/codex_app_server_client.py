@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import websockets
 
@@ -136,10 +136,15 @@ async def thread_start(ws: Any, cwd: str) -> str:
         # ignore other notifications
 
 
-async def turn_start(ws: Any, thread_id: str, text: str) -> str:
+async def turn_start(
+    ws: Any,
+    thread_id: str,
+    text: str,
+    on_delta: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> str:
     """
-    Send turn/start; collect agent message from item/completed (and optionally
-    turn/completed items); return combined agent reply text.
+    Send turn/start; proxy agent message deltas via on_delta (if set), collect
+    full text from item/completed and turn/completed; return combined reply text.
     """
     req = {
         "method": "turn/start",
@@ -158,6 +163,13 @@ async def turn_start(ws: Any, thread_id: str, text: str) -> str:
             continue
         mid = msg.get("id")
         method = msg.get("method")
+        if method == "item/agentMessage/delta":
+            params = msg.get("params")
+            if isinstance(params, dict):
+                delta = params.get("delta")
+                if isinstance(delta, str) and on_delta:
+                    await on_delta(delta)
+            continue
         if mid == _REQUEST_ID_TURN_START:
             if "error" in msg:
                 err = msg["error"]

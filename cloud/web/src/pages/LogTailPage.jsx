@@ -2313,24 +2313,57 @@ export default function LogTailPage({ socket }) {
                       }
                       const identifiers = idsRes.result.identifiers;
                       setAiIdentifiers(identifiers);
-                      const res = await aiSocketRef.current.request('ai_log_session', {
-                        kiosk_name: kioskName,
-                        approximate_date: aiApproximateDate.trim(),
-                        identifiers,
-                        first_question: question,
-                      });
+                      setAiMessages((prev) => [
+                        ...prev,
+                        { role: 'user', text: question },
+                        { role: 'assistant', text: '' },
+                      ]);
+                      const res = await aiSocketRef.current.request(
+                        'ai_log_session',
+                        {
+                          kiosk_name: kioskName,
+                          approximate_date: aiApproximateDate.trim(),
+                          identifiers,
+                          first_question: question,
+                        },
+                        {
+                          onStreamDelta: (delta) => {
+                            setAiMessages((prev) => {
+                              const next = [...prev];
+                              const last = next[next.length - 1];
+                              if (last?.role === 'assistant')
+                                next[next.length - 1] = { ...last, text: last.text + delta };
+                              return next;
+                            });
+                          },
+                        }
+                      );
                       if (res.success && res.result) {
                         setAiThreadId(res.result.thread_id);
-                        const firstAnswer = res.result.result ?? '';
-                        setAiMessages([
-                          { role: 'user', text: question },
-                          { role: 'assistant', text: firstAnswer },
-                        ]);
+                        setAiMessages((prev) => {
+                          const next = [...prev];
+                          const last = next[next.length - 1];
+                          if (last?.role === 'assistant' && last.text === '' && res.result?.result != null)
+                            next[next.length - 1] = { ...last, text: String(res.result.result) };
+                          return next;
+                        });
                       } else {
                         setAiSessionError(res.error || 'Session failed');
+                        setAiMessages((prev) => {
+                          const next = [...prev];
+                          if (next.length && next[next.length - 1].role === 'assistant' && next[next.length - 1].text === '')
+                            next[next.length - 1] = { ...next[next.length - 1], text: res?.error || 'Session failed' };
+                          return next;
+                        });
                       }
                     } catch (e) {
                       setAiSessionError(e?.message || 'Failed to start analysis');
+                      setAiMessages((prev) => {
+                        const next = [...prev];
+                        if (next.length && next[next.length - 1].role === 'assistant' && next[next.length - 1].text === '')
+                          next[next.length - 1] = { ...next[next.length - 1], text: `Error: ${e?.message ?? 'Failed'}` };
+                        return next;
+                      });
                     } finally {
                       setAiSessionLoading(false);
                     }
@@ -2354,7 +2387,7 @@ export default function LogTailPage({ socket }) {
                 )}
               </div>
 
-              {aiThreadId && (
+              {(aiThreadId || aiMessages.length > 0) && (
                 <div className="space-y-2">
                   <div className="flex justify-end">
                     <button
@@ -2382,7 +2415,16 @@ export default function LogTailPage({ socket }) {
                         )}
                       >
                         <span className="font-medium text-xs text-muted-foreground">{m.role === 'user' ? 'You' : 'Assistant'}</span>
-                        <div className="mt-1 whitespace-pre-wrap">{m.text}</div>
+                        <div className="mt-1 whitespace-pre-wrap">
+                          {m.role === 'assistant' && m.text === '' ? (
+                            <span className="inline-flex items-center gap-2 text-muted-foreground">
+                              <Loader2 className="size-4 animate-spin shrink-0" aria-hidden />
+                              Thinking…
+                            </span>
+                          ) : (
+                            m.text
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -2392,19 +2434,53 @@ export default function LogTailPage({ socket }) {
                       e.preventDefault();
                       const input = e.currentTarget.querySelector('input[name="ai-turn-text"]');
                       const text = (input?.value ?? '').trim();
-                      if (!text || !aiSocketRef.current?.connected || aiTurnLoading) return;
+                      if (!text || !aiSocketRef.current?.connected || aiTurnLoading || !aiThreadId) return;
                       input.value = '';
-                      setAiMessages((prev) => [...prev, { role: 'user', text }]);
+                      setAiMessages((prev) => [
+                        ...prev,
+                        { role: 'user', text },
+                        { role: 'assistant', text: '' },
+                      ]);
                       setAiTurnLoading(true);
                       try {
-                        const res = await aiSocketRef.current.request('ai_turn', { thread_id: aiThreadId, text });
+                        const res = await aiSocketRef.current.request(
+                          'ai_turn',
+                          { thread_id: aiThreadId, text },
+                          {
+                            onStreamDelta: (delta) => {
+                              setAiMessages((prev) => {
+                                const next = [...prev];
+                                const last = next[next.length - 1];
+                                if (last?.role === 'assistant')
+                                  next[next.length - 1] = { ...last, text: last.text + delta };
+                                return next;
+                              });
+                            },
+                          }
+                        );
                         if (res.success && res.result != null) {
-                          setAiMessages((prev) => [...prev, { role: 'assistant', text: String(res.result) }]);
+                          setAiMessages((prev) => {
+                            const next = [...prev];
+                            const last = next[next.length - 1];
+                            if (last?.role === 'assistant' && last.text === '')
+                              next[next.length - 1] = { ...last, text: String(res.result) };
+                            return next;
+                          });
                         } else {
-                          setAiMessages((prev) => [...prev, { role: 'assistant', text: '(No response)' }]);
+                          setAiMessages((prev) => {
+                            const next = [...prev];
+                            if (next.length && next[next.length - 1].role === 'assistant' && next[next.length - 1].text === '')
+                              next[next.length - 1] = { ...next[next.length - 1], text: '(No response)' };
+                            return next;
+                          });
                         }
                       } catch (err) {
-                        setAiMessages((prev) => [...prev, { role: 'assistant', text: `Error: ${err?.message ?? 'Request failed'}` }]);
+                        setAiMessages((prev) => {
+                          const next = [...prev];
+                          if (next.length && next[next.length - 1].role === 'assistant' && next[next.length - 1].text === '')
+                            next[next.length - 1] = { ...next[next.length - 1], text: `Error: ${err?.message ?? 'Request failed'}` };
+                          return next;
+                        });
                       } finally {
                         setAiTurnLoading(false);
                       }
@@ -2415,11 +2491,11 @@ export default function LogTailPage({ socket }) {
                       name="ai-turn-text"
                       placeholder="Follow-up question…"
                       className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      disabled={aiTurnLoading}
+                      disabled={!aiThreadId || aiTurnLoading}
                     />
                     <button
                       type="submit"
-                      disabled={aiTurnLoading}
+                      disabled={!aiThreadId || aiTurnLoading}
                       className={cn(
                         'shrink-0 inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium',
                         'bg-primary text-primary-foreground hover:bg-primary/90',
