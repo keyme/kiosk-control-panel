@@ -489,8 +489,8 @@ function AppContent() {
   const inactivityTimerRef = useRef(null);
 
   useEffect(() => {
-    const wsUrl = buildWsUrl(deviceHost);
-    const sock = createDeviceSocket(wsUrl);
+    const wsUrl = buildWsUrl();
+    const sock = createDeviceSocket(wsUrl, deviceHost);
     setSocket(sock);
     return () => sock.disconnect();
   }, [deviceHost]);

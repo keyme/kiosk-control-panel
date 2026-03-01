@@ -702,13 +702,34 @@ class WSProxySession:
             log.warning(f"ws proxy device_to_client: {e}")
 
 
+_AUTH_FIRST_MESSAGE_TIMEOUT = 10.0  # seconds to wait for auth message after connect
+
+
 @app.websocket("/ws")
 async def ws_proxy(websocket: WebSocket):
-    """Proxy WebSocket to device. Query params: 'device' (required), 'token' (required, KeyMe)."""
+    """Proxy WebSocket to device. Auth via first message: { event: 'auth', token, device } (no token in URL)."""
     t_start = time.perf_counter()
-    token = (websocket.query_params.get("token") or "").strip()
+    await websocket.accept()
+    try:
+        raw = await asyncio.wait_for(websocket.receive_text(), timeout=_AUTH_FIRST_MESSAGE_TIMEOUT)
+    except asyncio.TimeoutError:
+        await websocket.close(code=4401, reason="auth required")
+        return
+    try:
+        msg = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        await websocket.close(code=4401, reason="auth required")
+        return
+    if not isinstance(msg, dict) or msg.get("event") != "auth":
+        await websocket.close(code=4401, reason="auth required")
+        return
+    token = (msg.get("token") or "").strip()
+    device = (msg.get("device") or "").strip()
     if not token:
         await websocket.close(code=4401, reason="missing token")
+        return
+    if not device:
+        await websocket.close(code=4400, reason="missing device")
         return
     app = websocket.scope["app"]
     client = app.state.httpx_client
@@ -727,11 +748,6 @@ async def ws_proxy(websocket: WebSocket):
     t_after_token = time.perf_counter()
     token_ms = (t_after_token - t_start) * 1000
     log.debug(f"ws_proxy timing token_validation_ms={token_ms:.2f}")
-    device = websocket.query_params.get("device") or ""
-    device = device.strip()
-    if not device:
-        await websocket.close(code=4400, reason="missing device")
-        return
     backend_url, host_fqdn, kiosk_name_upper, ssl_ctx, used_cert, backend_fail_reason = _device_ws_backend(device)
     if not backend_url:
         await websocket.close(code=4400, reason=backend_fail_reason or "invalid device")
@@ -739,11 +755,11 @@ async def ws_proxy(websocket: WebSocket):
     t_after_backend = time.perf_counter()
     backend_ms = (t_after_backend - t_after_token) * 1000
     log.debug(f"ws_proxy timing device_backend_ms={backend_ms:.2f}")
-    await websocket.accept()
     await _inc_active_ws_connections()
     t_after_accept = time.perf_counter()
     accept_ms = (t_after_accept - t_after_backend) * 1000
     log.debug(f"ws_proxy timing accept_ms={accept_ms:.2f}")
+    await websocket.send_text(json.dumps({"event": "auth_ok"}))
 
     session = WSProxySession(
         websocket=websocket,
@@ -814,8 +830,22 @@ async def ws_proxy(websocket: WebSocket):
 
 @app.websocket("/ai")
 async def ws_ai(websocket: WebSocket):
-    """AI log analysis WebSocket. Query param: token (required). Events: ai_get_identifiers, ai_log_session, ai_turn."""
-    token = (websocket.query_params.get("token") or "").strip()
+    """AI log analysis WebSocket. Auth via first message: { event: 'auth', token } (no token in URL). Events: ai_get_identifiers, ai_log_session, ai_turn."""
+    await websocket.accept()
+    try:
+        raw = await asyncio.wait_for(websocket.receive_text(), timeout=_AUTH_FIRST_MESSAGE_TIMEOUT)
+    except asyncio.TimeoutError:
+        await websocket.close(code=4401, reason="auth required")
+        return
+    try:
+        msg = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        await websocket.close(code=4401, reason="auth required")
+        return
+    if not isinstance(msg, dict) or msg.get("event") != "auth":
+        await websocket.close(code=4401, reason="auth required")
+        return
+    token = (msg.get("token") or "").strip()
     if not token:
         await websocket.close(code=4401, reason="missing token")
         return
@@ -827,6 +857,8 @@ async def ws_ai(websocket: WebSocket):
         log.info("ws_ai token validation failed")
         await websocket.close(code=4401, reason="invalid token")
         return
+    await websocket.send_text(json.dumps({"event": "auth_ok"}))
+    log.info("ws_ai connection accepted")
 
     codex_ws = None
     thread_to_workspace: dict[str, str] = {}
@@ -846,8 +878,6 @@ async def ws_ai(websocket: WebSocket):
         await websocket.send_text(json.dumps({"id": rid, "stream_delta": delta}))
 
     try:
-        await websocket.accept()
-        log.info("ws_ai connection accepted")
         while True:
             raw = await websocket.receive_text()
             try:

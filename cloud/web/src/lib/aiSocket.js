@@ -9,16 +9,11 @@ const AI_WS_PATH = '/ai';
 const REQUEST_TIMEOUT_MS = 120000;
 
 /**
- * Build WebSocket URL for /ai. Same-origin, path /ai, query token=... (KeyMe token from apiFetch).
+ * Build WebSocket URL for /ai. Same-origin, path /ai, no query params (auth sent in first message).
  */
 export function buildAiWsUrl() {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const base = `${proto}//${window.location.host}${AI_WS_PATH}`;
-  const token = getToken();
-  const params = new URLSearchParams();
-  if (token) params.set('token', token);
-  const qs = params.toString();
-  return qs ? `${base}?${qs}` : base;
+  return `${proto}//${window.location.host}${AI_WS_PATH}`;
 }
 
 /**
@@ -39,6 +34,7 @@ export function createAiSocket() {
 
   function handleMessage(msg) {
     if (msg == null || typeof msg !== 'object') return;
+    if (msg.event === 'auth_ok') return;
     const id = msg.id;
     if (id === undefined || id === null) return;
     const entry = pending.get(id);
@@ -60,6 +56,7 @@ export function createAiSocket() {
     const url = buildAiWsUrl();
     ws = new WebSocket(url);
     ws.onopen = () => {
+      sendMessage({ event: 'auth', token: getToken() || '' });
       if (onConnectCb) onConnectCb();
     };
     ws.onmessage = (ev) => {
