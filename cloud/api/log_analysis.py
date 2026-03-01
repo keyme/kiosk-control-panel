@@ -281,26 +281,25 @@ _EXTRACT_JSON_PARSE_ERROR: Dict[str, Any] = {
 def extract_identifiers_json(
     workspace_path: str,
     question: str,
-    approximate_date_hint: Optional[str] = None,
     timeout: int = 60,
 ) -> Dict[str, Any]:
-    """Run Codex to extract identifiers as JSON. Returns { success, error_message, identifiers }.
-    Identifiers include session_id (UUID), scan_id (number), transaction_id (number), datetime (YYYY-MM-DDTHH or full).
+    """Run Codex to extract identifiers from the user's text only. Returns { success, error_message, identifiers }.
+    No date context is passed in; approximate_date is used only when pulling from the device.
     """
-    hint = f" Approximate date context: {approximate_date_hint}." if approximate_date_hint else ""
     prompt = (
-        "You must output only valid JSON, no other text. Use this exact structure:\n"
+        "You must output only valid JSON, no other text. USE THIS EXACT STRUCTURE:\n"
         '{"success": true or false, "error_message": null or "user-facing string", "identifiers": ["string", ...]}\n\n'
-        "Extract from the user question the following identifier types (treat datetime as an identifier):\n"
-        "- session_id: UUID format (e.g. 8a6a49b0-e430-11f0-b7d2-7bf5f7dc4479)\n"
-        "- scan_id: numeric id (e.g. 123123123)\n"
-        "- transaction_id: numeric id for transactions (same format as scan_id, only when user refers to a transaction)\n"
-        "- datetime: date and at least hour; normalize to YYYY-MM-DDTHH or YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS (e.g. 2025-12-28T17:21:16). "
-        "Date and hour are required; minutes and seconds may be omitted. Accept 2 PM, 14:00, Dec 28 afternoon, etc.\n\n"
-        "If the question cannot be interpreted or date/time is missing or ambiguous, set success to false and set error_message to a short user-facing sentence. "
-        "Otherwise set success true, error_message null, and identifiers to the list of extracted values (all of the above that appear).\n\n"
-        f"Example: {{\"success\": true, \"error_message\": null, \"identifiers\": [\"2025-12-28T17\", \"8a6a49b0-e430-11f0-b7d2-7bf5f7dc4479\"]}}\n\n"
-        f"Question:{hint}\n{(_truncate_question(question))}"
+        "From the user message below, extract identifiers. An identifier is exactly one of these four types (user may say e.g. \"session id\", \"session_id\", \"scan id\", \"transaction id\", or mention a date/time):\n"
+        "- session_id: UUID (e.g. 8a6a49b0-e430-11f0-b7d2-7bf5f7dc4479). Match any phrasing like \"session id\", \"session_id\", \"session\", etc.\n"
+        "- scan_id: numeric id (e.g. 123123123). Match \"scan id\", \"scan_id\", \"scan\", etc.\n"
+        "- transaction_id: numeric id for transactions. Match \"transaction id\", \"transaction_id\", etc.\n"
+        "- datetime: when the user mentions both a date and at least an hour, normalize to YYYY-MM-DDTHH or YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS (e.g. 2025-12-28T17). Accept 2 PM, 14:00, Dec 28 afternoon, etc. If the user gives only a date with no hour, do not add datetime to identifiers; instead set success to false and error_message to a short sentence asking for at least an approximate hour (e.g. \"Please provide at least an approximate hour (e.g. 2 PM or 14:00)).\").\n\n"
+        "Use only the user message; no other context. Include in identifiers only what appears in the message (at least one required). "
+        "Set success to false and error_message only when you cannot interpret the message or find no identifier of any of the four types. "
+        "When no identifier is found, use this exact error_message: \"Your question must include at least one of the following so the correct logs can be identified: a session ID (UUID), scan ID, transaction ID, or a date and time (with at least an approximate hour).\" "
+        "Otherwise success true, error_message null, identifiers = list of extracted values.\n\n"
+        f"Example: {{\"success\": true, \"error_message\": null, \"identifiers\": [\"8a6a49b0-e430-11f0-b7d2-7bf5f7dc4479\"]}} or [\"2025-12-28T17\", \"8a6a49b0-e430-11f0-b7d2-7bf5f7dc4479\"]\n\n"
+        f"User message:\n{(_truncate_question(question))}"
     )
     out = run_codex(workspace_path, prompt, timeout=timeout, use_codex_context=False)
     if not out:

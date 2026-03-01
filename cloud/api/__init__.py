@@ -480,7 +480,7 @@ def create_router():
             # Trip 1a: extract identifiers in fixed empty workspace (minimal context, fast)
             empty_workspace = log_analysis_module.get_empty_workspace()
             parsed = log_analysis_module.extract_identifiers_json(
-                empty_workspace, question, approximate_date_hint=approximate_date, timeout=60
+                empty_workspace, question, timeout=60
             )
 
             if not parsed.get("success") or parsed.get("error_message"):
@@ -491,7 +491,8 @@ def create_router():
             identifiers = parsed.get("identifiers") or []
             if not identifiers:
                 return JSONResponse(
-                    {"error": "No identifiers found; please include a session ID, scan ID, transaction ID, or date and time."},
+                    {"error": "Your question must include at least one of the following so the correct logs can be identified: \
+                        a session ID (UUID), scan ID, transaction ID, or a date and time (with at least an approximate hour)."},
                     status_code=422,
                 )
             identifier = identifiers[0]  # for cache key and logging
