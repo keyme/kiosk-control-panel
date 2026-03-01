@@ -547,9 +547,18 @@ def _run_grep_first_match_regex(filepath, is_gz, pattern, timeout_sec):
 def search_log(data):
     """Find exact datetime when query or queries appear in log. data: log_id, query or queries, date_hint_*."""
     data = data or {}
+    keyme.log.info(
+        "log_tail search_log request log_id=%r query=%r queries=%r date_hint_start=%r date_hint_end=%r",
+        data.get('log_id'),
+        data.get('query'),
+        data.get('queries'),
+        data.get('date_hint_start'),
+        data.get('date_hint_end'),
+    )
     _, allowlist = _build_log_list()
     log_id = (data.get('log_id') or 'all').strip()
     if log_id != 'all' or log_id not in allowlist:
+        keyme.log.warning("log_tail search_log rejected log_id=%r allowlist=%s", log_id, allowlist)
         return {'success': False, 'errors': ['search_log only supports log_id "all"']}
     # Prefer queries (list); fall back to single query
     queries_raw = data.get('queries')
@@ -559,28 +568,48 @@ def search_log(data):
     else:
         queries = [query] if query else []
     if not queries:
+        keyme.log.warning("log_tail search_log missing query/queries")
         return {'success': False, 'errors': ['Missing query or queries']}
 
     start_dt, end_dt, err = _resolve_search_date_range(data)
     if err is not None:
+        keyme.log.warning("log_tail search_log date range error: %s", err)
         return err
+    keyme.log.info(
+        "log_tail search_log date range start_dt=%s end_dt=%s",
+        start_dt,
+        end_dt,
+    )
 
     log_dir = os.path.dirname(_ALL_LOG_PATH)
     files_to_read = _log_files_for_range(log_dir, 'all.log', start_dt, end_dt)
     if not files_to_read:
+        keyme.log.warning("log_tail search_log no log files for range log_dir=%r start=%s end=%s", log_dir, start_dt, end_dt)
         return {'success': False, 'errors': ['No log files found for the selected range']}
+    keyme.log.info(
+        "log_tail search_log files_to_read=%s (count=%d)",
+        [(d, fp, gz) for d, fp, gz in files_to_read],
+        len(files_to_read),
+    )
 
     use_regex = len(queries) > 1
     pattern = '|'.join(re.escape(q) for q in queries) if use_regex else None
     single_query = queries[0] if queries else ''
+    keyme.log.info(
+        "log_tail search_log use_regex=%s queries_count=%d pattern=%r single_query=%r",
+        use_regex,
+        len(queries),
+        pattern[:80] + '...' if pattern and len(pattern) > 80 else pattern,
+        single_query[:80] + '...' if single_query and len(single_query) > 80 else single_query,
+    )
 
     start_time = time.time()
-    for _day, filepath, is_gz in files_to_read:
+    for idx, (_day, filepath, is_gz) in enumerate(files_to_read):
         if time.time() - start_time > _SEARCH_LOG_TIMEOUT_SEC:
-            keyme.log.warning("log_tail search_log timeout")
+            keyme.log.warning("log_tail search_log timeout after %d files", idx)
             return {'success': False, 'errors': ['Search timed out']}
         timeout_remaining = max(1, _SEARCH_LOG_TIMEOUT_SEC - int(time.time() - start_time))
-        keyme.log.info(f"log_tail search_log file={filepath!r} is_gz={is_gz}")
+        keyme.log.info("log_tail search_log trying file %d/%d path=%r is_gz=%s", idx + 1, len(files_to_read), filepath, is_gz)
         line = (
             _run_grep_first_match_regex(filepath, is_gz, pattern, timeout_remaining)
             if use_regex
@@ -589,9 +618,19 @@ def search_log(data):
         if line:
             ts = _extract_timestamp_from_log_line(line)
             if ts:
+                keyme.log.info("log_tail search_log found datetime=%s in file=%r", ts, filepath)
                 return {'success': True, 'data': {'datetime': ts, 'line': line}}
             keyme.log.debug("log_tail search_log match had no valid timestamp, continuing")
+        else:
+            keyme.log.debug("log_tail search_log no match in file=%r", filepath)
 
+    keyme.log.warning(
+        "log_tail search_log not found after searching %d files queries=%s start_dt=%s end_dt=%s",
+        len(files_to_read),
+        queries,
+        start_dt,
+        end_dt,
+    )
     return {'success': False, 'errors': ['Query not found in logs for the selected range']}
 
 
