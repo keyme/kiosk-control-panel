@@ -23,15 +23,15 @@ export default defineConfig({
   },
   server: {
     port: 8081,
-    // Must match control_panel/config/ports.json "python" (2026).
+    // Must match location of where cloud backend is running (8080)
     // WebSocket proxy for device control panel (path /ws).
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:2026',
+        target: 'http://127.0.0.1:8080',
         changeOrigin: true,
       },
       '/ws': {
-        target: 'http://127.0.0.1:2026',
+        target: 'http://127.0.0.1:8080',
         changeOrigin: true,
         ws: true,
         secure: false,
