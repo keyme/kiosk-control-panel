@@ -60,6 +60,7 @@ class TestInvalidToken:
         finally:
             _restore_override(app, dep)
 
+    @patch("control_panel.cloud.api.auth.API_ENV", "prod")
     @patch("control_panel.cloud.api.auth.httpx.get")
     def test_granted_false_returns_401(self, mock_get):
         mock_resp = MagicMock()
@@ -117,12 +118,13 @@ class TestTokenCaching:
 
 
 class TestValidatePermission:
-    """validate_permission(token, permission_slug) for fleet commands."""
+    """validate_permission(token, permission_slug) for fleet commands. Uses API_ENV=prod so ANF is called."""
 
     def _clear_permission_cache(self):
         from control_panel.cloud.api.auth import _permission_cache
         _permission_cache.clear()
 
+    @patch("control_panel.cloud.api.auth.API_ENV", "prod")
     @patch("control_panel.cloud.api.auth.httpx.get")
     def test_granted_true_returns_true_and_user_id(self, mock_get):
         self._clear_permission_cache()
@@ -137,6 +139,7 @@ class TestValidatePermission:
         assert user_id == "u@example.com"
         assert mock_get.call_count == 1
 
+    @patch("control_panel.cloud.api.auth.API_ENV", "prod")
     @patch("control_panel.cloud.api.auth.httpx.get")
     def test_granted_false_returns_false(self, mock_get):
         self._clear_permission_cache()
@@ -150,6 +153,7 @@ class TestValidatePermission:
         assert granted is False
         assert user_id is None
 
+    @patch("control_panel.cloud.api.auth.API_ENV", "prod")
     @patch("control_panel.cloud.api.auth.httpx.get")
     def test_cache_prevents_second_anf_call(self, mock_get):
         self._clear_permission_cache()
@@ -169,6 +173,7 @@ class TestValidatePermission:
         assert granted is False
         assert user_id is None
 
+    @patch("control_panel.cloud.api.auth.API_ENV", "prod")
     @patch("control_panel.cloud.api.auth.httpx.get")
     def test_non_200_returns_false_none(self, mock_get):
         self._clear_permission_cache()

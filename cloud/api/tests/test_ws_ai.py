@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from starlette.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
 
 from control_panel.cloud.api.auth import get_current_user
 from control_panel.cloud.api.main import app
@@ -28,17 +27,18 @@ def client_ai_ws():
 
 
 class TestWsAiAuth:
-    """Auth: missing or invalid token closes with 4401."""
+    """Auth: first message must be { event: 'auth', token }. Missing or invalid token closes with 4401."""
 
     def test_missing_token_closes_4401(self):
         app.dependency_overrides.pop(get_current_user, None)
         try:
             with TestClient(app) as c:
-                with pytest.raises(WebSocketDisconnect) as exc_info:
-                    with c.websocket_connect("/ai") as ws:
-                        ws.receive()
-                assert exc_info.value.code == 4401
-                assert "missing" in (exc_info.value.reason or "").lower()
+                with c.websocket_connect("/ai") as ws:
+                    ws.send_text(json.dumps({"event": "auth", "token": ""}))
+                    msg = ws.receive()
+                assert msg.get("type") == "websocket.close"
+                assert msg.get("code") == 4401
+                assert "missing" in (msg.get("reason") or "").lower()
         finally:
             _auth_override()
 
@@ -48,10 +48,12 @@ class TestWsAiAuth:
             with patch("control_panel.cloud.api.main.validate_token_async", new_callable=AsyncMock) as m:
                 m.side_effect = HTTPException(status_code=401, detail="invalid token")
                 with TestClient(app) as c:
-                    with pytest.raises(WebSocketDisconnect) as exc_info:
-                        with c.websocket_connect("/ai?token=bad") as ws:
-                            ws.receive()
-                assert exc_info.value.code == 4401
+                    with c.websocket_connect("/ai") as ws:
+                        ws.send_text(json.dumps({"event": "auth", "token": "bad"}))
+                        msg = ws.receive()
+                assert msg.get("type") == "websocket.close"
+                assert msg.get("code") == 4401
+                assert "invalid" in (msg.get("reason") or "").lower()
         finally:
             _auth_override()
 
@@ -67,7 +69,9 @@ class TestWsAiGetIdentifiers:
             ):
                 with patch("control_panel.cloud.api.main.asyncio.to_thread", new_callable=AsyncMock) as to_thread:
                     to_thread.return_value = {"success": True, "identifiers": ["uuid-123", "2025-12-28T14"], "error_message": None}
-                    with client_ai_ws.websocket_connect("/ai?token=ok") as ws:
+                    with client_ai_ws.websocket_connect("/ai") as ws:
+                        ws.send_text(json.dumps({"event": "auth", "token": "ok"}))
+                        assert json.loads(ws.receive_text()).get("event") == "auth_ok"
                         ws.send_text(json.dumps({"id": 1, "event": "ai_get_identifiers", "data": {"question": "session uuid-123 at 2 PM"}}))
                         raw = ws.receive_text()
                         msg = json.loads(raw)
@@ -76,7 +80,9 @@ class TestWsAiGetIdentifiers:
                         assert msg.get("result", {}).get("identifiers") == ["uuid-123", "2025-12-28T14"]
 
     def test_missing_question_returns_error(self, client_ai_ws):
-        with client_ai_ws.websocket_connect("/ai?token=ok") as ws:
+        with client_ai_ws.websocket_connect("/ai") as ws:
+            ws.send_text(json.dumps({"event": "auth", "token": "ok"}))
+            assert json.loads(ws.receive_text()).get("event") == "auth_ok"
             ws.send_text(json.dumps({"id": 2, "event": "ai_get_identifiers", "data": {}}))
             raw = ws.receive_text()
             msg = json.loads(raw)
@@ -88,7 +94,9 @@ class TestWsAiGetIdentifiers:
         with patch("control_panel.cloud.api.main.log_analysis.get_empty_workspace", return_value="/tmp/empty"):
             with patch("control_panel.cloud.api.main.asyncio.to_thread", new_callable=AsyncMock) as to_thread:
                 to_thread.return_value = {"success": False, "identifiers": [], "error_message": "Your question must include..."}
-                with client_ai_ws.websocket_connect("/ai?token=ok") as ws:
+                with client_ai_ws.websocket_connect("/ai") as ws:
+                    ws.send_text(json.dumps({"event": "auth", "token": "ok"}))
+                    assert json.loads(ws.receive_text()).get("event") == "auth_ok"
                     ws.send_text(json.dumps({"id": 3, "event": "ai_get_identifiers", "data": {"question": "nothing useful"}}))
                     raw = ws.receive_text()
                     msg = json.loads(raw)
@@ -101,7 +109,9 @@ class TestWsAiTurn:
     """ai_turn: unknown thread_id returns error; valid thread_id requires prior ai_log_session."""
 
     def test_unknown_thread_id_returns_error(self, client_ai_ws):
-        with client_ai_ws.websocket_connect("/ai?token=ok") as ws:
+        with client_ai_ws.websocket_connect("/ai") as ws:
+            ws.send_text(json.dumps({"event": "auth", "token": "ok"}))
+            assert json.loads(ws.receive_text()).get("event") == "auth_ok"
             ws.send_text(json.dumps({"id": 10, "event": "ai_turn", "data": {"thread_id": "thr_unknown", "text": "hello"}}))
             raw = ws.receive_text()
             msg = json.loads(raw)
@@ -110,7 +120,9 @@ class TestWsAiTurn:
             assert "thread" in (msg.get("error") or "").lower() or "unknown" in (msg.get("error") or "").lower()
 
     def test_missing_thread_id_returns_error(self, client_ai_ws):
-        with client_ai_ws.websocket_connect("/ai?token=ok") as ws:
+        with client_ai_ws.websocket_connect("/ai") as ws:
+            ws.send_text(json.dumps({"event": "auth", "token": "ok"}))
+            assert json.loads(ws.receive_text()).get("event") == "auth_ok"
             ws.send_text(json.dumps({"id": 11, "event": "ai_turn", "data": {"text": "hello"}}))
             raw = ws.receive_text()
             msg = json.loads(raw)
