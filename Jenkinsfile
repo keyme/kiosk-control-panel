@@ -134,11 +134,11 @@ pipeline {
         script {
           dir(base_context) {
             withCredentials([sshUserPrivateKey(credentialsId: 'github-credentials', keyFileVariable: 'ID_RSA_PATH', passphraseVariable: '', usernameVariable: 'USERNAME')]) {
-              sh """
+              sh '''
                 set -e
                 rm -rf kiosk_repo
                 eval `ssh-agent -s`
-                ssh-add ${ID_RSA_PATH}
+                ssh-add $ID_RSA_PATH
                 export GIT_SSH_COMMAND="ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
                 git clone --recurse-submodules --shallow-submodules --depth 1 git@github.com:keyme/kiosk.git kiosk_repo
 
@@ -166,7 +166,7 @@ pipeline {
                 git config user.email keymedev@key.me
                 git add .
                 git commit -m "snapshot for control-panel log analysis" --no-gpg-sign
-              """
+              '''
             }
           }
         }
