@@ -2292,7 +2292,7 @@ export default function LogTailPage({ socket }) {
               <div className="space-y-2">
                 <label className="flex flex-col gap-1">
                   <span className="text-xs font-medium text-muted-foreground">
-                    Question (must include one of the following: session ID, scan ID, transaction ID, or date/time — at least the hour)
+                    Question (must include one of: session ID, scan ID, transaction ID, testcut ID, or date/time — at least the hour)
                   </span>
                   <textarea
                     value={aiQuestion}
@@ -2316,7 +2316,7 @@ export default function LogTailPage({ socket }) {
                     try {
                       const idsRes = await aiSocketRef.current.request('ai_get_identifiers', { question });
                       if (!idsRes.success || !idsRes.result?.identifiers?.length) {
-                        setAiGetIdsError(idsRes.error || idsRes.result?.error_message || 'No identifiers extracted. Include a session ID, scan ID, or date and time.');
+                        setAiGetIdsError(idsRes.error || idsRes.result?.error_message || 'No identifiers extracted. Include a session ID, scan ID, transaction ID, testcut ID, or date and time.');
                         setAiSessionLoading(false);
                         return;
                       }
