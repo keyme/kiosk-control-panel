@@ -39,7 +39,7 @@ RUN uv pip install --system \
     "websockets>=12.0"
 
 # Stage 3: Runtime
-FROM 821954540415.dkr.ecr.us-east-1.amazonaws.com/python:3.13-slim
+FROM 821954540415.dkr.ecr.us-east-1.amazonaws.com/python:3.13-slim AS runtime
 
 WORKDIR /app
 
@@ -64,11 +64,9 @@ RUN apt-get update && apt-get install -y \
     ripgrep \
     && rm -rf /var/lib/apt/lists/*
 
-# Clone kiosk repo with submodules for log-analysis Codex context (build-arg for URL/auth)
-# Trust GitHub host key so SSH clone works when build is run with --ssh default
-RUN mkdir -p -m 0700 /root/.ssh && ssh-keyscan -t ed25519,rsa github.com >> /root/.ssh/known_hosts 2>/dev/null
-ARG KIOSK_REPO_URL=git@github.com:keyme/kiosk.git
-RUN --mount=type=ssh git clone --recurse-submodules --depth 1 "${KIOSK_REPO_URL}" /app/kiosk_repo
+# Kiosk repo is provided by CI as part of the build context (see Jenkinsfile).
+# It must include .git metadata because log analysis uses git worktrees.
+COPY kiosk_repo /app/kiosk_repo
 
 # Workspace base for log-analysis worktrees; cache dir for log slices (TTL in days above)
 RUN mkdir -p /app/workspace /app/log_analysis_cache
@@ -76,7 +74,7 @@ RUN mkdir -p /app/workspace /app/log_analysis_cache
 # Install Codex CLI via npm (OpenAI Codex; requires Node 18+)
 RUN npm install -g @openai/codex
 
-# Entrypoint: require OPENAI_API_KEY and run codex login before starting the app
+# Entrypoint: requires OPENAI_API_KEY and runs codex login before starting the app
 COPY cloud/docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 
@@ -90,7 +88,10 @@ COPY . ./control_panel/
 # Copy built frontend from web-build stage
 COPY --from=web-build /web-build/dist ./control_panel/cloud/web/dist
 
-RUN python -m compileall control_panel/
+# Compile only the control panel code (avoid compiling an embedded kiosk_repo/ if present in build context).
+RUN python -m compileall \
+    control_panel/cloud \
+    control_panel/shared.py
 
 # Non-root user; ensure workspace and kiosk_repo are writable for worktrees
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app

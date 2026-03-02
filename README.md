@@ -35,26 +35,14 @@ Optional env: `PORT`, `API_ENV` (e.g. `stg` / `prod`), `CONTROL_PANEL_STATIC_ROO
 
 **Docker**
 
-Build (clone uses SSH; run with agent and BuildKit):
+Build:
 
 ```bash
 cd control_panel
-DOCKER_BUILDKIT=1 docker build --ssh default -f cloud/Dockerfile -t control-panel-cloud .
+DOCKER_BUILDKIT=1 docker build -f cloud/Dockerfile -t control-panel-cloud .
 ```
 
-**Running without AI (no log analysis):** Set `NO_AI=1` (or any non-empty value) to skip Codex. The container will start and the control panel works; the AI log analysis feature (Device logs → /ai) will be disabled. You do not need to set `OPENAI_API_KEY` in this case.
-
-Example:
-
-```bash
-docker run -p 8080:8080 \
-  -v ~/.aws:/home/appuser/.aws:ro -e HOME=/home/appuser \
-  -e API_ENV=stg \
-  -e NO_AI=1 \
-  control-panel-cloud
-```
-
-**Running with AI (log analysis):** Do not set `NO_AI`. You must set `OPENAI_API_KEY`; the entrypoint will run `codex login` and start the Codex app-server. If `OPENAI_API_KEY` is not set, the entrypoint exits with an error.
+**Running (requires AI/log analysis):** You must set `OPENAI_API_KEY`; the entrypoint will run `codex login` and start the Codex app-server. If `OPENAI_API_KEY` is not set, the entrypoint exits with an error.
 
 Example:
 
@@ -67,7 +55,7 @@ docker run -p 8080:8080 \
 ```
 
 - **AWS credentials:** Needed for S3 (device certs) and other AWS APIs. Mount `~/.aws` as above, or set `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_DEFAULT_REGION`, or use IAM (ECS/EKS/EC2).
-- **Log analysis (Codex):** By default the container requires `OPENAI_API_KEY` and will exit if it is missing. Set `NO_AI=1` to run without AI (no key required); then `/ai` is disabled.
+- **Log analysis (Codex):** The container requires `OPENAI_API_KEY` and will exit if it is missing.
 - **Scale:** For many WS connections use e.g. `--ulimit nofile=200000:200000`. `GET /health` reports limits and warnings.
 
 ## Testing
