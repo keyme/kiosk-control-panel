@@ -43,6 +43,16 @@ podLabels: {}
 podSecurityContext: {}
   # fsGroup: 2000
 
+# Enable Landlock for Codex read-only sandbox (required for AI log analysis).
+# Codex app-server and CLI use Landlock to sandbox agent commands; the default K8s seccomp
+# profile blocks Landlock syscalls, causing Sandbox(LandlockRestrict) errors. Set enabled:
+# true if log analysis fails with that error.
+# When enabled, uses seccompProfile: Unconfined at pod level (all syscalls allowed).
+# Security: Unconfined is permissive. For stricter hardening, use a custom seccomp profile
+# that allows only landlock_create_ruleset, landlock_add_rule, landlock_restrict_self.
+landlockSupport:
+  enabled: true  # Both staging and prod need Landlock for Codex log analysis
+
 securityContext: {}
   # capabilities:
   #   drop:
