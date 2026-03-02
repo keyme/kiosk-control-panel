@@ -50,6 +50,25 @@ function isEmptySlot(mag) {
   return !mag || mag.milling == null || mag.style == null || String(mag.milling) === 'None';
 }
 
+/** Compute overall inventory stats for center summary. */
+function inventorySummary(magazines, lowThreshold) {
+  let totalKeys = 0;
+  let enabledSlots = 0;
+  let disabledSlots = 0;
+  let lowSlots = 0;
+  let emptySlots = 0;
+  for (const mag of magazines || []) {
+    const state = segmentState(mag, lowThreshold);
+    const count = typeof mag.count === 'number' ? mag.count : Number(mag.count) || 0;
+    totalKeys += Number.isFinite(count) ? count : 0;
+    if (state === 'enabled') enabledSlots += 1;
+    else if (state === 'disabled' || state === 'zero') disabledSlots += 1;
+    else if (state === 'low') lowSlots += 1;
+    else if (state === 'empty') emptySlots += 1;
+  }
+  return { totalKeys, enabledSlots, disabledSlots, lowSlots, emptySlots };
+}
+
 /** Format cost as currency or return dash when missing/invalid. */
 function formatCost(cost) {
   const n = typeof cost === 'number' ? cost : Number(cost);
@@ -518,13 +537,12 @@ export default function InventoryPage({ connected, socket }) {
                     <filter id="donut-shadow" x="-20%" y="-20%" width="140%" height="140%">
                       <feDropShadow dx="0" dy="1" stdDeviation="0.5" floodOpacity="0.15" />
                     </filter>
-                    <linearGradient id="donut-inner" x1="0" y1="0" x2="1" y2="1">
-                      <stop offset="0%" stopColor="hsl(var(--card))" />
-                      <stop offset="100%" stopColor="hsl(var(--muted))" />
-                    </linearGradient>
+                    <radialGradient id="donut-inner">
+                      <stop offset="0%" stopColor="hsl(var(--muted) / 0.85)" />
+                      <stop offset="100%" stopColor="hsl(var(--card))" />
+                    </radialGradient>
                   </defs>
-                  {/* Inner circle (donut hole) */}
-                  <circle cx="50" cy="50" r="24" fill="url(#donut-inner)" filter="url(#donut-shadow)" />
+                  <circle cx="50" cy="50" r="24" fill="url(#donut-inner)" stroke="rgba(255,255,255,0.05)" strokeWidth="0.3" filter="url(#donut-shadow)" />
                   {Array.from({ length: SEGMENT_COUNT }, (_, i) => {
                     const magNum = i + 1;
                     const mag = magazines[i];
@@ -666,6 +684,42 @@ export default function InventoryPage({ connected, socket }) {
                     );
                   })()}
                 </svg>
+                {/* Center: overall status */}
+                {(() => {
+                  const s = inventorySummary(magazines, lowInventoryThreshold);
+                  return (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none" aria-hidden>
+                      <div
+                        className="flex flex-col items-center justify-center text-center rounded-full w-[202px] h-[202px] px-4"
+                        style={{
+                          background: 'radial-gradient(circle at 50% 50%, hsl(var(--muted) / 0.6), hsl(var(--card)))',
+                          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05)',
+                        }}
+                      >
+                        <p className="text-xs font-medium text-muted-foreground">Total keys</p>
+                        <p className="text-2xl font-bold tabular-nums text-foreground mt-0.5">{s.totalKeys}</p>
+                        <div className="mt-2 flex flex-col items-center gap-0.5 text-[11px] text-muted-foreground">
+                          <span className="flex items-center gap-1">
+                            <span className="text-emerald-600 dark:text-emerald-400" aria-hidden>✓</span>
+                            <span>Enabled: {s.enabledSlots}</span>
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <span className="text-slate-400 dark:text-slate-500" aria-hidden>○</span>
+                            <span>
+                              Disabled: {s.disabledSlots}
+                              {' · '}
+                              Low: {s.lowSlots}
+                            </span>
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <span className="text-slate-400 dark:text-slate-500" aria-hidden>○</span>
+                            <span>Empty: {s.emptySlots}</span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
               <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-muted-foreground">
                 <div className="flex items-center gap-2">
@@ -1072,15 +1126,6 @@ export default function InventoryPage({ connected, socket }) {
                             {actionLoading && <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden />}
                             {advancedAction === 'remove_magazine' ? 'Remove Magazine' : 'Execute Action'}
                           </button>
-                          <button
-                            type="button"
-                            disabled={isDisabled || actionLoading || captureLoading}
-                            onClick={handleOpenCaptureConfirm}
-                            className="inline-flex items-center justify-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-200"
-                          >
-                            {captureLoading ? <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden /> : <Camera className="size-5 shrink-0" aria-hidden />}
-                            Rotate to this magazine & capture
-                          </button>
                         </div>
                       )}
                     </div>
@@ -1088,6 +1133,19 @@ export default function InventoryPage({ connected, socket }) {
                 </>
               )}
             </div>
+            {advancedOpen && selectedMagazine != null && (
+              <div className="shrink-0 border-t border-border p-4">
+                <button
+                  type="button"
+                  disabled={isDisabled || actionLoading || captureLoading}
+                  onClick={handleOpenCaptureConfirm}
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-200"
+                >
+                  {captureLoading ? <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden /> : <Camera className="size-5 shrink-0" aria-hidden />}
+                  Rotate to this magazine & capture
+                </button>
+              </div>
+            )}
           </aside>
           <Dialog open={captureConfirmOpen} onOpenChange={(open) => !open && handleCloseCaptureModal()}>
             <DialogContent showClose={true} onClose={handleCloseCaptureModal} className="max-w-5xl w-[92vw] max-h-[90vh] overflow-y-auto">

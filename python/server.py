@@ -1019,6 +1019,18 @@ def get_log_range(client_id, data, send_callback):
     return _log_tail_module.get_log_range(data or {}, client_id, send_callback)
 
 
+def search_log(data):
+    """Find exact datetime when query string appears in log. Returns { success, data: { datetime, line? } } or errors."""
+    keyme.log.info("WS: requesting search_log")
+    return _log_tail_module.search_log(data or {})
+
+
+def get_log_around_datetime(client_id, data, send_callback):
+    """Stream last N lines before and first M lines after central_datetime. Streams batches via send_callback / PUSH_LOG_AROUND_* and returns { success, data: { started, stream_id } } or { success: False, errors }."""
+    keyme.log.info("WS: requesting get_log_around_datetime")
+    return _log_tail_module.get_log_around_datetime(data or {}, client_id, send_callback)
+
+
 def run_log_analyze(client_id, data, send_callback):
     """Run an allowlisted awk analysis on all.log; streams batches via send_callback. Returns { success, data: { started, stream_id } } or { success: False, errors }."""
     keyme.log.info("WS: requesting run_log_analyze")

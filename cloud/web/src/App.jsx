@@ -11,6 +11,8 @@ import {
   Terminal,
   LogOut,
   Menu,
+  PanelLeftClose,
+  PanelLeft,
 } from 'lucide-react';
 import { lazy, Suspense } from 'react';
 import Status from '@/pages/Status';
@@ -44,6 +46,17 @@ import { getToken, apiFetch } from '@/lib/apiFetch';
 import LoginPage from '@/pages/LoginPage';
 
 const DeviceHostContext = createContext({ deviceHost: '', setDeviceHost: () => {} });
+
+const SIDEBAR_STORAGE_KEY = 'control_panel_sidebar_open';
+
+function getSidebarOpenFromStorage() {
+  try {
+    const v = localStorage.getItem(SIDEBAR_STORAGE_KEY);
+    if (v === 'false') return false;
+    if (v === 'true') return true;
+  } catch (_) {}
+  return true;
+}
 
 function KioskSync() {
   const { kiosk } = useParams();
@@ -115,7 +128,15 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
   const location = useLocation();
   const [editValue, setEditValue] = useState(deviceHost);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(getSidebarOpenFromStorage);
   const deviceHostInputRef = useRef(null);
+
+  const setSidebarOpenAndPersist = (open) => {
+    setSidebarOpen(open);
+    try {
+      localStorage.setItem(SIDEBAR_STORAGE_KEY, String(open));
+    } catch (_) {}
+  };
 
   useEffect(() => {
     setDrawerOpen(false);
@@ -301,10 +322,24 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
       )}
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <div className="hidden md:flex shrink-0">
-          <AppSidebar panelInfo={panelInfo} />
-        </div>
-        <main className="content min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-6">
+        {sidebarOpen && (
+          <div className="hidden md:flex shrink-0">
+            <AppSidebar panelInfo={panelInfo} onCollapse={() => setSidebarOpenAndPersist(false)} />
+          </div>
+        )}
+        {!sidebarOpen && (
+          <div className="hidden md:flex fixed left-0 top-14 bottom-0 z-20 w-8 shrink-0 flex-col items-center justify-center border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
+            <button
+              type="button"
+              onClick={() => setSidebarOpenAndPersist(true)}
+              className="flex h-10 w-8 items-center justify-center rounded-r text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-sidebar"
+              aria-label="Show sidebar"
+            >
+              <PanelLeft className="size-5" aria-hidden />
+            </button>
+          </div>
+        )}
+        <main className={cn('content min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-6', !sidebarOpen && 'md:ml-8')}>
           {children}
         </main>
       </div>
@@ -489,8 +524,8 @@ function AppContent() {
   const inactivityTimerRef = useRef(null);
 
   useEffect(() => {
-    const wsUrl = buildWsUrl(deviceHost);
-    const sock = createDeviceSocket(wsUrl);
+    const wsUrl = buildWsUrl();
+    const sock = createDeviceSocket(wsUrl, deviceHost);
     setSocket(sock);
     return () => sock.disconnect();
   }, [deviceHost]);

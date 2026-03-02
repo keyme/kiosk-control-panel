@@ -1,145 +1,87 @@
 # Control Panel
 
-React UI with a Python backend. **Cloud** serves the UI and REST API and acts as a **WebSocket proxy (WSS)** to devices. **Device** runs the WebSocket server (TLS/WSS) and bridges to the kiosk stack via ZeroMQ.
+React UI and Python backend. **Cloud** serves the app and REST API and proxies WebSocket (WSS) to **devices**. **Device** runs the WebSocket server and talks to the kiosk stack via ZeroMQ.
 
 ## Architecture
 
-**Split:** The browser connects only to the **cloud**. The cloud serves static files and REST (config, reports, calibration); it also proxies WebSocket to the selected **device** over WSS (TLS). The device runs the WebSocket server only (no REST, no JS).
+- **Browser** → Cloud only (REST, static, WebSocket).
+- **Cloud** (FastAPI) → Exposes same-origin `/ws`; client sends an auth message (no query params) and Cloud proxies to the chosen device over WSS (TLS). Auth message: `{ "event": "auth", "token", "device" }`.
+- **Device** (`python/main.py`) → WebSocket on `/ws` (WSS), ZeroMQ to kiosk stack.
 
-```mermaid
-flowchart LR
-  subgraph clients [Clients]
-    Browser[Browser]
-  end
-  subgraph cloud [Cloud]
-    CloudMain[cloud/main.py]
-  end
-  subgraph kiosk [Kiosk]
-    Server[python/server.py]
-    Server -->|ZeroMQ| Stack[Kiosk stack]
-  end
-  Browser -->|REST + static + WS| CloudMain
-  CloudMain -->|WSS / TLS| Server
-```
+| Part        | Location        | Role |
+|------------|-----------------|------|
+| React UI   | `cloud/web/`    | SPA; built and served by cloud. |
+| Cloud      | `cloud/main.py` | FastAPI: REST, static, WS proxy to device. |
+| WS server  | `python/main.py`| WSS on port in `config/ports.json` (default 2026). |
 
-- **Cloud:** FastAPI app (REST, static from `cloud/web/dist`), and **WebSocket proxy** at `/ws?device=...` (TLS/WSS to device). uv project in `cloud/` only.
-- **Kiosk:** `python/main.py` runs the WebSocket server (path `/ws`, WSS). No REST, no static. Bridges to kiosk stack via ZeroMQ.
-
-**Components:**
-
-| Layer | Location | Role |
-|-------|----------|------|
-| **React UI** | `cloud/web/` | Single-page app; built and served by cloud. Browser talks to cloud only (REST + WebSocket); cloud proxies WS to device over WSS. |
-| **Cloud** | `cloud/main.py` | FastAPI: REST API, static files, WebSocket proxy to device (TLS/WSS). |
-| **WebSocket server** | `python/main.py` (device) | WebSocket on `/ws` (WSS). Real-time events, status, IPC to kiosk via ZeroMQ. |
-| **Kiosk stack** | (other services) | Hardware and services; communicate with control panel over ZeroMQ. |
+Device TLS: self-signed cert/key under `keyme.config.STATE_PATH/control_panel`; public cert uploaded to S3 via UPLOADER. Cloud fetches device certs from S3 for WSS. See `control_panel/shared.py` for bucket, prefix, and WSS API key.
 
 ## Running (device)
 
-The device runs the WebSocket server. Started by the manager as `control_panel/python/main.py`. Listens on the port in `config/ports.json` (`python`, default 2026), path `/ws`, with **WSS (TLS)**. At startup the device ensures a self-signed cert and key exist under `keyme.config.STATE_PATH/control_panel` (creates them if missing), then sends an IPC to **UPLOADER** (background_uploader) to upload the **public cert only** to S3. Build the web app first (see **Running (cloud)** for where the build is used).
-
-**Web dev:** From repo root or `control_panel/cloud/web`:
-
-```bash
-cd control_panel/cloud/web && npm run dev
-```
-
-Vite runs on port 8081 and proxies `/ws` to the Python port (2026). Run the Python server separately (`control_panel/python/main.py`) so the WebSocket connects.
+Started by systemd; process `control_panel/python/main.py`. For web dev: run Vite from `control_panel/cloud/web` (`npm run dev`, port 8081) and the Python server separately so the UI can connect.
 
 ## Running (cloud)
 
-The cloud is a FastAPI app managed with uv. It runs the REST API and serves the React build via `control_panel/cloud/main.py`. It also proxies WebSocket to the device: when the user selects a device in the UI, the browser connects to the cloud at `/ws?device=...` and the cloud forwards to that device. The cloud requires the same KeyMe token as the REST API, passed as the `token` query parameter; unauthenticated connections are closed. The web app lives under `cloud/web/`.
+**Local**
 
-1. Build the web app: `cd control_panel/cloud/web && npm run build`
-2. From **repo root**, run the cloud app with uv (only `control_panel/cloud` is a uv project):
+1. Build web: `cd control_panel/cloud/web && npm run build`
+2. From repo root:
 
 ```bash
 uv run --project control_panel/cloud uvicorn control_panel.cloud.main:app --host 0.0.0.0 --port 8080
 ```
 
-The app logs HTTP and WebSocket access itself (tokens are never logged). Use `--no-access-log` so uvicorn does not duplicate access logs. Port can be overridden with the `PORT` env var (e.g. `PORT=9000` before the command). Static root is resolved from the `cloud/main.py` file location, so `cloud/web/dist` is found regardless of CWD.
+Optional env: `PORT`, `API_ENV` (e.g. `stg` / `prod`), `CONTROL_PANEL_STATIC_ROOT`.
 
-**Env (optional):**
+**Docker**
 
-- **`PORT`** — Server port (default 8080).
-- **`API_ENV`** — Environment: `stg` or `prod`. Set when running in Docker or when you need the app to target staging vs production APIs.
-- **`CONTROL_PANEL_STATIC_ROOT`** — Path to the React build (default: `cloud/web/dist` next to `main.py`). Set this if you deploy the static files elsewhere.
-
-**Device certs (S3):** The cloud proxy connects to devices over **wss://** and verifies TLS using the device's public cert. Device certs are stored in S3 under the bucket and prefix defined in **`control_panel/shared.py`** (e.g. `s3://{bucket}/{WSS_CERTS_S3_PREFIX}/{KIOSK_NAME}/{filename}.crt`). The device uploads its cert via IPC to UPLOADER; the cloud fetches from S3, caches in memory, and on connection failure refetches and retries once (e.g. after device replacement). UPLOADER must have PutObject permission for the bucket; the cloud needs GetObject. WSS API key and related constants are also in `control_panel/shared.py` (single source of truth for device and cloud).
-
-**Docker (build from control_panel dir):**
-
-Build (includes JS build in image):
+Build (clone uses SSH; run with agent and BuildKit):
 
 ```bash
 cd control_panel
-docker build -f cloud/Dockerfile -t control-panel-cloud .
+DOCKER_BUILDKIT=1 docker build --ssh default -f cloud/Dockerfile -t control-panel-cloud .
 ```
 
-Run (port 8080). Set `API_ENV` to `stg` or `prod`:
+**Running without AI (no log analysis):** Set `NO_AI=1` (or any non-empty value) to skip Codex. The container will start and the control panel works; the AI log analysis feature (Device logs → /ai) will be disabled. You do not need to set `OPENAI_API_KEY` in this case.
 
-```bash
-docker run -p 8080:8080 -e API_ENV=stg control-panel-cloud
-```
-
-For production: `-e API_ENV=prod`.
-
-**Runtime limits (recommended):**
-This cloud service is used as a **WebSocket proxy** to devices, so it can hold many concurrent socket connections and consume file descriptors/conntrack entries and memory. It exposes `GET /health` which reports OS/container limits (ulimit, conntrack, memory) and will return warnings when they're too low.
-
-- **Increase file descriptor limit (ulimit / nofile)** (recommended; helps with many concurrent WS connections):
+Example:
 
 ```bash
 docker run -p 8080:8080 \
-  --ulimit nofile=200000:200000 \
+  -v ~/.aws:/home/appuser/.aws:ro -e HOME=/home/appuser \
   -e API_ENV=stg \
+  -e NO_AI=1 \
   control-panel-cloud
 ```
 
-- **Increase conntrack limit (nf_conntrack_max)**:
-This is a **host/node sysctl**, not an image setting. On the node:
+**Running with AI (log analysis):** Do not set `NO_AI`. You must set `OPENAI_API_KEY`; the entrypoint will run `codex login` and start the Codex app-server. If `OPENAI_API_KEY` is not set, the entrypoint exits with an error.
 
-```bash
-sysctl -w net.netfilter.nf_conntrack_max=262144
-```
-
-- **Environment variables** (good for CI or injected secrets):
+Example:
 
 ```bash
 docker run -p 8080:8080 \
+  -v ~/.aws:/home/appuser/.aws:ro -e HOME=/home/appuser \
   -e API_ENV=stg \
-  -e AWS_ACCESS_KEY_ID=... \
-  -e AWS_SECRET_ACCESS_KEY=... \
-  -e AWS_DEFAULT_REGION=us-east-1 \
+  -e OPENAI_API_KEY="$OPENAI_API_KEY" \
   control-panel-cloud
 ```
 
-- **Mount local AWS config** (reuse `~/.aws` from the host):
+- **AWS credentials:** Needed for S3 (device certs) and other AWS APIs. Mount `~/.aws` as above, or set `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_DEFAULT_REGION`, or use IAM (ECS/EKS/EC2).
+- **Log analysis (Codex):** By default the container requires `OPENAI_API_KEY` and will exit if it is missing. Set `NO_AI=1` to run without AI (no key required); then `/ai` is disabled.
+- **Scale:** For many WS connections use e.g. `--ulimit nofile=200000:200000`. `GET /health` reports limits and warnings.
 
-```bash
-docker run -p 8080:8080 \
-  -e API_ENV=stg \
-  -v ~/.aws:/home/appuser/.aws:ro \
-  -e HOME=/home/appuser \
-  control-panel-cloud
-```
+## Testing
 
-(Use `-u $(id -u):$(id -g)` and a writable dir if the container user cannot read your `~/.aws`; or create a dedicated credentials file and mount that.)
-
-- **IAM roles:** On ECS (task role), EKS (pod IRSA), or EC2 (instance profile), boto3 uses the role automatically; no env or mount needed.
-
-## Testing (cloud API)
-
-The cloud API has a pytest suite under `cloud/api/tests/`. Tests use [moto](https://github.com/getmoto/moto) to mock S3 so no AWS credentials are needed.
-
-Install test dependencies and run from the **repo root**:
+From repo root:
 
 ```bash
 uv sync --project control_panel/cloud --extra test
 uv run --project control_panel/cloud pytest control_panel/cloud/api/tests/ -v
 ```
 
+Uses moto for S3; no AWS credentials needed.
+
 ## Config
 
-- **`config/ports.json`:** `python` — WebSocket server port (2026). (Vite dev uses 8081, see `cloud/web/vite.config.js`.)
-- **`config/control_panel.json`:** Optional, e.g. `cache_ttl_fast_sec`, `cache_ttl_slow_sec` for status cache TTLs.
+- **`config/ports.json`** — `python`: WebSocket server port (2026).
+- **`config/control_panel.json`** — Optional (e.g. cache TTLs).

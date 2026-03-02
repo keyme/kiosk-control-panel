@@ -88,65 +88,77 @@ def client_with_ws_auth():
     }
 
 
+def _backend_return():
+    """Fake _device_ws_backend result so tests skip S3 cert fetch."""
+    return (
+        "wss://ns9999.keymekiosk.com:1/ws",
+        "ns9999.keymekiosk.com",
+        "NS9999",
+        None,
+        False,
+        None,
+    )
+
+
 class TestStgDeployedGate:
-    """Staging must not connect to deployed kiosks; prod and non-deployed are allowed."""
+    """Staging must not connect to deployed kiosks; prod and non-deployed are allowed.
+    Auth via first message: { event: 'auth', token, device } (no token in URL)."""
 
     def test_stg_deployed_true_closes_4403(self, client_with_ws_auth):
         """When API_ENV is stg and kiosk returns deployed true, client gets close 4403."""
-        recv_messages = [_hello_message(), _panel_info_response(deployed=True)]
+        # Gate sends get_panel_info; first recv() must be panel_info response (id=0)
+        recv_messages = [_panel_info_response(deployed=True)]
         with patch("control_panel.cloud.api.main.API_ENV", "stg"):
-            with patch("control_panel.cloud.api.main._get_wss_api_key", return_value="wss-key"):
-                with patch(
-                    "control_panel.cloud.api.main.websockets.connect",
-                    return_value=MockDeviceACM(recv_messages),
-                ):
-                    with client_with_ws_auth.websocket_connect("/ws?device=ns9999&token=any") as ws:
-                        # Drain until close (gate may run in different order in threaded test client)
-                        while True:
+            with patch("control_panel.cloud.api.main._device_ws_backend", return_value=_backend_return()):
+                with patch("control_panel.cloud.api.main._get_wss_api_key", return_value="wss-key"):
+                    with patch(
+                        "control_panel.cloud.api.main.websockets.connect",
+                        return_value=MockDeviceACM(recv_messages),
+                    ):
+                        with client_with_ws_auth.websocket_connect("/ws") as ws:
+                            ws.send_text(json.dumps({"event": "auth", "token": "any", "device": "ns9999"}))
+                            ws.receive()  # auth_ok
                             msg = ws.receive()
-                            if msg.get("type") == "websocket.close":
-                                break
-                            if msg.get("type") != "websocket.send":
-                                break
+                            while msg.get("type") == "websocket.send":
+                                msg = ws.receive()
                         assert msg.get("type") == "websocket.close", f"Expected close, got {msg}"
         assert msg.get("code") == STG_DEPLOYED_CLOSE_CODE
         assert "Staging" in (msg.get("reason") or "")
         assert "deployed" in (msg.get("reason") or "").lower()
 
     def test_stg_deployed_false_allows_connection(self, client_with_ws_auth):
-        """When API_ENV is stg and kiosk returns deployed false, proxy runs and forwards messages."""
-        recv_messages = [_hello_message(), _panel_info_response(deployed=False)]
+        """When API_ENV is stg and kiosk returns deployed false, proxy runs and forwards buffered panel_info."""
+        recv_messages = [_panel_info_response(deployed=False)]
         with patch("control_panel.cloud.api.main.API_ENV", "stg"):
-            with patch("control_panel.cloud.api.main._get_wss_api_key", return_value="wss-key"):
-                with patch(
-                    "control_panel.cloud.api.main.websockets.connect",
-                    return_value=MockDeviceACM(recv_messages),
-                ):
-                    with client_with_ws_auth.websocket_connect("/ws?device=ns9999&token=any") as ws:
-                        # Should receive buffered hello and panel_info, then connection stays open until we close
-                        first = ws.receive()
-                        second = ws.receive()
-        # Both should be websocket.send (forwarded from device), not websocket.close with 4403
+            with patch("control_panel.cloud.api.main._device_ws_backend", return_value=_backend_return()):
+                with patch("control_panel.cloud.api.main._get_wss_api_key", return_value="wss-key"):
+                    with patch(
+                        "control_panel.cloud.api.main.websockets.connect",
+                        return_value=MockDeviceACM(recv_messages),
+                    ):
+                        with client_with_ws_auth.websocket_connect("/ws") as ws:
+                            ws.send_text(json.dumps({"event": "auth", "token": "any", "device": "ns9999"}))
+                            ws.receive()  # auth_ok
+                            first = ws.receive()
         assert first.get("type") == "websocket.send"
-        assert second.get("type") == "websocket.send"
-        data1 = json.loads(first.get("text", "{}"))
-        data2 = json.loads(second.get("text", "{}"))
-        assert data1.get("event") == "hello"
-        assert data2.get("id") == 0 and data2.get("data", {}).get("deployed") is False
+        data = json.loads(first.get("text", "{}"))
+        assert data.get("id") == 0 and data.get("data", {}).get("deployed") is False
 
     def test_prod_deployed_true_allows_connection(self, client_with_ws_auth):
         """When API_ENV is prod and kiosk returns deployed true, proxy runs (no 4403)."""
         messages = [_hello_message(), _panel_info_response(deployed=True)]
-        # In prod the gate does not run; device_to_client reads from the iterator.
         with patch("control_panel.cloud.api.main.API_ENV", "prod"):
-            with patch("control_panel.cloud.api.main._get_wss_api_key", return_value="wss-key"):
-                with patch(
-                    "control_panel.cloud.api.main.websockets.connect",
-                    return_value=MockDeviceACM(recv_messages=[], iter_messages=messages),
-                ):
-                    with client_with_ws_auth.websocket_connect("/ws?device=ns9999&token=any") as ws:
-                        first = ws.receive()
-                        second = ws.receive()
+            with patch("control_panel.cloud.api.main._device_ws_backend", return_value=_backend_return()):
+                with patch("control_panel.cloud.api.main._get_wss_api_key", return_value="wss-key"):
+                    with patch(
+                        "control_panel.cloud.api.main.websockets.connect",
+                        return_value=MockDeviceACM(recv_messages=[], iter_messages=messages),
+                    ):
+                        with client_with_ws_auth.websocket_connect("/ws") as ws:
+                            ws.send_text(json.dumps({"event": "auth", "token": "any", "device": "ns9999"}))
+                            ws.receive()  # auth_ok
+                            first = ws.receive()
+                            second = ws.receive()
         assert first.get("type") == "websocket.send"
         assert second.get("type") == "websocket.send"
         assert json.loads(second.get("text", "{}")).get("data", {}).get("deployed") is True

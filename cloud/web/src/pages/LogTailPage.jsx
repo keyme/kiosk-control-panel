@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageTitle } from '@/components/PageTitle';
 import { ScrollText, Play, Square, Download, AlertTriangle, Loader2, HelpCircle, Maximize2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { createAiSocket } from '@/lib/aiSocket';
 import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
@@ -1064,6 +1066,7 @@ function ErrorsAndRestartsView({ events }) {
 }
 
 export default function LogTailPage({ socket }) {
+  const { kiosk: kioskName } = useParams();
   const [activeTab, setActiveTab] = useState('tail');
   const [logs, setLogs] = useState([]);
   const [logId, setLogId] = useState('');
@@ -1105,6 +1108,25 @@ export default function LogTailPage({ socket }) {
   const [analyzeError, setAnalyzeError] = useState(null);
   const analyzeStreamIdRef = useRef(null);
 
+  // AI Log Analysis tab state
+  const [aiQuestion, setAiQuestion] = useState('');
+  const [aiIdentifiers, setAiIdentifiers] = useState([]);
+  const [aiApproximateDate, setAiApproximateDate] = useState('');
+  const [aiThreadId, setAiThreadId] = useState(null);
+  const [aiMessages, setAiMessages] = useState([]);
+  const [aiGetIdsError, setAiGetIdsError] = useState(null);
+  const [aiSessionLoading, setAiSessionLoading] = useState(false);
+  const [aiSessionError, setAiSessionError] = useState(null);
+  const [aiTurnLoading, setAiTurnLoading] = useState(false);
+  const [aiConnectionStatus, setAiConnectionStatus] = useState('disconnected');
+  const aiSocketRef = useRef(null);
+  const aiChatScrollRef = useRef(null);
+
+  const aiMaxDate = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }, []);
+
   const currentAnalyzePayload = useMemo(() => {
     if (analyzePresetId && analyzePresetId !== 'build') {
       const preset = ANALYZE_PRESETS.find((p) => p.id === analyzePresetId);
@@ -1143,6 +1165,32 @@ export default function LogTailPage({ socket }) {
     }
     return [processPart, levelPart, messagePart].filter(Boolean).join(' OR ');
   }, [analyzePresetId, analyzeBuilder, analyzeCombineMode]);
+
+  // AI socket: connect when on AI tab, disconnect when leaving
+  useEffect(() => {
+    if (activeTab !== 'ai') {
+      if (aiSocketRef.current) {
+        aiSocketRef.current.disconnect();
+        aiSocketRef.current = null;
+      }
+      setAiConnectionStatus('disconnected');
+      return;
+    }
+    const sock = createAiSocket();
+    aiSocketRef.current = sock;
+    setAiConnectionStatus('connecting');
+    sock.onConnect(() => setAiConnectionStatus('connected'));
+    sock.onDisconnect(() => setAiConnectionStatus('disconnected'));
+    sock.connect();
+    return () => {
+      sock.disconnect();
+      aiSocketRef.current = null;
+    };
+  }, [activeTab]);
+
+  useEffect(() => {
+    aiChatScrollRef.current?.scrollTo({ top: aiChatScrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [aiMessages]);
 
   const linesRef = useRef([]);
   const onTailLineRef = useRef(null);
@@ -1482,6 +1530,18 @@ export default function LogTailPage({ socket }) {
           )}
         >
           Analyze (Insights)
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('ai')}
+          className={cn(
+            'px-4 py-2 text-sm font-medium rounded-t-md border border-b-0 -mb-px',
+            activeTab === 'ai'
+              ? 'bg-background border-border'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          )}
+        >
+          AI Log Analysis
         </button>
       </div>
 
@@ -2195,6 +2255,254 @@ export default function LogTailPage({ socket }) {
                 <AnalyzeSummaryView buckets={analyzeBuckets} />
               ) : (
                 <p className="text-sm text-muted-foreground">Run an analysis to see output.</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {activeTab === 'ai' && (
+        <div className="space-y-4">
+          <Card>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <span className="text-muted-foreground">Kiosk:</span>
+                <span className="rounded-md border border-input bg-muted/30 px-2 py-1 font-mono">
+                  {kioskName || '(select a kiosk in the URL)'}
+                </span>
+                <span className="text-muted-foreground">Date:</span>
+                <input
+                  type="date"
+                  value={aiApproximateDate}
+                  onChange={(e) => setAiApproximateDate(e.target.value)}
+                  max={aiMaxDate}
+                  title="Approximate log date (today or earlier)"
+                  className="rounded-md border border-input bg-background px-2 py-1 text-sm"
+                />
+                <span className={cn(
+                  'rounded px-2 py-0.5 text-xs',
+                  aiConnectionStatus === 'connected' && 'bg-green-500/20 text-green-700 dark:text-green-400',
+                  aiConnectionStatus === 'connecting' && 'bg-amber-500/20 text-amber-700 dark:text-amber-400',
+                  aiConnectionStatus === 'disconnected' && 'bg-muted text-muted-foreground'
+                )}>
+                  {aiConnectionStatus === 'connected' ? 'Connected' : aiConnectionStatus === 'connecting' ? 'Connecting…' : 'Disconnected'}
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    Question (must include one of: session ID, scan ID, transaction ID, testcut ID, or date/time — at least the hour)
+                  </span>
+                  <textarea
+                    value={aiQuestion}
+                    onChange={(e) => setAiQuestion(e.target.value)}
+                    placeholder="e.g. Tell me why session_id 8a6a49b0-e430-11f0-b7d2-7bf5f7dc4479 was send to beta instead of prod"
+                    rows={2}
+                    className="rounded-md border border-input bg-background px-3 py-2 text-sm w-full placeholder:text-muted-foreground"
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={!aiSocketRef.current?.connected || aiSessionLoading || !kioskName || !aiApproximateDate.trim() || !aiQuestion.trim()}
+                  onClick={async () => {
+                    setAiSessionError(null);
+                    setAiGetIdsError(null);
+                    setAiMessages([]);
+                    setAiThreadId(null);
+                    setAiIdentifiers([]);
+                    setAiSessionLoading(true);
+                    const question = aiQuestion.trim();
+                    try {
+                      const idsRes = await aiSocketRef.current.request('ai_get_identifiers', { question });
+                      if (!idsRes.success || !idsRes.result?.identifiers?.length) {
+                        setAiGetIdsError(idsRes.error || idsRes.result?.error_message || 'No identifiers extracted. Include a session ID, scan ID, transaction ID, testcut ID, or date and time.');
+                        setAiSessionLoading(false);
+                        return;
+                      }
+                      const identifiers = idsRes.result.identifiers;
+                      setAiIdentifiers(identifiers);
+                      setAiMessages((prev) => [
+                        ...prev,
+                        { role: 'user', text: question },
+                        { role: 'assistant', text: '' },
+                      ]);
+                      const res = await aiSocketRef.current.request(
+                        'ai_log_session',
+                        {
+                          kiosk_name: kioskName,
+                          approximate_date: aiApproximateDate.trim(),
+                          identifiers,
+                          first_question: question,
+                        },
+                        {
+                          onStreamDelta: (delta) => {
+                            setAiMessages((prev) => {
+                              const next = [...prev];
+                              const last = next[next.length - 1];
+                              if (last?.role === 'assistant')
+                                next[next.length - 1] = { ...last, text: last.text + delta };
+                              return next;
+                            });
+                          },
+                        }
+                      );
+                      if (res.success && res.result) {
+                        setAiThreadId(res.result.thread_id);
+                        setAiMessages((prev) => {
+                          const next = [...prev];
+                          const last = next[next.length - 1];
+                          if (last?.role === 'assistant' && last.text === '' && res.result?.result != null)
+                            next[next.length - 1] = { ...last, text: String(res.result.result) };
+                          return next;
+                        });
+                      } else {
+                        setAiSessionError(res.error || 'Session failed');
+                        setAiMessages((prev) => {
+                          const next = [...prev];
+                          if (next.length && next[next.length - 1].role === 'assistant' && next[next.length - 1].text === '')
+                            next[next.length - 1] = { ...next[next.length - 1], text: res?.error || 'Session failed' };
+                          return next;
+                        });
+                      }
+                    } catch (e) {
+                      setAiSessionError(e?.message || 'Failed to start analysis');
+                      setAiMessages((prev) => {
+                        const next = [...prev];
+                        if (next.length && next[next.length - 1].role === 'assistant' && next[next.length - 1].text === '')
+                          next[next.length - 1] = { ...next[next.length - 1], text: `Error: ${e?.message ?? 'Failed'}` };
+                        return next;
+                      });
+                    } finally {
+                      setAiSessionLoading(false);
+                    }
+                  }}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium',
+                    'bg-primary text-primary-foreground hover:bg-primary/90',
+                    'disabled:opacity-50 disabled:pointer-events-none'
+                  )}
+                >
+                  {aiSessionLoading ? <Loader2 className="size-3 animate-spin" /> : null}
+                  Start analysis
+                </button>
+                {(aiGetIdsError || aiSessionError) && (
+                  <p className="text-sm text-destructive" role="alert">{aiGetIdsError || aiSessionError}</p>
+                )}
+                {aiIdentifiers.length > 0 && !aiSessionError && (
+                  <p className="text-sm text-muted-foreground">
+                    Identifiers used: <span className="font-mono">{aiIdentifiers.join(', ')}</span>
+                  </p>
+                )}
+              </div>
+
+              {(aiThreadId || aiMessages.length > 0) && (
+                <div className="space-y-2">
+                  <div
+                    ref={aiChatScrollRef}
+                    className="rounded-md border border-input bg-muted/20 min-h-[200px] max-h-[calc(100vh-280px)] overflow-y-auto p-3 space-y-3 flex flex-col"
+                  >
+                    {aiMessages.map((m, i) => (
+                      <div
+                        key={i}
+                        className={cn(
+                          'rounded px-3 py-2 text-sm shrink-0',
+                          m.role === 'user' ? 'bg-primary/10 text-primary-foreground ml-4' : 'bg-muted/50 mr-4'
+                        )}
+                      >
+                        <span className="font-medium text-xs text-muted-foreground">{m.role === 'user' ? 'You' : 'Assistant'}</span>
+                        <div className="mt-1 whitespace-pre-wrap">
+                          {m.role === 'assistant' && m.text === '' ? (
+                            <span className="inline-flex items-center gap-2 text-muted-foreground">
+                              <Loader2 className="size-4 animate-spin shrink-0" aria-hidden />
+                              Thinking…
+                            </span>
+                          ) : (
+                            m.text
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <form
+                    className="flex gap-2"
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      const input = e.currentTarget.querySelector('input[name="ai-turn-text"]');
+                      const text = (input?.value ?? '').trim();
+                      if (!text || !aiSocketRef.current?.connected || aiTurnLoading || !aiThreadId) return;
+                      input.value = '';
+                      setAiMessages((prev) => [
+                        ...prev,
+                        { role: 'user', text },
+                        { role: 'assistant', text: '' },
+                      ]);
+                      setAiTurnLoading(true);
+                      try {
+                        const res = await aiSocketRef.current.request(
+                          'ai_turn',
+                          { thread_id: aiThreadId, text },
+                          {
+                            onStreamDelta: (delta) => {
+                              setAiMessages((prev) => {
+                                const next = [...prev];
+                                const last = next[next.length - 1];
+                                if (last?.role === 'assistant')
+                                  next[next.length - 1] = { ...last, text: last.text + delta };
+                                return next;
+                              });
+                            },
+                          }
+                        );
+                        if (res.success && res.result != null) {
+                          setAiMessages((prev) => {
+                            const next = [...prev];
+                            const last = next[next.length - 1];
+                            if (last?.role === 'assistant' && last.text === '')
+                              next[next.length - 1] = { ...last, text: String(res.result) };
+                            return next;
+                          });
+                        } else {
+                          setAiMessages((prev) => {
+                            const next = [...prev];
+                            if (next.length && next[next.length - 1].role === 'assistant' && next[next.length - 1].text === '')
+                              next[next.length - 1] = { ...next[next.length - 1], text: '(No response)' };
+                            return next;
+                          });
+                        }
+                      } catch (err) {
+                        setAiMessages((prev) => {
+                          const next = [...prev];
+                          if (next.length && next[next.length - 1].role === 'assistant' && next[next.length - 1].text === '')
+                            next[next.length - 1] = { ...next[next.length - 1], text: `Error: ${err?.message ?? 'Request failed'}` };
+                          return next;
+                        });
+                      } finally {
+                        setAiTurnLoading(false);
+                      }
+                    }}
+                  >
+                    <input
+                      type="text"
+                      name="ai-turn-text"
+                      placeholder="Follow-up question…"
+                      className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      disabled={!aiThreadId || aiTurnLoading}
+                    />
+                    <button
+                      type="submit"
+                      disabled={!aiThreadId || aiTurnLoading}
+                      className={cn(
+                        'shrink-0 inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium',
+                        'bg-primary text-primary-foreground hover:bg-primary/90',
+                        'disabled:opacity-50 disabled:pointer-events-none'
+                      )}
+                    >
+                      {aiTurnLoading ? <Loader2 className="size-4 animate-spin" /> : null}
+                      Send
+                    </button>
+                  </form>
+                </div>
               )}
             </CardContent>
           </Card>

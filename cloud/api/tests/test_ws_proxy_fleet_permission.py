@@ -67,24 +67,33 @@ class TestWsProxyFleetPermissionDenied:
     """When validate_permission returns False, client gets specific error JSON."""
 
     def test_permission_denied_returns_specific_error_without_user(self, client_with_ws_auth):
-        with patch("control_panel.cloud.api.main._get_wss_api_key", return_value="wss-key"):
-            with patch(
-                "control_panel.cloud.api.main.websockets.connect",
-                return_value=MockDeviceACM(),
-            ):
+        backend_return = (
+            "wss://ns9999.keymekiosk.com:1/ws",
+            "ns9999.keymekiosk.com",
+            "NS9999",
+            None,
+            False,
+            None,
+        )
+        with patch("control_panel.cloud.api.main._device_ws_backend", return_value=backend_return):
+            with patch("control_panel.cloud.api.main._get_wss_api_key", return_value="wss-key"):
                 with patch(
-                    "control_panel.cloud.api.main.validate_permission_async",
-                    side_effect=_mock_permission_denied,
+                    "control_panel.cloud.api.main.websockets.connect",
+                    return_value=MockDeviceACM(),
                 ):
-                    with client_with_ws_auth.websocket_connect(
-                        "/ws?device=ns9999&token=any"
-                    ) as ws:
-                        ws.send_text(json.dumps({
-                            "id": "req-1",
-                            "event": "fleet_reboot_kiosk",
-                            "data": {},
-                        }))
-                        msg = ws.receive()
+                    with patch(
+                        "control_panel.cloud.api.main.validate_permission_async",
+                        side_effect=_mock_permission_denied,
+                    ):
+                        with client_with_ws_auth.websocket_connect("/ws") as ws:
+                            ws.send_text(json.dumps({"event": "auth", "token": "any", "device": "ns9999"}))
+                            ws.receive()  # auth_ok
+                            ws.send_text(json.dumps({
+                                "id": "req-1",
+                                "event": "fleet_reboot_kiosk",
+                                "data": {},
+                            }))
+                            msg = ws.receive()
         assert msg.get("type") == "websocket.send"
         text = msg.get("text", "")
         data = json.loads(text)
@@ -97,24 +106,33 @@ class TestWsProxyFleetPermissionDenied:
         assert "'reboot_kiosk'" in errors[0] or "reboot_kiosk" in errors[0]
 
     def test_permission_denied_includes_user_when_available(self, client_with_ws_auth):
-        with patch("control_panel.cloud.api.main._get_wss_api_key", return_value="wss-key"):
-            with patch(
-                "control_panel.cloud.api.main.websockets.connect",
-                return_value=MockDeviceACM(),
-            ):
+        backend_return = (
+            "wss://ns9999.keymekiosk.com:1/ws",
+            "ns9999.keymekiosk.com",
+            "NS9999",
+            None,
+            False,
+            None,
+        )
+        with patch("control_panel.cloud.api.main._device_ws_backend", return_value=backend_return):
+            with patch("control_panel.cloud.api.main._get_wss_api_key", return_value="wss-key"):
                 with patch(
-                    "control_panel.cloud.api.main.validate_permission_async",
-                    side_effect=_mock_permission_denied_with_user,
+                    "control_panel.cloud.api.main.websockets.connect",
+                    return_value=MockDeviceACM(),
                 ):
-                    with client_with_ws_auth.websocket_connect(
-                        "/ws?device=ns9999&token=any"
-                    ) as ws:
-                        ws.send_text(json.dumps({
-                            "id": "req-2",
-                            "event": "fleet_reboot_kiosk",
-                            "data": {},
-                        }))
-                        msg = ws.receive()
+                    with patch(
+                        "control_panel.cloud.api.main.validate_permission_async",
+                        side_effect=_mock_permission_denied_with_user,
+                    ):
+                        with client_with_ws_auth.websocket_connect("/ws") as ws:
+                            ws.send_text(json.dumps({"event": "auth", "token": "any", "device": "ns9999"}))
+                            ws.receive()  # auth_ok
+                            ws.send_text(json.dumps({
+                                "id": "req-2",
+                                "event": "fleet_reboot_kiosk",
+                                "data": {},
+                            }))
+                            msg = ws.receive()
         assert msg.get("type") == "websocket.send"
         data = json.loads(msg.get("text", "{}"))
         assert data.get("success") is False
@@ -139,26 +157,35 @@ class TestWsProxyFleetPermissionGranted:
             async def __aexit__(self, *a):
                 return None
 
-        with patch("control_panel.cloud.api.main._get_wss_api_key", return_value="wss-key"):
-            with patch(
-                "control_panel.cloud.api.main.websockets.connect",
-                return_value=CapturingACM(),
-            ):
+        backend_return = (
+            "wss://ns9999.keymekiosk.com:1/ws",
+            "ns9999.keymekiosk.com",
+            "NS9999",
+            None,
+            False,
+            None,
+        )
+        with patch("control_panel.cloud.api.main._device_ws_backend", return_value=backend_return):
+            with patch("control_panel.cloud.api.main._get_wss_api_key", return_value="wss-key"):
                 with patch(
-                    "control_panel.cloud.api.main.validate_permission_async",
-                    side_effect=_mock_permission_granted,
+                    "control_panel.cloud.api.main.websockets.connect",
+                    return_value=CapturingACM(),
                 ):
-                    with client_with_ws_auth.websocket_connect(
-                        "/ws?device=ns9999&token=any"
-                    ) as ws:
-                        payload = {
-                            "id": "req-3",
-                            "event": "fleet_reboot_kiosk",
-                            "data": {},
-                        }
-                        ws.send_text(json.dumps(payload))
-                        import time
-                        time.sleep(0.2)
+                    with patch(
+                        "control_panel.cloud.api.main.validate_permission_async",
+                        side_effect=_mock_permission_granted,
+                    ):
+                        with client_with_ws_auth.websocket_connect("/ws") as ws:
+                            ws.send_text(json.dumps({"event": "auth", "token": "any", "device": "ns9999"}))
+                            ws.receive()  # auth_ok
+                            payload = {
+                                "id": "req-3",
+                                "event": "fleet_reboot_kiosk",
+                                "data": {},
+                            }
+                            ws.send_text(json.dumps(payload))
+                            import time
+                            time.sleep(0.2)
         assert len(captured_ws) == 1
         assert len(captured_ws[0].sent) == 1
         forwarded = json.loads(captured_ws[0].sent[0])

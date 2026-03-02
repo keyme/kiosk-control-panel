@@ -67,3 +67,4 @@ dist/
 # Project specific
 *.log
 *.tmp
+cloud/codex_docs

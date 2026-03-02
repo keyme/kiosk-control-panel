@@ -64,8 +64,21 @@ class TestGetWssApiKey:
         assert result is None
 
 
+def _backend_return():
+    """Fake _device_ws_backend result so proxy reaches WSS key / websockets.connect."""
+    return (
+        "wss://ns9999.keymekiosk.com:1/ws",
+        "ns9999.keymekiosk.com",
+        "NS9999",
+        None,
+        False,
+        None,
+    )
+
+
 class TestWsProxyWssKey:
-    """ws_proxy: closes with 4500 when key missing; sends Authorization header when key present."""
+    """ws_proxy: closes with 4500 when key missing; sends Authorization header when key present.
+    Auth via first message: { event: 'auth', token, device } (no token in URL)."""
 
     @pytest.fixture
     def client_with_ws_auth(self):
@@ -85,11 +98,12 @@ class TestWsProxyWssKey:
         }
 
     def test_proxy_closes_4500_when_wss_key_missing(self, client_with_ws_auth):
-        with patch("control_panel.cloud.api.main._get_wss_api_key", return_value=None):
-            with client_with_ws_auth.websocket_connect(
-                "/ws?device=ns9999&token=any"
-            ) as ws:
-                msg = ws.receive()
+        with patch("control_panel.cloud.api.main._device_ws_backend", return_value=_backend_return()):
+            with patch("control_panel.cloud.api.main._get_wss_api_key", return_value=None):
+                with client_with_ws_auth.websocket_connect("/ws") as ws:
+                    ws.send_text(json.dumps({"event": "auth", "token": "any", "device": "ns9999"}))
+                    ws.receive()  # auth_ok
+                    msg = ws.receive()
         assert msg.get("type") == "websocket.close"
         assert msg.get("code") == 4500
         assert "server config" in (msg.get("reason") or "")
@@ -113,19 +127,20 @@ class TestWsProxyWssKey:
         def capture_connect(*args, **kwargs):
             return RaisingACM(kwargs)
 
-        with patch("control_panel.cloud.api.main._get_wss_api_key", return_value="test-key-789"):
-            with patch(
-                "control_panel.cloud.api.main.websockets.connect",
-                side_effect=capture_connect,
-            ):
-                try:
-                    with client_with_ws_auth.websocket_connect(
-                        "/ws?device=ns9999&token=any"
-                    ) as ws:
-                        while True:
-                            msg = ws.receive()
-                            if msg.get("type") == "websocket.close":
-                                break
-                except Exception:
-                    pass
+        with patch("control_panel.cloud.api.main._device_ws_backend", return_value=_backend_return()):
+            with patch("control_panel.cloud.api.main._get_wss_api_key", return_value="test-key-789"):
+                with patch(
+                    "control_panel.cloud.api.main.websockets.connect",
+                    side_effect=capture_connect,
+                ):
+                    try:
+                        with client_with_ws_auth.websocket_connect("/ws") as ws:
+                            ws.send_text(json.dumps({"event": "auth", "token": "any", "device": "ns9999"}))
+                            ws.receive()  # auth_ok
+                            while True:
+                                msg = ws.receive()
+                                if msg.get("type") == "websocket.close":
+                                    break
+                    except Exception:
+                        pass
         assert connect_kwargs.get("additional_headers", {}).get("Authorization") == "Bearer test-key-789"
