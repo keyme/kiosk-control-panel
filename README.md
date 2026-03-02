@@ -5,7 +5,7 @@ React UI and Python backend. **Cloud** serves the app and REST API and proxies W
 ## Architecture
 
 - **Browser** → Cloud only (REST, static, WebSocket).
-- **Cloud** (FastAPI) → Proxies `/ws?device=...` to the chosen device over WSS (TLS).
+- **Cloud** (FastAPI) → Proxies `/ws` to the chosen device over WSS (TLS). Auth via first message: `{ "event": "auth", "token", "device" }`.
 - **Device** (`python/main.py`) → WebSocket on `/ws` (WSS), ZeroMQ to kiosk stack.
 
 | Part        | Location        | Role |
@@ -42,7 +42,21 @@ cd control_panel
 DOCKER_BUILDKIT=1 docker build --ssh default -f cloud/Dockerfile -t control-panel-cloud .
 ```
 
-Run (AWS credentials and Codex key required for device certs and log analysis):
+**Running without AI (no log analysis):** Set `NO_AI=1` (or any non-empty value) to skip Codex. The container will start and the control panel works; the AI log analysis feature (Device logs → /ai) will be disabled. You do not need to set `OPENAI_API_KEY` in this case.
+
+Example:
+
+```bash
+docker run -p 8080:8080 \
+  -v ~/.aws:/home/appuser/.aws:ro -e HOME=/home/appuser \
+  -e API_ENV=stg \
+  -e NO_AI=1 \
+  control-panel-cloud
+```
+
+**Running with AI (log analysis):** Do not set `NO_AI`. You must set `OPENAI_API_KEY`; the entrypoint will run `codex login` and start the Codex app-server. If `OPENAI_API_KEY` is not set, the entrypoint exits with an error.
+
+Example:
 
 ```bash
 docker run -p 8080:8080 \
@@ -53,7 +67,7 @@ docker run -p 8080:8080 \
 ```
 
 - **AWS credentials:** Needed for S3 (device certs) and other AWS APIs. Mount `~/.aws` as above, or set `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_DEFAULT_REGION`, or use IAM (ECS/EKS/EC2).
-- **Log analysis (Codex):** Set `OPENAI_API_KEY` so the entrypoint can run `codex login`. Required for the log-analysis feature.
+- **Log analysis (Codex):** By default the container requires `OPENAI_API_KEY` and will exit if it is missing. Set `NO_AI=1` to run without AI (no key required); then `/ai` is disabled.
 - **Scale:** For many WS connections use e.g. `--ulimit nofile=200000:200000`. `GET /health` reports limits and warnings.
 
 ## Testing

@@ -23,6 +23,7 @@ export function createAiSocket() {
   let nextId = 1;
   const pending = new Map();
   let ws = null;
+  let authenticated = false;
   let onConnectCb = null;
   let onDisconnectCb = null;
 
@@ -34,7 +35,11 @@ export function createAiSocket() {
 
   function handleMessage(msg) {
     if (msg == null || typeof msg !== 'object') return;
-    if (msg.event === 'auth_ok') return;
+    if (msg.event === 'auth_ok') {
+      authenticated = true;
+      if (onConnectCb) onConnectCb();
+      return;
+    }
     const id = msg.id;
     if (id === undefined || id === null) return;
     const entry = pending.get(id);
@@ -57,7 +62,6 @@ export function createAiSocket() {
     ws = new WebSocket(url);
     ws.onopen = () => {
       sendMessage({ event: 'auth', token: getToken() || '' });
-      if (onConnectCb) onConnectCb();
     };
     ws.onmessage = (ev) => {
       try {
@@ -69,6 +73,7 @@ export function createAiSocket() {
     };
     ws.onclose = () => {
       ws = null;
+      authenticated = false;
       pending.forEach((entry) => entry.reject(new Error('Connection closed')));
       pending.clear();
       if (onDisconnectCb) onDisconnectCb();
@@ -78,7 +83,7 @@ export function createAiSocket() {
 
   const socket = {
     get connected() {
-      return ws != null && ws.readyState === WebSocket.OPEN;
+      return authenticated;
     },
 
     connect() {
@@ -89,6 +94,7 @@ export function createAiSocket() {
       if (ws) {
         ws.close();
         ws = null;
+        authenticated = false;
       }
     },
 

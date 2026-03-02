@@ -718,7 +718,10 @@ def get_log_around_datetime(data, client_id, send_callback):
         return {'success': False, 'errors': ['Missing central_datetime']}
     central_ts = _parse_datetime(central_raw)
     if central_ts is None:
-        return {'success': False, 'errors': ['Invalid central_datetime; use YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS']}
+        return {
+            'success': False,
+            'errors': ['Invalid central_datetime; use YYYY-MM-DD, YYYY-MM-DDTHH:MM, or YYYY-MM-DDTHH:MM:SS'],
+        }
     central_str = central_ts.strftime('%Y-%m-%dT%H:%M:%S')
     central_date = central_ts.date()
 

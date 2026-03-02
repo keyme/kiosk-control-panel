@@ -1026,7 +1026,7 @@ def search_log(data):
 
 
 def get_log_around_datetime(client_id, data, send_callback):
-    """Return last N lines before and first M lines after central_datetime. Synchronous response with lines array."""
+    """Stream last N lines before and first M lines after central_datetime. Streams batches via send_callback / PUSH_LOG_AROUND_* and returns { success, data: { started, stream_id } } or { success: False, errors }."""
     keyme.log.info("WS: requesting get_log_around_datetime")
     return _log_tail_module.get_log_around_datetime(data or {}, client_id, send_callback)
 
