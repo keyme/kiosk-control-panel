@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, NavLink, useNavigate } from 'react-router-dom';
-import { Activity, Camera, Crop, Flag, Heart, MapPin, Radio, Wrench, ChevronDown, ChevronRight, FileText, Video, Search, BarChart3, ScrollText, Package } from 'lucide-react';
+import { Activity, Camera, Crop, Flag, Heart, MapPin, Radio, Wrench, ChevronDown, ChevronRight, FileText, Video, Search, BarChart3, ScrollText, Package, PanelLeftClose } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { CALIBRATION_REPORT_SECTIONS, formatSectionLabel } from '@/pages/calibrationReportSections';
 
@@ -65,7 +65,7 @@ function filterPages(pages, query) {
   return pages.filter((p) => p.label.toLowerCase().includes(q) || p.path.toLowerCase().includes(q));
 }
 
-export function AppSidebar({ panelInfo }) {
+export function AppSidebar({ panelInfo, onCollapse }) {
   const location = useLocation();
   const navigate = useNavigate();
   const pathSegments = location.pathname.split('/').filter(Boolean);
@@ -378,6 +378,19 @@ export function AppSidebar({ panelInfo }) {
           Device logs
         </NavLink>
       </div>
+      {onCollapse && (
+        <div className="shrink-0 border-t border-sidebar-border px-2 py-1.5">
+          <button
+            type="button"
+            onClick={onCollapse}
+            className="flex w-full items-center justify-center gap-1.5 rounded-md py-1.5 text-xs text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-sidebar"
+            aria-label="Hide sidebar"
+          >
+            <PanelLeftClose className="size-4 shrink-0" aria-hidden />
+            <span>Hide sidebar</span>
+          </button>
+        </div>
+      )}
       <div className="shrink-0 border-t border-sidebar-border">
         <StoreInfo store={panelInfo} />
       </div>
