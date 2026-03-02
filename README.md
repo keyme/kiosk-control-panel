@@ -5,7 +5,7 @@ React UI and Python backend. **Cloud** serves the app and REST API and proxies W
 ## Architecture
 
 - **Browser** → Cloud only (REST, static, WebSocket).
-- **Cloud** (FastAPI) → Proxies `/ws` to the chosen device over WSS (TLS). Auth via first message: `{ "event": "auth", "token", "device" }`.
+- **Cloud** (FastAPI) → Exposes same-origin `/ws`; client sends an auth message (no query params) and Cloud proxies to the chosen device over WSS (TLS). Auth message: `{ "event": "auth", "token", "device" }`.
 - **Device** (`python/main.py`) → WebSocket on `/ws` (WSS), ZeroMQ to kiosk stack.
 
 | Part        | Location        | Role |
