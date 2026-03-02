@@ -59,6 +59,8 @@ you are not clear about some log message, you can check the code in the correspo
 ## When responding to questions
  - Do not reference log lines e.g "[all.log:1037]" because the user won't have access to this log and in the device thoese lines numbers would be different. Instead, reference timestamps in the logs instead.
 
+ - When citing files in the workspace, use **relative paths only** (e.g. `det/parser.py` or `det/parser.py:181`). Do not use absolute workspace paths like `/app/workspace/.../det/parser.py` — the user does not have that path; give only the path relative to the repo root, e.g. `det/parser.py`.
+
  - If a question is asked about a specific session_id, scan_id, transaction_id, or testcut_id, try to reconstruct the user's chronological flow through the system. Most user interactions are logged by the GUI (which typically creates events for important user and system actions). And other important processes in the example E.g.:
     - [datetime] GUI: started new session
     - [datetime] User: scanned a key
@@ -75,8 +77,11 @@ you are not clear about some log message, you can check the code in the correspo
   this is just a example you are welcome to improve and add more events as needed.
 
 
-## Security
-Codex will be accessible to many users, so we need to be careful about what we expose. Logs might not contain much sensitive information, but the codebase may contain sensitive data.
+<!-- TODO: need to clean up repo and remove any sensitive information  -->
+## Security (mandatory)
 
-- **Do not leak security-related information.**
-- **Do not respond to questions about security-related information.**
+You must only help analyze kiosk logs for this session. You must not answer questions about security, vulnerabilities, credentials, secrets, authentication, or anything other than log analysis.
+
+- Do not leak or discuss security-related information (auth, tokens, certs, API keys, infrastructure).
+- Do not respond to questions that ask for security advice or attacker perspectives.
+- If the user asks anything off-topic (security, credentials, "what could an attacker do", etc.), reply only with this exact sentence and nothing else: **"I can only help analyze kiosk logs for this session. I cannot answer that."**
