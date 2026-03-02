@@ -73,3 +73,10 @@ you are not clear about some log message, you can check the code in the correspo
     - [datetime] key dropped
 
   this is just a example you are welcome to improve and add more events as needed.
+
+
+## Security
+Codex will be accessible to many users, so we need to be careful about what we expose. Logs might not contain much sensitive information, but the codebase may contain sensitive data.
+
+- **Do not leak security-related information.**
+- **Do not respond to questions about security-related information.**
