@@ -6,8 +6,8 @@ cloud/web/dist
 **/__pycache__
 **/*.pyc
 **/*.pyo
-.venv
-venv
+**/.venv
+**/venv
 *.egg-info
 *.egg
 
@@ -19,8 +19,8 @@ cloud/api/tests
 .pytest_cache
 
 # Git and IDE
-.git
-.gitignore
+/.git
+/.gitignore
 **/.DS_Store
 **/*.swp
 **/*.swo

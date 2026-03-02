@@ -18,31 +18,19 @@ export const UNSUPPORTED_FEATURE_MESSAGE =
 Please update the kiosk to enable it.`;
 
 /**
- * Build WebSocket URL for device. Same-origin /ws (cloud proxy or Vite dev proxy).
- * When deviceHost is set, add ?device=... so the cloud proxy can connect to that device.
- * When a KeyMe token is present (cloud auth), add &token=... so the cloud validates before proxying.
+ * Build WebSocket URL for device. Same-origin /ws, no query params (auth sent in first message).
  */
-export function buildWsUrl(deviceHost) {
+export function buildWsUrl() {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const base = `${proto}//${window.location.host}${WS_PATH}`;
-  const host = (deviceHost || '').trim();
-  const params = new URLSearchParams();
-  if (host) {
-    const hostOnly = host.replace(/^(https?:\/\/)?([^/]+).*$/i, '$2');
-    params.set('device', hostOnly);
-  }
-  const token = getToken();
-  if (token) {
-    params.set('token', token);
-  }
-  const qs = params.toString();
-  return qs ? `${base}?${qs}` : base;
+  return `${proto}//${window.location.host}${WS_PATH}`;
 }
 
 /**
  * Create a device socket instance that connects to wsUrl and provides request() and on/off.
+ * deviceHost: device identifier sent in auth message (required for cloud proxy).
  */
-export function createDeviceSocket(wsUrl) {
+export function createDeviceSocket(wsUrl, deviceHost) {
+  const device = (deviceHost || '').trim() ? String(deviceHost).replace(/^(https?:\/\/)?([^/]+).*$/i, '$2').trim() : '';
   let nextId = 1;
   const pending = new Map();
   const listeners = new Map();
@@ -83,6 +71,7 @@ export function createDeviceSocket(wsUrl) {
     }
     const event = msg && msg.event != null ? String(msg.event).trim() : undefined;
     if (!event) return;
+    if (event === 'auth_ok') return;
     if (event === 'hello') {
       helloReceived = true;
       const data = msg && msg.data != null ? msg.data : {};
@@ -136,7 +125,9 @@ export function createDeviceSocket(wsUrl) {
     protocolVersion = null;
     capabilities = new Set();
     ws = new WebSocket(wsUrl);
-    ws.onopen = () => {};
+    ws.onopen = () => {
+      sendMessage({ event: 'auth', token: getToken() || '', device });
+    };
     ws.onmessage = (ev) => {
       const raw = ev.data;
       const msg = parseMessage(raw);

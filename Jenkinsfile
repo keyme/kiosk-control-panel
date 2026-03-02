@@ -129,6 +129,50 @@ pipeline {
       }
     }
 
+    stage('Clone kiosk repo (build context)') {
+      steps {
+        script {
+          dir(base_context) {
+            withCredentials([sshUserPrivateKey(credentialsId: 'github-credentials', keyFileVariable: 'ID_RSA_PATH', passphraseVariable: '', usernameVariable: 'USERNAME')]) {
+              sh '''
+                set -e
+                rm -rf kiosk_repo
+                eval `ssh-agent -s`
+                ssh-add $ID_RSA_PATH
+                export GIT_SSH_COMMAND="ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+                git clone --recurse-submodules --shallow-submodules --depth 1 git@github.com:keyme/kiosk.git kiosk_repo
+
+                # Shrink repo before re-init: drop images and heavy/unneeded dirs for log-analysis context.
+                cd kiosk_repo
+                find . -type f \\( -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' -o -name '*.gif' -o -name '*.webp' -o -name '*.ico' -o -name '*.bmp' \\) -delete
+                rm -rf gui5/node
+                rm -f security_camera/sec_cam_rectification_map.npy
+                rm -rf tests
+                rm -rf control_board/firmware/libfixmath control_board/firmware_lite/libfixmath
+
+                # Delete any remaining binary files (keep only text/source).
+                find . -type f -exec sh -c '
+                  m=$(file -b --mime-type "$1")
+                  case "$m" in
+                    text/*|application/json|application/xml|application/javascript|application/x-python|application/x-sh|application/x-empty|inode/x-empty) ;;
+                    *) rm -f "$1" ;;
+                  esac
+                ' _ {} \\;
+
+                # Re-init kiosk_repo to drop remote history and keep a single local snapshot commit.
+                rm -rf .git
+                git init
+                git config user.name keymedev
+                git config user.email keymedev@key.me
+                git add .
+                git commit -m "snapshot for control-panel log analysis" --no-gpg-sign
+              '''
+            }
+          }
+        }
+      }
+    }
+
     stage('Build Container') {
       steps {
         script {

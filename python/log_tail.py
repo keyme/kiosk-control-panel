@@ -4,10 +4,11 @@
 
 import glob
 import os
+import re
 import subprocess
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pylib as keyme
 
@@ -40,6 +41,15 @@ _LOG_FILTER_SCRIPT = 'log_filter.awk'
 
 _client_tails = {}
 _tails_lock = threading.Lock()
+
+
+# CPU-heavy external commands run with nice so kiosk use is not impacted.
+# TODO: think about activating this only when kiosk is in use
+_NICE_LEVEL = '19'
+
+def _nice_cmd(cmd):
+    """Prepend nice -n 19 to a command list for low CPU priority."""
+    return ['nice', '-n', _NICE_LEVEL] + list(cmd)
 
 
 # -----------------------------------------------------------------------------
@@ -141,15 +151,19 @@ def _read_tail_n(path, n):
     """Return last n lines from path (tail -n)."""
     n = max(1, min(n, _INITIAL_LINES_MAX))
     try:
+        cmd = _nice_cmd(['tail', '-n', str(n), path])
+        keyme.log.info(f"log_tail external_cmd={' '.join(cmd)!r}")
         r = subprocess.run(
-            ['tail', '-n', str(n), path],
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             universal_newlines=True,
             timeout=10,
         )
         if r.returncode == 0 and r.stdout:
-            return r.stdout.rstrip('\n').split('\n')
+            lines = r.stdout.rstrip('\n').split('\n')
+            keyme.log.info(f"log_tail tail -n result lines={len(lines)} bytes={len(r.stdout)} path={path!r}")
+            return lines
         return []
     except (subprocess.TimeoutExpired, OSError, ValueError) as e:
         keyme.log.warning(f"log_tail tail -n failed path={path}: {e}")
@@ -159,8 +173,10 @@ def _read_tail_n(path, n):
 def _tail_follow_thread(client_id, path, send_callback, push_event, is_all_log):
     """Background: tail -f path, push lines until stop_event is set. Rate-limit for all.log."""
     try:
+        cmd = _nice_cmd(['tail', '-f', path])
+        keyme.log.info(f"log_tail external_cmd={' '.join(cmd)!r}")
         proc = subprocess.Popen(
-            ['tail', '-f', path],
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             universal_newlines=True,
@@ -330,13 +346,15 @@ def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_r
         reader = None
         awk_proc = None
         try:
+            reader_cmd = _nice_cmd(['zcat', filepath] if is_gz else ['cat', filepath])
+            awk_args = _nice_cmd(['awk', '-v', f'start={start_ts}', '-v', f'end={end_ts}', '-v', f'procs={procs_str}', awk_script])
+            keyme.log.info(f"log_tail get_log_range external_cmd_reader={' '.join(reader_cmd)!r} awk_args_count={len(awk_args)} file={filepath!r}")
             reader = subprocess.Popen(
-                ['zcat', filepath] if is_gz else ['cat', filepath],
+                reader_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
             )
-            awk_args = ['awk', '-v', f'start={start_ts}', '-v', f'end={end_ts}', '-v', f'procs={procs_str}', awk_script]
             awk_proc = subprocess.Popen(
                 awk_args,
                 stdin=reader.stdout,
@@ -393,6 +411,338 @@ def _get_log_range_stream_thread(client_id, send_callback, stream_id, files_to_r
 
     send_done(truncated)
     keyme.log.info(f"log_tail get_log_range done stream_id={stream_id!r} emitted={total_emitted} truncated={truncated}")
+
+
+# -----------------------------------------------------------------------------
+# AI log analysis: search_log + get_log_around_datetime (all.log only)
+# -----------------------------------------------------------------------------
+
+_SEARCH_LOG_MAX_DAYS = 4
+_SEARCH_LOG_TIMEOUT_SEC = 120  # Keep in sync with cloud device_log_client.SEARCH_LOG_TIMEOUT
+_LINES_BEFORE_CAP = 2000
+_LINES_AFTER_CAP = 20000
+_LOG_AROUND_CHUNK_SIZE = 8192
+_GREP_FIRST_MATCH = ['-a', '-m', '1']  # treat as text, stop at first match
+
+# Leading chars to strip from grep -a lines (binary/control); keep \t\n\r and space for .strip()
+_LEADING_BINARY_CHARS = ''.join(
+    chr(i) for i in list(range(9)) + list(range(11, 13)) + list(range(14, 32)) + [127]
+)
+
+
+def _extract_timestamp_from_log_line(line):
+    """First field (ISO8601) from log line, or None if not parseable."""
+    if not line or not isinstance(line, str):
+        return None
+    # Strip leading binary/control junk so grep -a lines still parse; then strip whitespace
+    line = line.lstrip(_LEADING_BINARY_CHARS).replace('\x00', '').strip()
+    if not line:
+        return None
+    parts = line.split(None, 1)
+    first = parts[0] if parts else None
+    if not first or len(first) < 10 or not first[:4].isdigit():
+        return None
+    return first
+
+
+def _resolve_search_date_range(data):
+    """Parse date_hint_* from data. Returns (start_dt, end_dt) or (None, None, error_response)."""
+    hint_start = data.get('date_hint_start') or data.get('date_hint_end')
+    hint_end = data.get('date_hint_end') or data.get('date_hint_start')
+    if hint_start and hint_end:
+        start_dt, end_dt, _s, _e, err = _parse_range_datetime(
+            {'start_datetime': hint_start, 'end_datetime': hint_end},
+            max_days=_SEARCH_LOG_MAX_DAYS,
+        )
+        if err is not None:
+            return None, None, err
+        return start_dt, end_dt, None
+    if hint_start or hint_end:
+        dt_parsed = _parse_datetime(hint_start or hint_end)
+        if dt_parsed is None:
+            return None, None, {'success': False, 'errors': ['Invalid date_hint; use YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS']}
+        d = dt_parsed.date()
+        return d, d, None
+    end_dt = datetime.utcnow().date()
+    return end_dt - timedelta(days=2), end_dt, None
+
+
+def _run_grep_first_match(filepath, is_gz, query, timeout_sec):
+    """Run zcat|grep or grep -F for first match. Returns first line of stdout or None."""
+    reader = None
+    grep_proc = None
+    try:
+        if is_gz:
+            reader = subprocess.Popen(
+                _nice_cmd(['zcat', filepath]),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True,
+            )
+            grep_proc = subprocess.Popen(
+                _nice_cmd(['grep'] + _GREP_FIRST_MATCH + ['-F', query]),
+                stdin=reader.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True,
+            )
+            reader.stdout.close()
+        else:
+            grep_proc = subprocess.Popen(
+                _nice_cmd(['grep'] + _GREP_FIRST_MATCH + ['-F', query, filepath]),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True,
+            )
+        out, _ = grep_proc.communicate(timeout=timeout_sec)
+        if out:
+            line = out.strip().split('\n')[0]
+            keyme.log.info(f"log_tail search_log result path={filepath!r} bytes={len(out)}")
+            return line.strip()
+        return None
+    except subprocess.TimeoutExpired:
+        return None
+    except (OSError, ValueError) as e:
+        keyme.log.warning(f"log_tail search_log path={filepath!r}: {e}")
+        return None
+    finally:
+        _terminate_and_wait(grep_proc)
+        _terminate_and_wait(reader)
+
+
+def _run_grep_first_match_regex(filepath, is_gz, pattern, timeout_sec):
+    """Run zcat|grep or grep -E for first match. Returns first line of stdout or None."""
+    reader = None
+    grep_proc = None
+    try:
+        if is_gz:
+            reader = subprocess.Popen(
+                _nice_cmd(['zcat', filepath]),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True,
+            )
+            grep_proc = subprocess.Popen(
+                _nice_cmd(['grep'] + _GREP_FIRST_MATCH + ['-E', pattern]),
+                stdin=reader.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True,
+            )
+            reader.stdout.close()
+        else:
+            grep_proc = subprocess.Popen(
+                _nice_cmd(['grep'] + _GREP_FIRST_MATCH + ['-E', pattern, filepath]),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True,
+            )
+        out, _ = grep_proc.communicate(timeout=timeout_sec)
+        if out:
+            line = out.strip().split('\n')[0]
+            keyme.log.info(f"log_tail search_log result path={filepath!r} bytes={len(out)}")
+            return line.strip()
+        return None
+    except subprocess.TimeoutExpired:
+        return None
+    except (OSError, ValueError) as e:
+        keyme.log.warning(f"log_tail search_log path={filepath!r}: {e}")
+        return None
+    finally:
+        _terminate_and_wait(grep_proc)
+        _terminate_and_wait(reader)
+
+
+def search_log(data):
+    """Find exact datetime when query or queries appear in log. data: log_id, query or queries, date_hint_*."""
+    data = data or {}
+    keyme.log.info(
+        f"log_tail search_log request log_id={data.get('log_id')!r} query={data.get('query')!r} \
+            queries={data.get('queries')!r} date_hint_start={data.get('date_hint_start')!r} \
+                date_hint_end={data.get('date_hint_end')!r}"
+    )
+    _, allowlist = _build_log_list()
+    log_id = (data.get('log_id') or 'all').strip()
+    if log_id != 'all' or log_id not in allowlist:
+        keyme.log.warning(f"log_tail search_log rejected log_id={log_id!r} allowlist={allowlist}")
+        return {'success': False, 'errors': ['search_log only supports log_id "all"']}
+    # Prefer queries (list); fall back to single query
+    queries_raw = data.get('queries')
+    query = (data.get('query') or '').strip()
+    if queries_raw is not None:
+        queries = [str(q).strip() for q in queries_raw if q is not None and str(q).strip()]
+    else:
+        queries = [query] if query else []
+    if not queries:
+        keyme.log.warning("log_tail search_log missing query/queries")
+        return {'success': False, 'errors': ['Missing query or queries']}
+
+    start_dt, end_dt, err = _resolve_search_date_range(data)
+    if err is not None:
+        keyme.log.warning(f"log_tail search_log date range error: {err}")
+        return err
+    keyme.log.info(f"log_tail search_log date range start_dt={start_dt} end_dt={end_dt}")
+
+    log_dir = os.path.dirname(_ALL_LOG_PATH)
+    files_to_read = _log_files_for_range(log_dir, 'all.log', start_dt, end_dt)
+    if not files_to_read:
+        keyme.log.warning(f"log_tail search_log no log files for range log_dir={log_dir!r} start={start_dt} end={end_dt}")
+        return {'success': False, 'errors': ['No log files found for the selected range']}
+    keyme.log.info(
+        f"log_tail search_log files_to_read={[(d, fp, gz) for d, fp, gz in files_to_read]} (count={len(files_to_read)})"
+    )
+
+    use_regex = len(queries) > 1
+    pattern = '|'.join(re.escape(q) for q in queries) if use_regex else None
+    single_query = queries[0] if queries else ''
+    _pattern_str = (pattern[:80] + '...') if pattern and len(pattern) > 80 else pattern
+    _query_str = (single_query[:80] + '...') if single_query and len(single_query) > 80 else single_query
+    keyme.log.info(
+        f"log_tail search_log use_regex={use_regex} queries_count={len(queries)} \
+            pattern={_pattern_str!r} single_query={_query_str!r}"
+    )
+
+    start_time = time.time()
+    for idx, (_day, filepath, is_gz) in enumerate(files_to_read):
+        if time.time() - start_time > _SEARCH_LOG_TIMEOUT_SEC:
+            keyme.log.warning(f"log_tail search_log timeout after {idx} files")
+            return {'success': False, 'errors': ['Search timed out']}
+        timeout_remaining = max(1, _SEARCH_LOG_TIMEOUT_SEC - int(time.time() - start_time))
+        keyme.log.info(f"log_tail search_log trying file {idx + 1}/{len(files_to_read)} \
+            path={filepath!r} is_gz={is_gz}")
+        line = (
+            _run_grep_first_match_regex(filepath, is_gz, pattern, timeout_remaining)
+            if use_regex
+            else _run_grep_first_match(filepath, is_gz, single_query, timeout_remaining)
+        )
+        if line:
+            line_clean = line.lstrip(_LEADING_BINARY_CHARS).replace('\x00', '').strip()
+            ts = _extract_timestamp_from_log_line(line_clean)
+            if ts:
+                keyme.log.info(f"log_tail search_log found datetime={ts} in file={filepath!r}")
+                return {'success': True, 'data': {'datetime': ts, 'line': line_clean}}
+            keyme.log.debug(f"log_tail search_log match had no valid timestamp, continuing: {line!r}")
+        else:
+            keyme.log.debug(f"log_tail search_log no match in file={filepath!r}")
+
+    keyme.log.warning(
+        f"log_tail search_log not found after searching {len(files_to_read)} files \
+            queries={queries} start_dt={start_dt} end_dt={end_dt}"
+    )
+    return {'success': False, 'errors': ['Query not found in logs for the selected range']}
+
+
+def _stream_grep_context_around(filepath, is_gz, lines_before, lines_after, pattern, chunk_size, on_chunk):
+    """Run grep -B -A on file (zcat|grep or grep), stream stdout via on_chunk(chunk). Returns total_bytes or 0 on failure."""
+    reader = None
+    grep_proc = None
+    try:
+        grep_args = _GREP_FIRST_MATCH + ['-B', str(lines_before), '-A', str(lines_after), '-E', pattern]
+        if is_gz:
+            reader = subprocess.Popen(
+                _nice_cmd(['zcat', filepath]),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True,
+            )
+            grep_proc = subprocess.Popen(
+                _nice_cmd(['grep'] + grep_args),
+                stdin=reader.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True,
+            )
+            reader.stdout.close()
+        else:
+            grep_proc = subprocess.Popen(
+                _nice_cmd(['grep'] + grep_args + [filepath]),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True,
+            )
+        total = 0
+        while True:
+            chunk = grep_proc.stdout.read(chunk_size)
+            if not chunk:
+                break
+            total += len(chunk)
+            on_chunk(chunk)
+        return total
+    except (OSError, ValueError) as e:
+        keyme.log.warning(f"log_tail get_log_around path={filepath!r}: {e}")
+        return 0
+    finally:
+        _terminate_and_wait(grep_proc)
+        _terminate_and_wait(reader)
+
+
+def _get_log_around_stream_thread(client_id, send_callback, stream_id, files_to_read, lines_before, lines_after, central_str):
+    """Background: stream grep -B -A per file in chunks; first file with output wins."""
+    pattern = '^' + re.escape(central_str)
+
+    def send_chunk(chunk):
+        if chunk:
+            send_callback(client_id, {'event': ws_protocol.PUSH_LOG_AROUND_BATCH, 'data': {'stream_id': stream_id, 'chunk': chunk}})
+
+    def send_done():
+        send_callback(client_id, {'event': ws_protocol.PUSH_LOG_AROUND_DONE, 'data': {'stream_id': stream_id}})
+
+    for _day, filepath, is_gz in files_to_read:
+        keyme.log.info(f"log_tail get_log_around file={filepath!r} is_gz={is_gz}")
+        total = _stream_grep_context_around(
+            filepath, is_gz, lines_before, lines_after, pattern, _LOG_AROUND_CHUNK_SIZE, send_chunk
+        )
+        if total > 0:
+            keyme.log.info(f"log_tail get_log_around done stream_id={stream_id!r} file={filepath!r} total_bytes={total}")
+            send_done()
+            return
+    send_done()
+    keyme.log.info(f"log_tail get_log_around done stream_id={stream_id!r} no match")
+
+
+def _clamp_int(val, default, cap):
+    try:
+        return max(0, min(int(val), cap))
+    except (TypeError, ValueError):
+        return default
+
+
+def get_log_around_datetime(data, client_id, send_callback):
+    """Stream lines_before + match + lines_after around central_datetime. Returns { started, stream_id } or errors."""
+    data = data or {}
+    if (data.get('log_id') or 'all').strip() != 'all':
+        return {'success': False, 'errors': ['get_log_around_datetime only supports log_id "all"']}
+
+    central_raw = (data.get('central_datetime') or '').strip()
+    if not central_raw:
+        return {'success': False, 'errors': ['Missing central_datetime']}
+    central_ts = _parse_datetime(central_raw)
+    if central_ts is None:
+        return {
+            'success': False,
+            'errors': ['Invalid central_datetime; use YYYY-MM-DD, YYYY-MM-DDTHH:MM, or YYYY-MM-DDTHH:MM:SS'],
+        }
+    central_str = central_ts.strftime('%Y-%m-%dT%H:%M:%S')
+    central_date = central_ts.date()
+
+    lines_before = _clamp_int(data.get('lines_before'), 1000, _LINES_BEFORE_CAP)
+    lines_after = _clamp_int(data.get('lines_after'), 10000, _LINES_AFTER_CAP)
+
+    log_dir = os.path.dirname(_ALL_LOG_PATH)
+    start_dt = central_date - timedelta(days=1)
+    end_dt = central_date + timedelta(days=1)
+    files_to_read = _log_files_for_range(log_dir, 'all.log', start_dt, end_dt)
+    if not files_to_read:
+        return {'success': False, 'errors': ['No log files found for the central datetime']}
+
+    stream_id = data.get('stream_id') or str(time.time())
+    thread = threading.Thread(
+        target=_get_log_around_stream_thread,
+        args=(client_id, send_callback, stream_id, files_to_read, lines_before, lines_after, central_str),
+        daemon=True,
+    )
+    thread.start()
+    return {'success': True, 'data': {'started': True, 'stream_id': stream_id}}
 
 
 # -----------------------------------------------------------------------------
@@ -543,17 +893,18 @@ def _run_log_analyze_filter_thread(client_id, send_callback, stream_id, files_to
         })
         return
 
-    awk_cmd = [
-        'nice', '-n', '19', 'awk',
+    awk_cmd = _nice_cmd([
+        'awk',
         '-v', f'start={start_ts}', '-v', f'end={end_ts}',
         '-v', f'pname={pname}', '-v', f'log_level={log_level}', '-v', f'reg_message={reg_message}',
         '-v', f'combine={combine}',
         '-f', script_path,
-    ]
+    ])
     buckets = {}
 
     for _day, filepath, is_gz in files_to_read:
-        reader_cmd = ['nice', '-n', '19', 'zcat', filepath] if is_gz else ['nice', '-n', '19', 'cat', filepath]
+        reader_cmd = _nice_cmd(['zcat', filepath] if is_gz else ['cat', filepath])
+        keyme.log.info(f"log_tail run_log_analyze external_cmd_reader={' '.join(reader_cmd)!r} file={filepath!r}")
         reader = awk_proc = None
         try:
             reader = subprocess.Popen(
@@ -571,6 +922,8 @@ def _run_log_analyze_filter_thread(client_id, send_callback, stream_id, files_to
             )
             reader.stdout.close()
             out, _ = awk_proc.communicate(timeout=300)
+            out_size = len(out) if out else 0
+            keyme.log.info(f"log_tail run_log_analyze result bytes={out_size} file={filepath!r}")
             for line in (out or '').split('\n'):
                 _merge_awk_line_into_buckets(buckets, line)
         except (OSError, subprocess.TimeoutExpired) as e:
