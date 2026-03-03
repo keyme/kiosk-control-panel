@@ -4,8 +4,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { PageTitle } from '@/components/PageTitle';
 import { cn } from '@/lib/utils';
+import { apiFetch } from '@/lib/apiFetch';
 import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
-import { Camera, ChevronDown, ChevronRight, Download, Loader2, Maximize2, Package, RefreshCw, X } from 'lucide-react';
+import { Camera, ChevronDown, ChevronRight, Download, Loader2, Maximize2, Package, RefreshCw, Upload, X } from 'lucide-react';
 
 /** Gen 3 kiosks: strip leading zeros after "ns" (e.g. NS003512 -> NS3512). */
 function normalizeKioskName(name) {
@@ -109,6 +110,12 @@ export default function InventoryPage({ connected, socket }) {
   const [captureImages, setCaptureImages] = useState(null);
   const [captureRunAnyway, setCaptureRunAnyway] = useState(false);
   const [fullscreenImage, setFullscreenImage] = useState(null); // { base64, label } or null
+  const [restoreFromAdminModalOpen, setRestoreFromAdminModalOpen] = useState(false);
+  const [restoreFromAdminKiosk, setRestoreFromAdminKiosk] = useState('');
+  const [fetchedStock, setFetchedStock] = useState(null);
+  const [fetchStockLoading, setFetchStockLoading] = useState(false);
+  const [fetchStockError, setFetchStockError] = useState(null);
+  const [uploadToKioskLoading, setUploadToKioskLoading] = useState(false);
 
   useEffect(() => {
     if (!hasPendingPricingUpdate) return;
@@ -318,6 +325,74 @@ export default function InventoryPage({ connected, socket }) {
     a.click();
   };
 
+  const handleOpenRestoreFromAdminModal = useCallback(() => {
+    setBulkMenuOpen(false);
+    setRestoreFromAdminModalOpen(true);
+    setRestoreFromAdminKiosk(kiosk || '');
+    setFetchedStock(null);
+    setFetchStockError(null);
+  }, [kiosk]);
+
+  const handleCloseRestoreFromAdminModal = useCallback(() => {
+    setRestoreFromAdminModalOpen(false);
+    setFetchedStock(null);
+    setFetchStockError(null);
+    setFetchStockLoading(false);
+    setUploadToKioskLoading(false);
+  }, []);
+
+  const handleFetchFromAdmin = useCallback(async () => {
+    const k = (restoreFromAdminKiosk || '').trim();
+    if (!k) {
+      setFetchStockError('Enter a kiosk ID');
+      return;
+    }
+    setFetchStockError(null);
+    setFetchStockLoading(true);
+    try {
+      const res = await apiFetch(`/api/inventory/stock?kiosk=${encodeURIComponent(k)}`);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        setFetchStockError(errData?.error || `Failed to fetch inventory from Admin (${res.status})`);
+        setFetchedStock(null);
+        return;
+      }
+      const stock = await res.json();
+      if (!Array.isArray(stock) || stock.length === 0) {
+        setFetchStockError('No inventory data returned from Admin.');
+        setFetchedStock(null);
+        return;
+      }
+      setFetchedStock(stock);
+    } catch (err) {
+      setFetchStockError(err?.message || 'Failed to fetch from Admin');
+      setFetchedStock(null);
+    } finally {
+      setFetchStockLoading(false);
+    }
+  }, [restoreFromAdminKiosk]);
+
+  const handleUploadToKiosk = useCallback(async () => {
+    if (!fetchedStock || !socket?.requestIfSupported || uploadToKioskLoading || isSocketDisabled) return;
+    setUploadToKioskLoading(true);
+    setFetchStockError(null);
+    try {
+      const wsRes = await socket.requestIfSupported('inventory_admin_restore', { stock: fetchedStock });
+      if (wsRes?.success) {
+        showActionMessage('Restore from Admin completed successfully.');
+        handleCloseRestoreFromAdminModal();
+        fetchInventory();
+      } else {
+        setFetchStockError((wsRes?.errors || ['Upload failed']).join('; '));
+      }
+    } catch (err) {
+      const msg = err?.code === ERROR_UNSUPPORTED_COMMAND ? UNSUPPORTED_FEATURE_MESSAGE : (err?.message || 'Upload to kiosk failed');
+      setFetchStockError(msg);
+    } finally {
+      setUploadToKioskLoading(false);
+    }
+  }, [fetchedStock, socket, uploadToKioskLoading, isSocketDisabled, fetchInventory, handleCloseRestoreFromAdminModal]);
+
   const handleExecuteAdvanced = () => {
     if (!socket?.requestIfSupported || actionLoading || isDisabled || selectedMagazine == null) return;
     const selectedMag = selectedMagazine != null ? magazines[selectedMagazine - 1] : null;
@@ -456,10 +531,10 @@ export default function InventoryPage({ connected, socket }) {
                 <button
                   type="button"
                   role="menuitem"
-                  disabled
-                  className="w-full px-4 py-2 text-left text-sm text-muted-foreground cursor-not-allowed"
+                  className="w-full px-4 py-2 text-left text-sm hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={handleOpenRestoreFromAdminModal}
                 >
-                  Restore from Admin (Coming soon)
+                  Restore from Admin
                 </button>
                 <button
                   type="button"
@@ -1324,6 +1399,67 @@ export default function InventoryPage({ connected, socket }) {
           )}
         </>
       )}
+      <Dialog open={restoreFromAdminModalOpen} onOpenChange={(open) => !open && handleCloseRestoreFromAdminModal()}>
+        <DialogContent showClose={true} onClose={handleCloseRestoreFromAdminModal} className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Restore from Admin</DialogTitle>
+            <DialogDescription>
+              Fetch inventory from Admin for any kiosk, then upload it to the connected kiosk.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-4 pt-2">
+            <div className="flex flex-col gap-2">
+              <label htmlFor="restore-admin-kiosk" className="text-sm font-medium">
+                Kiosk ID
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="restore-admin-kiosk"
+                  type="text"
+                  value={restoreFromAdminKiosk}
+                  onChange={(e) => setRestoreFromAdminKiosk(e.target.value)}
+                  placeholder="e.g. NS3512"
+                  className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                />
+                <button
+                  type="button"
+                  disabled={!restoreFromAdminKiosk.trim() || fetchStockLoading}
+                  onClick={handleFetchFromAdmin}
+                  className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {fetchStockLoading ? <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden /> : <RefreshCw className="size-4 shrink-0" aria-hidden />}
+                  Fetch from Admin
+                </button>
+              </div>
+            </div>
+            {fetchStockError && (
+              <p className="text-sm text-destructive">{fetchStockError}</p>
+            )}
+            {fetchedStock && (
+              <>
+                <div className="flex flex-col gap-2">
+                  <p className="text-sm font-medium">Inventory data</p>
+                  <pre className="overflow-auto max-h-64 rounded border border-border bg-muted/30 p-3 text-xs">
+                    {JSON.stringify(fetchedStock, null, 2)}
+                  </pre>
+                </div>
+                <button
+                  type="button"
+                  disabled={uploadToKioskLoading || isSocketDisabled}
+                  onClick={handleUploadToKiosk}
+                  className="inline-flex items-center justify-center gap-2 self-start rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {uploadToKioskLoading ? <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden /> : <Upload className="size-4 shrink-0" aria-hidden />}
+                  {uploadToKioskLoading ? 'Uploading…' : 'Upload to this kiosk'}
+                </button>
+                {isSocketDisabled && (
+                  <p className="text-xs text-muted-foreground">Connect to a kiosk to upload.</p>
+                )}
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
