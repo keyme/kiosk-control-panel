@@ -107,7 +107,7 @@ async def thread_start(ws: Any, cwd: str) -> str:
         "params": {
             "cwd": cwd,
             "approvalPolicy": "never",
-            "sandbox": "read-only",
+            "sandbox": "danger-full-access",
             "experimentalRawEvents": False,
             "persistExtendedHistory": False,
         },
