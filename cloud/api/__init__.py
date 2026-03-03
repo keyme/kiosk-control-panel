@@ -47,6 +47,7 @@ from control_panel.cloud.api.calibration_trace import (
     get_trace,
     dewarp_image,
 )
+from control_panel.cloud.api.admin_api import fetch_stock
 
 
 def create_auth_router() -> APIRouter:
@@ -432,5 +433,20 @@ def create_router():
         if err:
             return JSONResponse({"error": err}, status_code=400)
         return Response(content=png_bytes, media_type="image/png")
+
+    @router.get("/inventory/stock")
+    def inventory_stock(kiosk: str = Query(None)):
+        """ Fetch stock/inventory for a kiosk from Admin.
+        e.g. `https://admin.key.me/kiosks/NS35123/stock.json` """
+        _log.info(f"inventory stock {kiosk=}")
+        if not kiosk or not kiosk.strip():
+            return JSONResponse(
+                {"error": "Missing required query parameter: kiosk"}, status_code=400
+            )
+        data, err = fetch_stock(kiosk.strip())
+        if err:
+            status_code = 503 if "not configured" in err.lower() else 502
+            return JSONResponse({"error": err}, status_code=status_code)
+        return data
 
     return router
