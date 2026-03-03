@@ -121,7 +121,7 @@ function TitleItem({ icon: Icon, label, children, className, title, ...rest }) {
   );
 }
 
-function Layout({ kioskName, connected, lastError, connectionRejected, disconnectedDueToInactivity, panelInfo, terminals, children }) {
+function Layout({ kioskName, connected, lastError, connectionRejected, disconnectedDueToInactivity, panelInfo, terminals, connectionCount, children }) {
   const { deviceHost, setDeviceHost } = useContext(DeviceHostContext);
   const { logout } = useAuth();
   const navigate = useNavigate();
@@ -175,6 +175,7 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
   const remoteUsers = terminals?.remote_users ?? [];
   const remoteCount = terminals?.remote_count ?? remoteUsers.length;
   const localCount = terminals?.local_count ?? 0;
+  const wsCount = connectionCount ?? 0;
 
   const valueOk = 'text-emerald-400';
   const valueWarn = 'text-amber-400';
@@ -225,9 +226,24 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
           <TitleItem
             icon={Terminal}
             label="Terminals:"
-            title={remoteCount > 0 ? `SSH: ${remoteUsers.join(', ')}` : undefined}
+            title={
+              [
+                'CP: users connected to this kiosk over Control Panel.',
+                'SSH: remote SSH sessions to the kiosk.',
+                'Local: terminals opened on the device.',
+                remoteCount > 0 && `SSH users: ${remoteUsers.join(', ')}`,
+              ]
+                .filter(Boolean)
+                .join(' ')
+            }
           >
-            <span className="tabular-nums">{remoteCount} SSH, {localCount} local</span>
+            <span className="tabular-nums">
+              <span className={remoteCount > 0 ? valueWarn : undefined}>{remoteCount} SSH</span>
+              {', '}
+              <span className={localCount > 0 ? valueWarn : undefined}>{localCount} Local</span>
+              {', '}
+              <span className={wsCount > 1 ? valueWarn : undefined}>{wsCount} CP</span>
+            </span>
           </TitleItem>
           <TitleItem
             icon={Gauge}
@@ -536,6 +552,7 @@ function AppContent() {
     const tick = () => {
       requestPanelInfo(socket, setPanelInfo);
       requestTerminals(socket, setTerminals);
+      requestConnectionCount(socket, setConnectionCount);
       if (isStatusPage(pathnameRef.current)) {
         requestStatusSnapshot(socket, setComputerStats, setConnectionCount, setConnectionList, setWtfWhyDegraded, setStatusSections);
       }
@@ -631,6 +648,7 @@ function AppContent() {
           disconnectedDueToInactivity={disconnectedDueToInactivity}
           panelInfo={panelInfo}
           terminals={terminals}
+          connectionCount={connectionCount}
         >
           <Routes>
             <Route path="/" element={<Status connected={connected} computerStats={computerStats} wtfWhyDegraded={wtfWhyDegraded} status={statusSections} terminals={terminals} connectionCount={connectionCount} connectionList={connectionList} />} />
