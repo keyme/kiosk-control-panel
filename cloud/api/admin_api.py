@@ -31,7 +31,7 @@ def fetch_stock(kiosk: str) -> tuple[list | dict | None, str | None]:
         return (None, f"Admin request failed: {exc}")
 
     if resp.status_code < 200 or resp.status_code >= 300:
-        _log.error("Admin stock returned status %s kiosk=%s", resp.status_code, kiosk)
+        _log.error("Admin stock returned status %s kiosk=%s response=%s", resp.status_code, kiosk, resp.text)
         return (None, f"Admin request failed: status {resp.status_code}")
 
     try:

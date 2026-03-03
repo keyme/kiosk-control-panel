@@ -73,6 +73,7 @@ SUPPORTED_REQUEST_EVENTS = (
     'inventory_advanced_action',
     'inventory_update_api_pricing',
     'inventory_rotate_and_capture',
+    'inventory_admin_restore',
 )
 
 # Events that accept optional "data" in the request.
@@ -81,6 +82,7 @@ EVENTS_WITH_DATA = frozenset((
     'inventory_enable_magazine', 'inventory_disable_magazine', 'inventory_set_key_count',
     'inventory_advanced_action',
     'inventory_rotate_and_capture',
+    'inventory_admin_restore',
 ))
 
 # Push events (server -> client, no id).

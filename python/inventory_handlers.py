@@ -425,6 +425,118 @@ def inventory_advanced_action(data):
         return WebsocketError([SocketErrors.OTHER.value, "Operation failed"]).to_json()
 
 
+def inventory_admin_restore(data):
+    """
+    Bulk replace inventory from Admin stock. Backup once (timestamped), remove
+    all, add each, update_pricing. On failure restore from backup.
+    """
+    keyme.log.info("WS: requesting inventory_admin_restore")
+    stock = data.get("stock")
+    if not isinstance(stock, list) or len(stock) == 0:
+        keyme.log.warning("inventory_admin_restore: stock must be a non-empty list")
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "stock must be a non-empty array"]).to_json()
+
+    keyme.log.info(f"inventory_admin_restore: received {len(stock)} types from Admin")
+    stock_bak, status_bak,  interface = None, None, None
+    try:
+        interface = _inventory_interface()
+        stock_bak, status_bak = interface.export_stock(backup=True, add_dt=True)
+        if not stock_bak or not status_bak:
+            keyme.log.error("inventory_admin_restore: export_stock backup failed")
+            return WebsocketError([SocketErrors.OTHER.value, "Failed to create backup"]).to_json()
+        keyme.log.info(f"inventory_admin_restore: backup created stock_bak={stock_bak} status_bak={status_bak}")
+
+        removed_count = 0
+        for mag_num in range(1, 21):
+            try:
+                mag_stock = interface.get_magazine_stock(mag_num)
+            except Exception:
+                mag_stock = None
+            if mag_stock and (mag_stock.get("milling") or mag_stock.get("name") or mag_stock.get("style")):
+                success = interface.change_magazine(mag_num, None)
+                if not success:
+                    interface.restore_backup(do_full_update=False, stock_backup=stock_bak, status_backup=status_bak)
+                    return WebsocketError([ SocketErrors.OTHER.value,
+                        f"Failed to remove magazine {mag_num}. Restored original inventory.", ]).to_json()
+                removed_count += 1
+        keyme.log.info(f"inventory_admin_restore: removed {removed_count} magazines")
+
+        added_count = 0
+        for item in stock:
+            milling = (item.get("type") or "").strip()
+            if not milling:
+                continue
+            styles = item.get("styles")
+            if not isinstance(styles, list):
+                continue
+            for s in styles:
+                mag = s.get("magazine")
+                mag = int(mag)
+                style = (s.get("name") or s.get("display_name") or "").strip()
+                if not style:
+                    continue
+                count = s.get("count")
+                count = int(count)
+                key_data = {"milling": milling, "name": style, "count": count, "magazine": mag}
+                keyme.log.info(f"inventory_admin_restore: adding magazine {mag} with key data \
+                    {key_data} and enabled={s.get('enabled')}")
+                success = interface.change_magazine(mag, key_data)
+                if not success:
+                    keyme.log.error(f"inventory_admin_restore: failed to add magazine {mag}")
+                    interface.restore_backup(do_full_update=False, stock_backup=stock_bak, status_backup=status_bak)
+                    return WebsocketError([
+                        SocketErrors.OTHER.value,
+                        f"Failed to add magazine {mag}. Restored original inventory.",
+                    ]).to_json()
+                added_count += 1
+                if s.get("enabled") is False:
+                    from inventory import disabled_reasons
+                    status_str = (s.get("status") or "").lower()
+                    reason = disabled_reasons.BAD_CUTTING # default to bad cutting
+                    if "disabled because " in status_str:
+                        extracted = status_str.split("disabled because ", 1)[-1].strip()
+                        if extracted in disabled_reasons.POSSIBLE_REASONS:
+                            reason = extracted
+                    success = interface.disable_magazine(mag, reason, needs_review=False)
+                    if not success:
+                        keyme.log.error(f"inventory_admin_restore: failed to disable magazine \
+                            {mag} with reason {reason}")
+                        interface.restore_backup(do_full_update=False, stock_backup=stock_bak, status_backup=status_bak)
+                        return WebsocketError([
+                            SocketErrors.OTHER.value,
+                            f"Failed to disable magazine {mag}. Restored original inventory.",
+                        ]).to_json()
+
+        keyme.log.info(f"inventory_admin_restore: added {added_count} magazines")
+        if getattr(keyme.config, "IS_KIOSK", False):
+            keyme.log.info("inventory_admin_restore: running update_pricing")
+            from util.update_pricing import update_pricing
+            if update_pricing() != 0:
+                interface.restore_backup(do_full_update=False, stock_backup=stock_bak, status_backup=status_bak)
+                keyme.log.error("inventory_admin_restore: update_pricing failed and restored original inventory")
+                return WebsocketError([
+                    SocketErrors.OTHER.value,
+                    "Update pricing failed. Restored original inventory.",
+                ]).to_json()
+
+        keyme.log.info("inventory_admin_restore: completed successfully")
+        return WebsocketSuccess({}).to_json()
+
+    except Exception as e:
+        if interface and stock_bak and status_bak:
+            try:
+                interface.restore_backup(do_full_update=False, stock_backup=stock_bak, status_backup=status_bak)
+                keyme.log.info(f"inventory_admin_restore: restored original inventory after error: {e}")
+                return WebsocketError([
+                    SocketErrors.OTHER.value,
+                    f"{e}. Restored original inventory.",
+                ]).to_json()
+            except Exception:
+                pass
+        keyme.log.error(f"inventory_admin_restore: {e}")
+        return WebsocketError([SocketErrors.OTHER.value, str(e)]).to_json()
+
+
 def inventory_update_api_pricing(data):
     """Run API and pricing update (same as after inventory edits). Only on kiosk."""
     keyme.log.info("WS: requesting inventory_update_api_pricing")
