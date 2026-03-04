@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import logging
 
@@ -199,6 +199,41 @@ def cleanup_workspace(workspace_path: str) -> None:
             shutil.rmtree(workspace_path, ignore_errors=True)
         except OSError as e:
             log.warning("rmtree workspace failed: %s", e)
+
+
+# Dir names under LOG_ANALYSIS_WORKSPACE_BASE we never remove (log cache + empty workspace).
+_ORPHAN_CLEANUP_SKIP_DIRS = frozenset({"empty", "log_analysis_cache"})
+
+
+def cleanup_orphaned_workspaces(
+    workspace_base: str,
+    active_paths: Set[str],
+    max_age_seconds: int = 120,
+) -> None:
+    """Remove workspace dirs under workspace_base that are not in active_paths and older than max_age_seconds.
+    Skips 'empty' and 'log_analysis_cache' so the log cache and shared empty workspace stay intact."""
+    if not workspace_base or not os.path.isdir(workspace_base):
+        return
+    now = time.time()
+    try:
+        for name in os.listdir(workspace_base):
+            if name in _ORPHAN_CLEANUP_SKIP_DIRS:
+                continue
+            path = os.path.join(workspace_base, name)
+            if not os.path.isdir(path):
+                continue
+            if path in active_paths:
+                continue
+            try:
+                mtime = os.path.getmtime(path)
+                if (now - mtime) <= max_age_seconds:
+                    continue
+            except OSError:
+                continue
+            log.info("log_analysis cleanup_orphaned_workspaces removing orphan path=%s age_sec=%.0f", path, now - mtime)
+            cleanup_workspace(path)
+    except OSError as e:
+        log.warning("cleanup_orphaned_workspaces listdir failed: %s", e)
 
 
 def write_all_log(workspace_path: str, lines: List[str]) -> None:

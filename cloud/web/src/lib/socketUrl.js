@@ -20,7 +20,7 @@ export function buildBaseUrl(deviceHost, port = DEFAULT_PORT) {
 export function normalizeDeviceHost(value) {
   const v = (value || '').trim();
   if (/^\d+$/.test(v)) return 'ns' + v;
-  return v;
+  return v.toLowerCase();
 }
 
 /**
