@@ -71,6 +71,27 @@ PANEL_INFO_GATE_TIMEOUT_SEC = 8
 _active_ws_connections = 0
 _active_ws_connections_lock = asyncio.Lock()
 
+# AI log analysis: workspaces currently in use by any /ai WebSocket (so orphan cleanup does not remove them).
+_active_log_workspace_paths: set[str] = set()
+_active_log_workspace_paths_lock = asyncio.Lock()
+_ORPHAN_WORKSPACE_CLEANUP_INTERVAL_SEC = 30
+_ORPHAN_WORKSPACE_MAX_AGE_SEC = 120
+
+
+async def _orphan_workspace_cleanup_loop() -> None:
+    """Every 30s remove orphaned log-analysis workspaces (e.g. from new tab or disconnect). Leaves log cache intact."""
+    while True:
+        await asyncio.sleep(_ORPHAN_WORKSPACE_CLEANUP_INTERVAL_SEC)
+        async with _active_log_workspace_paths_lock:
+            snapshot = set(_active_log_workspace_paths)
+        workspace_base = log_analysis.LOG_ANALYSIS_WORKSPACE_BASE or ""
+        await asyncio.to_thread(
+            log_analysis.cleanup_orphaned_workspaces,
+            workspace_base,
+            snapshot,
+            _ORPHAN_WORKSPACE_MAX_AGE_SEC,
+        )
+
 
 async def _inc_active_ws_connections() -> None:
     global _active_ws_connections
@@ -272,6 +293,7 @@ async def _lifespan(app: FastAPI):
     log.info(
         f"Control panel cloud API app loaded static_root={_STATIC_ROOT} API_ENV={API_ENV} ANF_BASE_URL={ANF_BASE_URL}"
     )
+    asyncio.create_task(_orphan_workspace_cleanup_loop())
     async with httpx.AsyncClient(timeout=10.0) as client:
         app.state.httpx_client = client
         yield
@@ -950,6 +972,13 @@ async def ws_ai(websocket: WebSocket):
                     len(first_question),
                 )
 
+                # Starting a new analysis: clean up any previous session's workspace on this connection.
+                for wp in thread_to_workspace.values():
+                    async with _active_log_workspace_paths_lock:
+                        _active_log_workspace_paths.discard(wp)
+                    log_analysis.cleanup_workspace(wp)
+                thread_to_workspace.clear()
+
                 backend_url, _, _, ssl_ctx, _, backend_fail_reason = _device_ws_backend(kiosk_name)
                 if not backend_url:
                     log.warning("ws_ai ai_log_session invalid device kiosk_name=%s reason=%s", kiosk_name, backend_fail_reason)
@@ -1031,6 +1060,8 @@ async def ws_ai(websocket: WebSocket):
                     log_analysis.write_all_log(workspace_path, lines)
                     log_analysis.ensure_codex_context(workspace_path)
                 except Exception as e:
+                    async with _active_log_workspace_paths_lock:
+                        _active_log_workspace_paths.discard(workspace_path)
                     log_analysis.cleanup_workspace(workspace_path)
                     log.exception("ai_log_session write_all_log failed")
                     await _send_reply(rid, False, error=str(e))
@@ -1042,6 +1073,8 @@ async def ws_ai(websocket: WebSocket):
                         codex_ws = await codex_app_server_client.connect_and_handshake()
                         log.info("ws_ai ai_log_session Codex app-server connected")
                     except Exception as e:
+                        async with _active_log_workspace_paths_lock:
+                            _active_log_workspace_paths.discard(workspace_path)
                         log_analysis.cleanup_workspace(workspace_path)
                         log.exception("ai_log_session Codex connect failed")
                         await _send_reply(rid, False, error=str(e))
@@ -1052,6 +1085,8 @@ async def ws_ai(websocket: WebSocket):
                     thread_id = await codex_app_server_client.thread_start(codex_ws, workspace_path)
                     log.info("ws_ai ai_log_session thread_start thread_id=%s", thread_id)
                 except Exception as e:
+                    async with _active_log_workspace_paths_lock:
+                        _active_log_workspace_paths.discard(workspace_path)
                     log_analysis.cleanup_workspace(workspace_path)
                     log.exception("ai_log_session thread_start failed")
                     await _send_reply(rid, False, error=str(e))
@@ -1069,12 +1104,16 @@ async def ws_ai(websocket: WebSocket):
                     )
                     log.info("ws_ai ai_log_session turn_start done result_len=%s", len(result_text or ""))
                 except Exception as e:
+                    async with _active_log_workspace_paths_lock:
+                        _active_log_workspace_paths.discard(workspace_path)
                     log_analysis.cleanup_workspace(workspace_path)
                     log.exception("ai_log_session turn_start failed")
                     await _send_reply(rid, False, error=str(e))
                     continue
 
                 thread_to_workspace[thread_id] = workspace_path
+                async with _active_log_workspace_paths_lock:
+                    _active_log_workspace_paths.add(workspace_path)
                 await _send_reply(
                     rid,
                     True,
@@ -1123,6 +1162,8 @@ async def ws_ai(websocket: WebSocket):
             except Exception:
                 pass
         for wp in thread_to_workspace.values():
+            async with _active_log_workspace_paths_lock:
+                _active_log_workspace_paths.discard(wp)
             log_analysis.cleanup_workspace(wp)
         thread_to_workspace.clear()
 
