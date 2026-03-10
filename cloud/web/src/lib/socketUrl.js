@@ -16,10 +16,17 @@ export function buildBaseUrl(deviceHost, port = DEFAULT_PORT) {
 
 /**
  * If value is all digits (e.g. 1111), return 'ns' + value (e.g. ns1111). Otherwise return trimmed value.
+ * Leading zeros are stripped from numeric parts (ns0234 → ns234).
  */
 export function normalizeDeviceHost(value) {
   const v = (value || '').trim();
-  if (/^\d+$/.test(v)) return 'ns' + v;
+  if (/^\d+$/.test(v)) {
+    return 'ns' + String(parseInt(v, 10));
+  }
+  const nsMatch = v.match(/^ns(\d+)$/i);
+  if (nsMatch) {
+    return 'ns' + String(parseInt(nsMatch[1], 10));
+  }
   return v.toLowerCase();
 }
 
