@@ -8,6 +8,27 @@ import { apiFetch } from '@/lib/apiFetch';
 import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
 import { Camera, ChevronDown, ChevronRight, Download, Loader2, Maximize2, Package, RefreshCw, Upload, X } from 'lucide-react';
 
+const KEY_HEAD_FILENAME_REGEX = /key[_-]head_check/i;
+
+function parseMagazineFromFilename(filename) {
+  if (!filename || typeof filename !== 'string') return null;
+  const m = filename.match(/^[^_]+_(\d+)_/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Extract "YYYY-MM-DD-HH-MM-SS-UTC" from key or filename; return display string or null. */
+function formatKeyHeadTaken(keyOrFilename) {
+  if (!keyOrFilename || typeof keyOrFilename !== 'string') return null;
+  const m = String(keyOrFilename).match(/(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-UTC/);
+  if (!m) return null;
+  const [, y, mo, d, h, min] = m;
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const month = months[parseInt(mo, 10) - 1] || mo;
+  return `${month} ${parseInt(d, 10)}, ${y}, ${h}:${min} UTC`;
+}
+
 /** Gen 3 kiosks: strip leading zeros after "ns" (e.g. NS003512 -> NS3512). */
 function normalizeKioskName(name) {
   if (name == null || typeof name !== 'string') return '';
@@ -116,6 +137,10 @@ export default function InventoryPage({ connected, socket }) {
   const [fetchStockLoading, setFetchStockLoading] = useState(false);
   const [fetchStockError, setFetchStockError] = useState(null);
   const [uploadToKioskLoading, setUploadToKioskLoading] = useState(false);
+
+  const [ejectionImagesByMag, setEjectionImagesByMag] = useState({});
+  const [ejectionLoading, setEjectionLoading] = useState(false);
+  const [ejectionError, setEjectionError] = useState(null);
 
   useEffect(() => {
     if (!hasPendingPricingUpdate) return;
@@ -270,6 +295,67 @@ export default function InventoryPage({ connected, socket }) {
     URL.revokeObjectURL(url);
   }, [kiosk, magazines]);
 
+  const loadEjectionImages = useCallback(async () => {
+    const k = (kiosk || '').trim();
+    if (!k) {
+      setEjectionError('Kiosk name not available.');
+      return;
+    }
+    setEjectionError(null);
+    setEjectionLoading(true);
+    try {
+      const idsRes = await apiFetch(`/api/calibration/testcuts/ids?kiosk=${encodeURIComponent(k)}`);
+      if (!idsRes.ok) {
+        const errData = await idsRes.json().catch(() => ({}));
+        throw new Error(errData?.error || idsRes.statusText || 'Failed to load testcut IDs');
+      }
+      const ids = await idsRes.json();
+      if (!Array.isArray(ids) || ids.length === 0) {
+        setEjectionImagesByMag({});
+        setEjectionLoading(false);
+        return;
+      }
+      const limitedIds = ids.slice(0, 80);
+      const byMag = {};
+      // Iterate newest first; first image we see per mag is the latest.
+      // eslint-disable-next-line no-restricted-syntax
+      for (const id of limitedIds) {
+        // eslint-disable-next-line no-await-in-loop
+        const res = await apiFetch(
+          `/api/calibration/testcuts/images?kiosk=${encodeURIComponent(k)}&id=${encodeURIComponent(id)}`
+        );
+        if (!res.ok) {
+          // Skip this ID on error.
+          // eslint-disable-next-line no-continue
+          continue;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const sections = await res.json();
+        if (!sections || typeof sections !== 'object') {
+          // eslint-disable-next-line no-continue
+          continue;
+        }
+        Object.values(sections).forEach((images) => {
+          (images || []).forEach((img) => {
+            const filename = img?.filename;
+            if (!filename || !KEY_HEAD_FILENAME_REGEX.test(filename)) return;
+            const mag = parseMagazineFromFilename(filename);
+            if (!mag || mag < 1 || mag > 20) return;
+            if (!byMag[mag]) {
+              byMag[mag] = { id, image: img };
+            }
+          });
+        });
+        if (Object.keys(byMag).length >= 20) break;
+      }
+      setEjectionImagesByMag(byMag);
+    } catch (err) {
+      setEjectionError(err?.message || 'Failed to load ejection images');
+    } finally {
+      setEjectionLoading(false);
+    }
+  }, [kiosk]);
+
   const handleOpenCaptureConfirm = () => {
     setCaptureError(null);
     setCaptureImages(null);
@@ -407,8 +493,8 @@ export default function InventoryPage({ connected, socket }) {
         showActionMessage('Slot is empty; nothing to fix.', true);
         return;
       }
-      if (!advancedFixValue) {
-        showActionMessage('Select a value to fix.', true);
+      if (!advancedMilling || !advancedStyle) {
+        showActionMessage('Select both milling and style.', true);
         return;
       }
     } else if (advancedAction === 'mark_reviewed') {
@@ -433,7 +519,7 @@ export default function InventoryPage({ connected, socket }) {
 
     let payload = { magazine: selectedMagazine, action: advancedAction, no_api_update: noApiUpdate };
     if (advancedAction === 'fix_magazine') {
-      payload = { magazine: selectedMagazine, action: 'fix_magazine', fix_field: advancedFixField, fix_value: advancedFixValue, no_api_update: noApiUpdate };
+      payload = { magazine: selectedMagazine, action: 'fix_magazine', milling: advancedMilling, style: advancedStyle, no_api_update: noApiUpdate };
     } else if (advancedAction === 'remove_magazine' || advancedAction === 'mark_reviewed') {
       payload = { magazine: selectedMagazine, action: advancedAction, no_api_update: noApiUpdate };
     } else {
@@ -550,6 +636,18 @@ export default function InventoryPage({ connected, socket }) {
               </div>
             )}
           </div>
+          <button
+            type="button"
+            onClick={loadEjectionImages}
+            disabled={ejectionLoading}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors',
+              'border border-input bg-background hover:bg-accent disabled:opacity-50 disabled:pointer-events-none'
+            )}
+          >
+            {ejectionLoading && <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />}
+            Load all ejections
+          </button>
         </div>
       </div>
 
@@ -583,6 +681,12 @@ export default function InventoryPage({ connected, socket }) {
         </div>
       )}
 
+      {ejectionError && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+          {ejectionError}
+        </div>
+      )}
+
       {!hasLoaded && !loading && !error && (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground text-sm">
@@ -597,6 +701,7 @@ export default function InventoryPage({ connected, socket }) {
           <span>Loading inventory…</span>
         </div>
       ) : hasLoaded ? (
+        <>
         <div className="flex flex-1 gap-8 items-start">
           {/* Donut - larger, with segment gap and clearer labels */}
           <Card className="shrink-0 overflow-visible">
@@ -881,7 +986,67 @@ export default function InventoryPage({ connected, socket }) {
             </CardContent>
           </Card>
         </div>
+        </>
       ) : null}
+
+      {/* Ejection key head images: shown whenever we have images, even if kiosk fetch hasn't run (e.g. offline). */}
+      {Object.keys(ejectionImagesByMag || {}).length > 0 && (
+        <Card>
+          <CardContent className="pt-6 space-y-4">
+            <h3 className="text-sm font-medium">Ejection key head images</h3>
+            <p className="text-xs text-muted-foreground">
+              Showing the most recent key head check image found per magazine from recent test cuts.
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {Array.from({ length: SEGMENT_COUNT }, (_, i) => {
+                const magNum = i + 1;
+                const entry = ejectionImagesByMag[magNum];
+                if (!entry) {
+                  return (
+                    <button
+                      key={magNum}
+                      type="button"
+                      onClick={() => handleSelect(magNum)}
+                      className="w-full rounded-md border border-dashed border-muted-foreground/40 p-3 text-left text-xs text-muted-foreground hover:border-muted-foreground/60 hover:bg-muted/30 cursor-pointer transition-colors"
+                    >
+                      <div className="mb-1 font-medium text-foreground/80">Mag #{magNum}</div>
+                      <div>No key head image loaded.</div>
+                      <span className="sr-only">Open controls for magazine {magNum}</span>
+                    </button>
+                  );
+                }
+                const takenLabel = formatKeyHeadTaken(entry.image.key ?? entry.image.filename);
+                return (
+                  <button
+                    key={magNum}
+                    type="button"
+                    onClick={() => handleSelect(magNum)}
+                    className="w-full space-y-2 rounded-md border border-border p-2 text-left hover:bg-muted/30 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                  >
+                    <div className="text-xs font-medium text-foreground/80">
+                      Mag #{magNum} • ID {entry.id}
+                    </div>
+                    <img
+                      src={entry.image.url}
+                      alt={entry.image.filename}
+                      className="h-32 w-full rounded border border-border object-contain bg-background"
+                    />
+                    {takenLabel != null && (
+                      <p className="text-base font-bold text-foreground">
+                        Taken: {takenLabel}
+                      </p>
+                    )}
+                    <div className="text-[11px] text-muted-foreground break-all">
+                      {entry.image.filename}
+                    </div>
+                    <span className="sr-only">Open controls for magazine {magNum}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Right-side drawer */}
       {drawerOpen && (
@@ -948,6 +1113,30 @@ export default function InventoryPage({ connected, socket }) {
                       )}
                     </div>
                   )}
+                  {selectedMagazine != null && ejectionImagesByMag[selectedMagazine] && (() => {
+                    const selImg = ejectionImagesByMag[selectedMagazine].image;
+                    const takenLabel = formatKeyHeadTaken(selImg.key ?? selImg.filename);
+                    return (
+                      <div className="mt-3 space-y-2 rounded-md border bg-muted/10 p-3">
+                        <p className="text-xs font-medium text-foreground/80">
+                          Last key head from test cut (ID {ejectionImagesByMag[selectedMagazine].id})
+                        </p>
+                        <img
+                          src={selImg.url}
+                          alt={selImg.filename}
+                          className="max-h-40 w-full rounded border border-border object-contain bg-background"
+                        />
+                        {takenLabel != null && (
+                          <p className="text-base font-bold text-foreground">
+                            Taken: {takenLabel}
+                          </p>
+                        )}
+                        <p className="text-[11px] text-muted-foreground break-all">
+                          {selImg.filename}
+                        </p>
+                      </div>
+                    );
+                  })()}
                   {actionMessage && (
                     <p className={cn('text-sm', actionMessage.isError ? 'text-destructive' : 'text-emerald-600')}>
                       {actionMessage.text}
@@ -1057,6 +1246,10 @@ export default function InventoryPage({ connected, socket }) {
                                     checked={advancedAction === value}
                                     onChange={() => {
                                       setAdvancedAction(value);
+                                      if (value === 'fix_magazine' && selectedMag) {
+                                        setAdvancedMilling(selectedMag.milling != null && String(selectedMag.milling) !== 'None' ? String(selectedMag.milling) : '');
+                                        setAdvancedStyle(selectedMag.style != null && String(selectedMag.style) !== 'None' ? String(selectedMag.display_name ?? selectedMag.style) : '');
+                                      }
                                       if (value !== 'fix_magazine') setAdvancedFixValue('');
                                     }}
                                     disabled={isDisabled || actionLoading}
@@ -1128,54 +1321,45 @@ export default function InventoryPage({ connected, socket }) {
                           )}
                           {advancedAction === 'fix_magazine' && (
                             <>
-                              <div className="flex flex-col gap-2">
-                                <span className="text-xs font-medium">Fix</span>
-                                <div className="flex flex-col gap-1">
-                                  {[
-                                    { value: 'milling', label: 'Milling' },
-                                    { value: 'style', label: 'Style' },
-                                  ].map(({ value, label }) => (
-                                    <label key={value} className="flex items-center gap-2 text-sm">
-                                      <input
-                                        type="radio"
-                                        name="advanced-fix-field"
-                                        value={value}
-                                        checked={advancedFixField === value}
-                                        onChange={() => {
-                                          setAdvancedFixField(value);
-                                          setAdvancedFixValue('');
-                                        }}
-                                        disabled={isDisabled || actionLoading}
-                                        className="rounded-full border-input"
-                                      />
-                                      {label}
-                                    </label>
-                                  ))}
-                                </div>
-                              </div>
                               <div className="flex flex-col gap-1">
-                                <label htmlFor="inv-advanced-fix-value" className="text-xs font-medium">
-                                  New value
+                                <label htmlFor="inv-fix-milling" className="text-xs font-medium">
+                                  Milling
                                 </label>
                                 <select
-                                  id="inv-advanced-fix-value"
-                                  value={advancedFixValue}
-                                  onChange={(e) => setAdvancedFixValue(e.target.value)}
+                                  id="inv-fix-milling"
+                                  value={advancedMilling}
+                                  onChange={(e) => {
+                                    setAdvancedMilling(e.target.value);
+                                    setAdvancedStyle('');
+                                  }}
                                   disabled={isDisabled || actionLoading}
                                   className="rounded-md border border-input bg-background px-3 py-2 text-sm"
                                 >
-                                  <option value="">Select {advancedFixField === 'milling' ? 'milling' : 'style'}</option>
-                                  {advancedFixField === 'milling'
-                                    ? millings.map((m) => (
-                                        <option key={m} value={m}>
-                                          {m}
-                                        </option>
-                                      ))
-                                    : (stylesByMilling[selectedMag?.milling] || []).map((s) => (
-                                        <option key={s} value={s}>
-                                          {s}
-                                        </option>
-                                      ))}
+                                  <option value="">Select milling</option>
+                                  {millings.map((m) => (
+                                    <option key={m} value={m}>
+                                      {m}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="flex flex-col gap-1">
+                                <label htmlFor="inv-fix-style" className="text-xs font-medium">
+                                  Style
+                                </label>
+                                <select
+                                  id="inv-fix-style"
+                                  value={advancedStyle}
+                                  onChange={(e) => setAdvancedStyle(e.target.value)}
+                                  disabled={isDisabled || actionLoading || !advancedMilling}
+                                  className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                >
+                                  <option value="">Select style</option>
+                                  {(stylesByMilling[advancedMilling] || []).map((s) => (
+                                    <option key={s} value={s}>
+                                      {s}
+                                    </option>
+                                  ))}
                                 </select>
                               </div>
                             </>
@@ -1192,7 +1376,7 @@ export default function InventoryPage({ connected, socket }) {
                               (advancedAction === 'add_magazine' || advancedAction === 'replace_keys' || advancedAction === 'replace_magazine') &&
                                 (!advancedMilling || !advancedStyle || advancedCount === '' || Number(advancedCount) < 0 || !Number.isInteger(Number(advancedCount))) ||
                               (advancedAction === 'remove_magazine' && selectedIsEmpty) ||
-                              (advancedAction === 'fix_magazine' && (selectedIsEmpty || !advancedFixValue)) ||
+                              (advancedAction === 'fix_magazine' && (selectedIsEmpty || !advancedMilling || !advancedStyle)) ||
                               (advancedAction === 'mark_reviewed' && !selectedIsDisabled)
                             }
                             onClick={handleExecuteAdvanced}
