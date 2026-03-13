@@ -2,10 +2,11 @@ import { useParams, Navigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CALIBRATION_REPORT_SECTIONS, formatSectionLabel } from '@/pages/calibrationReportSections';
 import TestcutsPage from '@/pages/TestcutsPage';
+import EjectionChecksPage from '@/pages/EjectionChecksPage';
 import BittingCalibrationPage from '@/pages/BittingCalibrationPage';
 import RunBasedCalibrationPage from '@/pages/RunBasedCalibrationPage';
 
-export default function CalibrationReportSection({ kioskName }) {
+export default function CalibrationReportSection({ kioskName, socket }) {
   const { sectionId, kiosk } = useParams();
   const isValid = sectionId && CALIBRATION_REPORT_SECTIONS.includes(sectionId);
   const reportPath = kiosk ? `/${kiosk}/calibration/report` : '/calibration/report';
@@ -15,7 +16,11 @@ export default function CalibrationReportSection({ kioskName }) {
   }
 
   if (sectionId === 'testcuts') {
-    return <TestcutsPage kioskName={kioskName} />;
+    return <TestcutsPage kioskName={kioskName} sectionId="testcuts" />;
+  }
+
+  if (sectionId === 'ejection_checks') {
+    return <EjectionChecksPage kioskName={kioskName} socket={socket} />;
   }
 
   if (sectionId === 'bitting_calibration') {

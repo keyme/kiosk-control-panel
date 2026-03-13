@@ -4,13 +4,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import ImageViewer from '@/components/ImageViewer';
 import { apiFetch } from '@/lib/apiFetch';
+import { formatSectionLabel } from '@/pages/calibrationReportSections';
 
-export default function TestcutsImagesPage({ kioskName: kioskNameProp }) {
+export default function TestcutsImagesPage({ kioskName: kioskNameProp, sectionId = 'testcuts' }) {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const kioskName = searchParams.get('kiosk_name') || kioskNameProp;
-  const testcutsPath = kioskName ? `/${kioskName}/calibration/report/testcuts` : '/calibration/report/testcuts';
+  const listPath = kioskName ? `/${kioskName}/calibration/report/${sectionId}` : `/calibration/report/${sectionId}`;
+  const sectionLabel = formatSectionLabel(sectionId);
   const [sections, setSections] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -87,10 +89,10 @@ export default function TestcutsImagesPage({ kioskName: kioskNameProp }) {
           <p className="text-destructive text-sm">{error}</p>
           <button
             type="button"
-            onClick={() => navigate(testcutsPath)}
+            onClick={() => navigate(listPath)}
             className="mt-2 text-sm underline"
           >
-            Back to Testcuts
+            Back to {sectionLabel}
           </button>
         </CardContent>
       </Card>
@@ -104,18 +106,51 @@ export default function TestcutsImagesPage({ kioskName: kioskNameProp }) {
           <p className="text-muted-foreground text-sm">No images for this ID.</p>
           <button
             type="button"
-            onClick={() => navigate(testcutsPath)}
+            onClick={() => navigate(listPath)}
             className="mt-2 text-sm underline"
           >
-            Back to Testcuts
+            Back to {sectionLabel}
           </button>
         </CardContent>
       </Card>
     );
   }
 
-  const sectionNames = Object.keys(sections);
-  const allImages = sectionNames.flatMap((sn) => sections[sn]);
+  // Ejection Checks: show only the key head check image, matched by filename
+  const keyHeadFilenameRegex = /key[_-]head_check/i;
+  const displaySections =
+    sectionId === 'ejection_checks'
+      ? Object.fromEntries(
+          Object.entries(sections)
+            .map(([name, images]) => {
+              const filtered = (images || []).filter(
+                (img) => img && typeof img.filename === 'string' && keyHeadFilenameRegex.test(img.filename)
+              );
+              return filtered.length > 0 ? [name, filtered] : null;
+            })
+            .filter(Boolean)
+        )
+      : sections;
+
+  if (sectionId === 'ejection_checks' && Object.keys(displaySections).length === 0) {
+    return (
+      <Card>
+        <CardContent className="pt-6">
+          <p className="text-muted-foreground text-sm">No key head check image for this run.</p>
+          <button
+            type="button"
+            onClick={() => navigate(listPath)}
+            className="mt-2 text-sm underline"
+          >
+            Back to {sectionLabel}
+          </button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const sectionNames = Object.keys(displaySections);
+  const allImages = sectionNames.flatMap((sn) => displaySections[sn]);
 
   const openFullscreenAt = (img) => {
     const index = allImages.findIndex((i) => i.key === img.key);
@@ -135,20 +170,22 @@ export default function TestcutsImagesPage({ kioskName: kioskNameProp }) {
       <div className="flex items-center gap-4">
         <button
           type="button"
-          onClick={() => navigate(testcutsPath)}
+          onClick={() => navigate(listPath)}
           className="text-sm text-muted-foreground hover:text-foreground underline"
         >
-          Back to Testcuts
+          Back to {sectionLabel}
         </button>
         <span className="text-muted-foreground text-sm">ID: {id}</span>
       </div>
       {sectionNames.map((sectionName) => (
         <Card key={sectionName}>
           <CardHeader>
-            <CardTitle className="text-base">{sectionName.replace(/_/g, ' ')}</CardTitle>
+            <CardTitle className="text-base">
+              {sectionId === 'ejection_checks' ? 'Key head check' : sectionName.replace(/_/g, ' ')}
+            </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
-            {sections[sectionName].map((img) => (
+            {displaySections[sectionName].map((img) => (
               <div key={img.key} className="flex flex-col gap-2">
                 <img
                   src={img.url}
