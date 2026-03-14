@@ -1,6 +1,5 @@
 export const CALIBRATION_REPORT_SECTIONS = [
   'testcuts',
-  'ejection_checks',
   'bitting_calibration',
   'bump_tower_calibration',
   'grip_calibration',

@@ -116,39 +116,7 @@ export default function TestcutsImagesPage({ kioskName: kioskNameProp, sectionId
     );
   }
 
-  // Ejection Checks: show only the key head check image, matched by filename
-  const keyHeadFilenameRegex = /key[_-]head_check/i;
-  const displaySections =
-    sectionId === 'ejection_checks'
-      ? Object.fromEntries(
-          Object.entries(sections)
-            .map(([name, images]) => {
-              const filtered = (images || []).filter(
-                (img) => img && typeof img.filename === 'string' && keyHeadFilenameRegex.test(img.filename)
-              );
-              return filtered.length > 0 ? [name, filtered] : null;
-            })
-            .filter(Boolean)
-        )
-      : sections;
-
-  if (sectionId === 'ejection_checks' && Object.keys(displaySections).length === 0) {
-    return (
-      <Card>
-        <CardContent className="pt-6">
-          <p className="text-muted-foreground text-sm">No key head check image for this run.</p>
-          <button
-            type="button"
-            onClick={() => navigate(listPath)}
-            className="mt-2 text-sm underline"
-          >
-            Back to {sectionLabel}
-          </button>
-        </CardContent>
-      </Card>
-    );
-  }
-
+  const displaySections = sections;
   const sectionNames = Object.keys(displaySections);
   const allImages = sectionNames.flatMap((sn) => displaySections[sn]);
 
@@ -181,7 +149,7 @@ export default function TestcutsImagesPage({ kioskName: kioskNameProp, sectionId
         <Card key={sectionName}>
           <CardHeader>
             <CardTitle className="text-base">
-              {sectionId === 'ejection_checks' ? 'Key head check' : sectionName.replace(/_/g, ' ')}
+              {sectionName.replace(/_/g, ' ')}
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">

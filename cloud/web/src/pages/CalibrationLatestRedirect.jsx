@@ -29,7 +29,7 @@ export default function CalibrationLatestRedirect({ sectionId, kioskName: kioskN
 
     let url;
     let getFirst;
-    if (sectionId === 'testcuts' || sectionId === 'ejection_checks') {
+    if (sectionId === 'testcuts') {
       url = `/api/calibration/testcuts/ids?kiosk=${encodeURIComponent(kioskName)}`;
       getFirst = (data) => (Array.isArray(data) && data.length > 0 ? String(data[0]) : null);
     } else if (sectionId === 'bitting_calibration') {
