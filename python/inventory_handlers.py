@@ -176,7 +176,7 @@ def _inventory_parse_magazine(data):
 
 
 def _inventory_run_update_pricing_if_needed(interface, data):
-    """Run update_pricing on kiosk when not no_api_update. Return None on success or when skipped, else error json."""
+    """Run update_pricing and full_update (production/staging) on kiosk when not no_api_update. Return None on success or when skipped, else error json."""
     if not getattr(keyme.config, "IS_KIOSK", False) or data.get("no_api_update"):
         return None
     from util.update_pricing import update_pricing
@@ -184,6 +184,9 @@ def _inventory_run_update_pricing_if_needed(interface, data):
         interface.restore_backup(do_full_update=False)
         keyme.log.error("Inventory: update_pricing failed after edit; restored backup")
         return WebsocketError([SocketErrors.OTHER.value, "Update pricing failed"]).to_json()
+    if not interface.do_full_update():
+        keyme.log.error("Inventory: full_update (production/staging) failed after edit")
+        return WebsocketError([SocketErrors.OTHER.value, "Full update failed"]).to_json()
     return None
 
 
