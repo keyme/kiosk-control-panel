@@ -438,6 +438,7 @@ export default function EjectionChecksPage({ kioskName, socket }) {
                         milling: updateModal.milling,
                         style: updateModal.style,
                         count: n,
+                        no_api_update: true,
                       })
                       .then((res) => {
                         if (res?.success) {

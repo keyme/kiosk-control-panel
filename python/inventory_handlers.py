@@ -347,19 +347,22 @@ def inventory_advanced_action(data):
                 return WebsocketError([SocketErrors.INVALID_INPUT.value, "Slot is empty; nothing to fix."]).to_json()
             milling = (data.get("milling") or "").strip()
             style = (data.get("style") or "").strip()
-            if milling and style:
-                key_data = {"magazine": magazine, "milling": milling, "name": style}
-            else:
+            if not milling or not style:
                 fix_field = (data.get("fix_field") or "").strip().lower()
                 fix_value = (data.get("fix_value") or "").strip()
-                if fix_field not in ('milling', 'style'):
-                    keyme.log.warning(f"inventory_advanced_action: fix_field must be milling or style, got {fix_field}")
-                    return WebsocketError([SocketErrors.INVALID_INPUT.value, "fix_field must be milling or style"]).to_json()
-                if not fix_value:
+                if fix_field in ('milling', 'style') and fix_value:
+                    current_milling = (mag_stock.get("milling") or "").strip()
+                    current_style = (mag_stock.get("style") or mag_stock.get("name") or "").strip()
+                    if fix_field == "milling":
+                        milling = fix_value
+                        style = current_style
+                    else:
+                        milling = current_milling
+                        style = fix_value
+                if not milling or not style:
                     keyme.log.warning("inventory_advanced_action: milling and style (or fix_field and fix_value) are required")
                     return WebsocketError([SocketErrors.INVALID_INPUT.value, "milling and style are required"]).to_json()
-                attribute = "milling" if fix_field == "milling" else "name"
-                key_data = {"magazine": magazine, attribute: fix_value}
+            key_data = {"magazine": magazine, "milling": milling, "name": style}
             from inventory.magazine_actions import MagazineAction
             interface.export_stock(backup=True)
             success = interface.update_magazine_data(magazine, key_data, reason=MagazineAction.FIX_DATA)
