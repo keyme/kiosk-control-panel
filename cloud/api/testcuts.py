@@ -9,6 +9,9 @@ from control_panel.cloud.api.s3_url_cache import get_presigned_url
 BUCKET = "keyme-calibration"
 
 
+KEY_HEAD_FILENAME_REGEX = re.compile(r"key[_-]head_check", re.IGNORECASE)
+
+
 def kiosk_to_hostname(kiosk: str) -> str:
     """Normalize kiosk param to S3 hostname (e.g. ns1136 -> ns1136.keymekiosk.com)."""
     if not kiosk or "." in kiosk:
@@ -98,3 +101,71 @@ def list_testcut_images(s3_client, bucket: str, kiosk_hostname: str, id_int: int
             )
         result[section] = out
     return result
+
+
+def _parse_magazine_from_filename(filename: str) -> int | None:
+    """Extract magazine number from filename used in key head checks.
+
+    Filenames are of the form PREFIX_<magazine>_...; this mirrors the
+    frontend's parseMagazineFromFilename helper.
+    """
+    if not filename or not isinstance(filename, str):
+        return None
+    m = re.match(r"^[^_]+_(\d+)_", filename)
+    if not m:
+        return None
+    try:
+        n = int(m.group(1))
+    except ValueError:
+        return None
+    return n if 1 <= n <= 20 else None
+
+
+def list_ejection_key_heads(
+    s3_client,
+    bucket: str,
+    kiosk_hostname: str,
+    *,
+    max_ids: int = 80,
+    max_magazines: int = 20,
+) -> dict[int, dict]:
+    """Return latest key-head-check image per magazine for a kiosk.
+
+    This is effectively the server-side version of the Inventory page's
+    ejection grid loading logic. It:
+    - lists recent testcut IDs,
+    - walks images for each ID (newest first),
+    - filters filenames matching KEY_HEAD_FILENAME_REGEX,
+    - extracts magazine number from filename,
+    - keeps the first image seen per magazine (latest),
+    - stops once we have max_magazines entries or exhaust IDs.
+
+    The result is a mapping:
+        {magazine_number: {"id": id_int, "image": {key, filename, url}}}
+    """
+    ids = list_testcut_ids(s3_client, bucket, kiosk_hostname)
+    if not ids:
+        return {}
+    limited_ids = ids[:max_ids]
+    by_mag: dict[int, dict] = {}
+
+    for id_int in limited_ids:
+        sections = list_testcut_images(s3_client, bucket, kiosk_hostname, id_int)
+        if not sections or not isinstance(sections, dict):
+            continue
+        for images in sections.values():
+            for img in images or []:
+                filename = img.get("filename")
+                if not filename or not KEY_HEAD_FILENAME_REGEX.search(filename):
+                    continue
+                mag = _parse_magazine_from_filename(filename)
+                if mag is None:
+                    continue
+                if mag not in by_mag:
+                    by_mag[mag] = {"id": id_int, "image": img}
+            if len(by_mag) >= max_magazines:
+                break
+        if len(by_mag) >= max_magazines:
+            break
+
+    return by_mag

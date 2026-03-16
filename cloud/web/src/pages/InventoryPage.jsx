@@ -304,51 +304,19 @@ export default function InventoryPage({ connected, socket }) {
     setEjectionError(null);
     setEjectionLoading(true);
     try {
-      const idsRes = await apiFetch(`/api/calibration/testcuts/ids?kiosk=${encodeURIComponent(k)}`);
-      if (!idsRes.ok) {
-        const errData = await idsRes.json().catch(() => ({}));
-        throw new Error(errData?.error || idsRes.statusText || 'Failed to load testcut IDs');
+      const res = await apiFetch(
+        `/api/calibration/ejection_images?kiosk=${encodeURIComponent(k)}`
+      );
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData?.error || res.statusText || 'Failed to load ejection images');
       }
-      const ids = await idsRes.json();
-      if (!Array.isArray(ids) || ids.length === 0) {
+      const data = await res.json();
+      if (!data || typeof data !== 'object') {
         setEjectionImagesByMag({});
-        setEjectionLoading(false);
         return;
       }
-      const limitedIds = ids.slice(0, 80);
-      const byMag = {};
-      // Iterate newest first; first image we see per mag is the latest.
-      // eslint-disable-next-line no-restricted-syntax
-      for (const id of limitedIds) {
-        // eslint-disable-next-line no-await-in-loop
-        const res = await apiFetch(
-          `/api/calibration/testcuts/images?kiosk=${encodeURIComponent(k)}&id=${encodeURIComponent(id)}`
-        );
-        if (!res.ok) {
-          // Skip this ID on error.
-          // eslint-disable-next-line no-continue
-          continue;
-        }
-        // eslint-disable-next-line no-await-in-loop
-        const sections = await res.json();
-        if (!sections || typeof sections !== 'object') {
-          // eslint-disable-next-line no-continue
-          continue;
-        }
-        Object.values(sections).forEach((images) => {
-          (images || []).forEach((img) => {
-            const filename = img?.filename;
-            if (!filename || !KEY_HEAD_FILENAME_REGEX.test(filename)) return;
-            const mag = parseMagazineFromFilename(filename);
-            if (!mag || mag < 1 || mag > 20) return;
-            if (!byMag[mag]) {
-              byMag[mag] = { id, image: img };
-            }
-          });
-        });
-        if (Object.keys(byMag).length >= 20) break;
-      }
-      setEjectionImagesByMag(byMag);
+      setEjectionImagesByMag(data);
     } catch (err) {
       setEjectionError(err?.message || 'Failed to load ejection images');
     } finally {
