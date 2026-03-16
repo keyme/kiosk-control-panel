@@ -2,6 +2,7 @@ import logging
 
 import boto3
 import httpx
+from botocore.config import Config
 from fastapi import APIRouter, Body, Depends, Query
 from fastapi.responses import JSONResponse, Response
 
@@ -161,7 +162,8 @@ def create_router():
         if not host:
             return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
         try:
-            s3 = boto3.client("s3")
+            s3_config = Config(max_pool_connections=50)
+            s3 = boto3.client("s3", config=s3_config)
             by_mag = list_ejection_key_heads(s3, TESTCUTS_BUCKET, host, max_ids=max_ids)
             return by_mag
         except Exception as e:

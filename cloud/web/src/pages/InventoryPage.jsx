@@ -8,16 +8,6 @@ import { apiFetch } from '@/lib/apiFetch';
 import { ERROR_UNSUPPORTED_COMMAND, UNSUPPORTED_FEATURE_MESSAGE } from '@/lib/deviceSocket';
 import { Camera, ChevronDown, ChevronRight, Download, Loader2, Maximize2, Package, RefreshCw, Upload, X } from 'lucide-react';
 
-const KEY_HEAD_FILENAME_REGEX = /key[_-]head_check/i;
-
-function parseMagazineFromFilename(filename) {
-  if (!filename || typeof filename !== 'string') return null;
-  const m = filename.match(/^[^_]+_(\d+)_/);
-  if (!m) return null;
-  const n = parseInt(m[1], 10);
-  return Number.isFinite(n) ? n : null;
-}
-
 /** Extract "YYYY-MM-DD-HH-MM-SS-UTC" from key or filename; return display string or null. */
 function formatKeyHeadTaken(keyOrFilename) {
   if (!keyOrFilename || typeof keyOrFilename !== 'string') return null;
@@ -1216,7 +1206,7 @@ export default function InventoryPage({ connected, socket }) {
                                       setAdvancedAction(value);
                                       if (value === 'fix_magazine' && selectedMag) {
                                         setAdvancedMilling(selectedMag.milling != null && String(selectedMag.milling) !== 'None' ? String(selectedMag.milling) : '');
-                                        setAdvancedStyle(selectedMag.style != null && String(selectedMag.style) !== 'None' ? String(selectedMag.display_name ?? selectedMag.style) : '');
+                                        setAdvancedStyle(selectedMag.style != null && String(selectedMag.style) !== 'None' ? String(selectedMag.style) : '');
                                       }
                                       if (value !== 'fix_magazine') setAdvancedFixValue('');
                                     }}

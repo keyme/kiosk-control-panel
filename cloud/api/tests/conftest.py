@@ -1,5 +1,10 @@
 """Shared fixtures: moto-mocked S3 bucket with seed data and FastAPI TestClient."""
 
+import os
+
+# Required before any import that loads control_panel.cloud.api.auth
+os.environ.setdefault("API_ENV", "prod")
+
 import json
 
 import boto3
@@ -31,6 +36,10 @@ def _seed_bucket(s3):
     put(f"testcuts/{KIOSK_HOST}/000/000/001/02_POST_PICKUP/img_c.png")
     # second testcut id = 2
     put(f"testcuts/{KIOSK_HOST}/000/000/002/01_PRE_PICKUP/img_d.png")
+    # key_head_check images for ejection_images endpoint (id 2: mag 1 only; id 1: mag 1 and 2)
+    put(f"testcuts/{KIOSK_HOST}/000/000/002/01_PRE_PICKUP/ns9999_1_2026-01-15-10-00-00-UTC_key_head_check.png")
+    put(f"testcuts/{KIOSK_HOST}/000/000/001/01_PRE_PICKUP/ns9999_1_2026-01-15-10-00-00-UTC_key_head_check.png")
+    put(f"testcuts/{KIOSK_HOST}/000/000/001/01_PRE_PICKUP/ns9999_2_2026-01-15-10-00-00-UTC_key_head_check.png")
 
     # ── bitting calibration (short name, date folders) ───────────────────
     put(f"bitting_calibration/{KIOSK_SHORT}/2026-01-15/image1.png")
