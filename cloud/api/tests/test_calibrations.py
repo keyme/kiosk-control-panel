@@ -1,4 +1,4 @@
-"""Tests for all calibration endpoints (bitting + six run-based types).
+"""Tests for all calibration endpoints (bitting + seven run-based types).
 
 Run-based types share the same /runs and /images endpoint shape, so they are
 parametrised together.  Bitting is tested separately because it uses /dates
@@ -18,6 +18,7 @@ RUN_CALIBRATIONS = [
     "gripper_leds_check",
     "overhead_cam_calibration",
     "pickup_y_calibration",
+    "carousel_calibration",
 ]
 
 
