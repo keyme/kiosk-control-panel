@@ -46,6 +46,8 @@ import { getToken, apiFetch } from '@/lib/apiFetch';
 import LoginPage from '@/pages/LoginPage';
 
 const DeviceHostContext = createContext({ deviceHost: '', setDeviceHost: () => {} });
+/** Key that changes when the connected device changes; used to remount kiosk-scoped pages so they clear old data. */
+const DeviceKeyContext = createContext('');
 
 const SIDEBAR_STORAGE_KEY = 'control_panel_sidebar_open';
 
@@ -63,6 +65,7 @@ function KioskSync() {
   const location = useLocation();
   const navigate = useNavigate();
   const { setDeviceHost } = useContext(DeviceHostContext);
+  const deviceKey = useContext(DeviceKeyContext);
   useEffect(() => {
     if (!kiosk) return;
     const normalized = normalizeDeviceHost(kiosk);
@@ -72,7 +75,7 @@ function KioskSync() {
       navigate(path + location.search + location.hash, { replace: true });
     }
   }, [kiosk, setDeviceHost, location.pathname, location.search, location.hash, navigate]);
-  return <Outlet />;
+  return <Outlet key={deviceKey} />;
 }
 
 /** Wraps a page so it receives kioskName from the :kiosk route param. */
@@ -638,7 +641,9 @@ function AppContent() {
     };
   }, [socket, connected]);
 
+  const deviceKey = connected ? (kioskName || deviceHost || '') : 'disconnected';
   return (
+      <DeviceKeyContext.Provider value={deviceKey}>
       <DeviceHostContext.Provider value={{ deviceHost, setDeviceHost }}>
         <Layout
           kioskName={kioskName}
@@ -691,6 +696,7 @@ function AppContent() {
           </Routes>
         </Layout>
       </DeviceHostContext.Provider>
+      </DeviceKeyContext.Provider>
   );
 }
 
