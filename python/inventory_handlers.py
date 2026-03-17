@@ -176,14 +176,18 @@ def _inventory_parse_magazine(data):
 
 
 def _inventory_run_update_pricing_if_needed(interface, data):
-    """Run update_pricing on kiosk when not no_api_update. Return None on success or when skipped, else error json."""
-    if not getattr(keyme.config, "IS_KIOSK", False) or data.get("no_api_update"):
+    """Run update_pricing (when not no_api_update) and full_update (production/staging) on kiosk. Return None on success or when skipped, else error json."""
+    if not getattr(keyme.config, "IS_KIOSK", False):
         return None
-    from util.update_pricing import update_pricing
-    if update_pricing() != 0:
-        interface.restore_backup(do_full_update=False)
-        keyme.log.error("Inventory: update_pricing failed after edit; restored backup")
-        return WebsocketError([SocketErrors.OTHER.value, "Update pricing failed"]).to_json()
+    if not data.get("no_api_update"):
+        from util.update_pricing import update_pricing
+        if update_pricing() != 0:
+            interface.restore_backup(do_full_update=False)
+            keyme.log.error("Inventory: update_pricing failed after edit; restored backup")
+            return WebsocketError([SocketErrors.OTHER.value, "Update pricing failed"]).to_json()
+    if not interface.do_full_update():
+        keyme.log.error("Inventory: full_update (production/staging) failed after edit")
+        return WebsocketError([SocketErrors.OTHER.value, "Full update failed"]).to_json()
     return None
 
 
@@ -342,19 +346,27 @@ def inventory_advanced_action(data):
             return err if err is not None else WebsocketSuccess({}).to_json()
 
         if action == 'fix_magazine':
-            fix_field = (data.get("fix_field") or "").strip().lower()
-            fix_value = (data.get("fix_value") or "").strip()
-            if fix_field not in ('milling', 'style'):
-                keyme.log.warning(f"inventory_advanced_action: fix_field must be milling or style, got {fix_field}")
-                return WebsocketError([SocketErrors.INVALID_INPUT.value, "fix_field must be milling or style"]).to_json()
-            if not fix_value:
-                keyme.log.warning("inventory_advanced_action: fix_value is required")
-                return WebsocketError([SocketErrors.INVALID_INPUT.value, "fix_value is required"]).to_json()
             if not mag_stock:
                 keyme.log.warning(f"inventory_advanced_action: fix_magazine on empty slot {magazine}")
                 return WebsocketError([SocketErrors.INVALID_INPUT.value, "Slot is empty; nothing to fix."]).to_json()
-            attribute = "milling" if fix_field == "milling" else "name"
-            key_data = {"magazine": magazine, attribute: fix_value}
+            milling = (data.get("milling") or "").strip()
+            style = (data.get("style") or "").strip()
+            if not milling or not style:
+                fix_field = (data.get("fix_field") or "").strip().lower()
+                fix_value = (data.get("fix_value") or "").strip()
+                if fix_field in ('milling', 'style') and fix_value:
+                    current_milling = (mag_stock.get("milling") or "").strip()
+                    current_style = (mag_stock.get("style") or mag_stock.get("name") or "").strip()
+                    if fix_field == "milling":
+                        milling = fix_value
+                        style = current_style
+                    else:
+                        milling = current_milling
+                        style = fix_value
+                if not milling or not style:
+                    keyme.log.warning("inventory_advanced_action: milling and style (or fix_field and fix_value) are required")
+                    return WebsocketError([SocketErrors.INVALID_INPUT.value, "milling and style are required"]).to_json()
+            key_data = {"magazine": magazine, "milling": milling, "name": style}
             from inventory.magazine_actions import MagazineAction
             interface.export_stock(backup=True)
             success = interface.update_magazine_data(magazine, key_data, reason=MagazineAction.FIX_DATA)
