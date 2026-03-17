@@ -132,6 +132,10 @@ export default function InventoryPage({ connected, socket }) {
   const [ejectionLoading, setEjectionLoading] = useState(false);
   const [ejectionError, setEjectionError] = useState(null);
 
+  const [ejectionCheckConfirmOpen, setEjectionCheckConfirmOpen] = useState(false);
+  const [ejectionCheckLoading, setEjectionCheckLoading] = useState(false);
+  const [ejectionCheckError, setEjectionCheckError] = useState(null);
+
   useEffect(() => {
     if (!hasPendingPricingUpdate) return;
     const onBeforeUnload = (e) => {
@@ -319,6 +323,41 @@ export default function InventoryPage({ connected, socket }) {
     setCaptureImages(null);
     setCaptureConfirmOpen(true);
   };
+
+  const handleOpenEjectionCheckConfirm = () => {
+    setEjectionCheckError(null);
+    setEjectionCheckConfirmOpen(true);
+  };
+
+  const handleConfirmEjectionCheck = useCallback(async () => {
+    if (selectedMagazine == null || !socket?.requestIfSupported) return;
+    setEjectionCheckError(null);
+    setEjectionCheckLoading(true);
+    try {
+      const res = await socket.requestIfSupported('inventory_run_ejection_checks', {
+        magazine: selectedMagazine,
+      });
+      if (res?.success) {
+        showActionMessage('Ejection check started. Images will appear once available.');
+        // Refresh ejection images so newly generated test cuts show up when ready.
+        loadEjectionImages();
+        setEjectionCheckConfirmOpen(false);
+      } else {
+        const msg = (res?.errors && res.errors[0]) || 'Failed to start ejection check';
+        setEjectionCheckError(msg);
+      }
+    } catch (err) {
+      setEjectionCheckError(err?.message || 'Failed to start ejection check');
+    } finally {
+      setEjectionCheckLoading(false);
+    }
+  }, [selectedMagazine, socket, loadEjectionImages]);
+
+  const handleCloseEjectionCheckModal = useCallback(() => {
+    setEjectionCheckConfirmOpen(false);
+    setEjectionCheckError(null);
+    setEjectionCheckLoading(false);
+  }, []);
 
   const handleConfirmCapture = useCallback(async () => {
     if (selectedMagazine == null || !socket?.requestIfSupported) return;
@@ -1360,7 +1399,7 @@ export default function InventoryPage({ connected, socket }) {
               )}
             </div>
             {advancedOpen && selectedMagazine != null && (
-              <div className="shrink-0 border-t border-border p-4">
+              <div className="shrink-0 border-t border-border p-4 space-y-2">
                 <button
                   type="button"
                   disabled={isDisabled || actionLoading || captureLoading}
@@ -1370,6 +1409,31 @@ export default function InventoryPage({ connected, socket }) {
                   {captureLoading ? <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden /> : <Camera className="size-5 shrink-0" aria-hidden />}
                   Rotate to this magazine & capture
                 </button>
+                <div className="space-y-1">
+                  <button
+                    type="button"
+                    disabled={isDisabled || actionLoading || ejectionCheckLoading}
+                    onClick={handleOpenEjectionCheckConfirm}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-md border border-indigo-500/50 bg-indigo-500/10 px-3 py-2 text-sm font-medium text-indigo-800 hover:bg-indigo-500/20 disabled:opacity-50 dark:text-indigo-200"
+                  >
+                    {ejectionCheckLoading ? <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden /> : <Camera className="size-5 shrink-0" aria-hidden />}
+                    Run ejection check
+                  </button>
+                  {selectedMagazine != null && ejectionImagesByMag[selectedMagazine] && (() => {
+                    const selImg = ejectionImagesByMag[selectedMagazine].image;
+                    const takenLabel = formatKeyHeadTaken(selImg.key ?? selImg.filename);
+                    return (
+                      <p className="text-xs text-muted-foreground">
+                        Last ejection image{takenLabel ? `: ${takenLabel}` : ''}.
+                      </p>
+                    );
+                  })()}
+                  {selectedMagazine != null && !ejectionImagesByMag[selectedMagazine] && (
+                    <p className="text-xs text-muted-foreground">
+                      No ejection image found yet for this magazine.
+                    </p>
+                  )}
+                </div>
               </div>
             )}
           </aside>
@@ -1518,6 +1582,60 @@ export default function InventoryPage({ connected, socket }) {
                       </button>
                     </div>
                   </>
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
+          <Dialog open={ejectionCheckConfirmOpen} onOpenChange={(open) => !open && handleCloseEjectionCheckModal()}>
+            <DialogContent showClose={true} onClose={handleCloseEjectionCheckModal} className="max-w-xl w-[92vw]">
+              <DialogHeader>
+                <DialogTitle>Run ejection check</DialogTitle>
+                {!ejectionCheckLoading && !ejectionCheckError && (
+                  <DialogDescription>
+                    This will run the ejector checks script for magazine {selectedMagazine}. The kiosk will eject one key (with retries)
+                    and record test cuts. New key head images will appear in the ejection grid once processing completes. Continue?
+                  </DialogDescription>
+                )}
+              </DialogHeader>
+              <div className="flex flex-col gap-4 pt-2">
+                {ejectionCheckLoading && (
+                  <div className="flex flex-col items-center justify-center gap-3 py-6">
+                    <Loader2 className="size-8 animate-spin text-muted-foreground" aria-hidden />
+                    <p className="text-sm text-muted-foreground">Starting ejector checks…</p>
+                    <p className="text-xs text-muted-foreground">This can take several minutes. The kiosk may move and eject keys.</p>
+                  </div>
+                )}
+                {ejectionCheckError && !ejectionCheckLoading && (
+                  <>
+                    <p className="text-sm text-destructive">{ejectionCheckError}</p>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={handleCloseEjectionCheckModal}
+                        className="rounded-md bg-muted px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/80"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </>
+                )}
+                {!ejectionCheckLoading && !ejectionCheckError && (
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCloseEjectionCheckModal}
+                      className="rounded-md bg-muted px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/80"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleConfirmEjectionCheck}
+                      className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                    >
+                      Run ejection check
+                    </button>
+                  </div>
                 )}
               </div>
             </DialogContent>
