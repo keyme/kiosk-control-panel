@@ -955,17 +955,18 @@ export default function InventoryPage({ connected, socket }) {
             <p className="text-xs text-muted-foreground">
               Showing the most recent key head check image found per magazine from recent test cuts.
             </p>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
               {Array.from({ length: SEGMENT_COUNT }, (_, i) => {
                 const magNum = i + 1;
                 const entry = ejectionImagesByMag[magNum];
+                const mag = magazines[magNum - 1];
                 if (!entry) {
                   return (
                     <button
                       key={magNum}
                       type="button"
                       onClick={() => handleSelect(magNum)}
-                      className="w-full rounded-md border border-dashed border-muted-foreground/40 p-3 text-left text-xs text-muted-foreground hover:border-muted-foreground/60 hover:bg-muted/30 cursor-pointer transition-colors"
+                      className="w-full rounded-md border border-dashed border-muted-foreground/40 p-3 text-left text-base text-muted-foreground hover:border-muted-foreground/60 hover:bg-muted/30 cursor-pointer transition-colors"
                     >
                       <div className="mb-1 font-medium text-foreground/80">Mag #{magNum}</div>
                       <div>No key head image loaded.</div>
@@ -974,6 +975,9 @@ export default function InventoryPage({ connected, socket }) {
                   );
                 }
                 const takenLabel = formatKeyHeadTaken(entry.image.key ?? entry.image.filename);
+                const millingStyle = mag
+                  ? `${mag.milling ?? '—'} / ${mag.display_name ?? mag.style ?? '—'}`
+                  : null;
                 return (
                   <button
                     key={magNum}
@@ -981,7 +985,7 @@ export default function InventoryPage({ connected, socket }) {
                     onClick={() => handleSelect(magNum)}
                     className="w-full space-y-2 rounded-md border border-border p-2 text-left hover:bg-muted/30 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
                   >
-                    <div className="text-xs font-medium text-foreground/80">
+                    <div className="text-base font-medium text-foreground/80">
                       Mag #{magNum} • ID {entry.id}
                     </div>
                     <img
@@ -989,12 +993,17 @@ export default function InventoryPage({ connected, socket }) {
                       alt={entry.image.filename}
                       className="h-32 w-full rounded border border-border object-contain bg-background"
                     />
+                    {millingStyle != null && (
+                      <p className="text-base font-semibold text-foreground">
+                        {millingStyle}
+                      </p>
+                    )}
                     {takenLabel != null && (
                       <p className="text-base font-bold text-foreground">
                         Taken: {takenLabel}
                       </p>
                     )}
-                    <div className="text-[11px] text-muted-foreground break-all">
+                    <div className="text-base text-muted-foreground break-all">
                       {entry.image.filename}
                     </div>
                     <span className="sr-only">Open controls for magazine {magNum}</span>
