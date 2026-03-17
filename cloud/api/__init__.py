@@ -2,6 +2,7 @@ import logging
 
 import boto3
 import httpx
+from botocore.config import Config
 from fastapi import APIRouter, Body, Depends, Query
 from fastapi.responses import JSONResponse, Response
 
@@ -18,6 +19,7 @@ from control_panel.cloud.api.testcuts import (
     kiosk_to_hostname,
     list_testcut_ids,
     list_testcut_images,
+    list_ejection_key_heads,
     BUCKET as TESTCUTS_BUCKET,
 )
 from control_panel.cloud.api.bitting_calibration import list_bitting_dates, list_bitting_images
@@ -141,6 +143,31 @@ def create_router():
             return sections
         except Exception as e:
             _log.exception("Testcuts list images failed")
+            return JSONResponse({"error": str(e)}, status_code=503)
+
+    @router.get("/calibration/ejection_images")
+    def calibration_ejection_images(
+        kiosk: str = Query(None),
+        max_ids: int = Query(80, ge=1, le=500),
+    ):
+        """Return latest key head check image per magazine for a kiosk.
+
+        This is a higher-level API for the Inventory ejection grid that avoids
+        the frontend having to iterate over all testcut IDs and sections.
+        """
+        _log.info("calibration ejection images kiosk=%s max_ids=%s", kiosk, max_ids)
+        if not kiosk:
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
+        host = kiosk_to_hostname(kiosk)
+        if not host:
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
+        try:
+            s3_config = Config(max_pool_connections=50)
+            s3 = boto3.client("s3", config=s3_config)
+            by_mag = list_ejection_key_heads(s3, TESTCUTS_BUCKET, host, max_ids=max_ids)
+            return by_mag
+        except Exception as e:
+            _log.exception("Ejection images lookup failed")
             return JSONResponse({"error": str(e)}, status_code=503)
 
     @router.get("/calibration/bitting_calibration/dates")

@@ -5,7 +5,7 @@ import TestcutsPage from '@/pages/TestcutsPage';
 import BittingCalibrationPage from '@/pages/BittingCalibrationPage';
 import RunBasedCalibrationPage from '@/pages/RunBasedCalibrationPage';
 
-export default function CalibrationReportSection({ kioskName }) {
+export default function CalibrationReportSection({ kioskName, socket }) {
   const { sectionId, kiosk } = useParams();
   const isValid = sectionId && CALIBRATION_REPORT_SECTIONS.includes(sectionId);
   const reportPath = kiosk ? `/${kiosk}/calibration/report` : '/calibration/report';
@@ -15,7 +15,7 @@ export default function CalibrationReportSection({ kioskName }) {
   }
 
   if (sectionId === 'testcuts') {
-    return <TestcutsPage kioskName={kioskName} />;
+    return <TestcutsPage kioskName={kioskName} sectionId="testcuts" />;
   }
 
   if (sectionId === 'bitting_calibration') {
