@@ -45,6 +45,16 @@ This document provides guidance for AI agents (and humans) working on the **cont
 
 ---
 
+## Testing
+
+**Cloud API** tests live under `cloud/api/tests/` and use **pytest** with **uv**. Run them from the cloud app directory so `uv` uses `cloud/pyproject.toml` and its dev dependencies (e.g. pytest). Set `API_ENV=prod` because the API reads it at import time.
+
+```bash
+cd control_panel/cloud && API_ENV=prod uv run pytest api/tests/ -v --tb=short
+```
+
+---
+
 ## Performance Constraints
 
 ### Resource priority (CPU and memory)

@@ -7,6 +7,7 @@ export const CALIBRATION_REPORT_SECTIONS = [
   'gripper_leds_check',
   'overhead_cam_calibration',
   'pickup_y_calibration',
+  'carousel_calibration',
 ];
 
 export function formatSectionLabel(key) {
