@@ -641,9 +641,10 @@ function AppContent() {
     };
   }, [socket, connected]);
 
-  const deviceKey = connected ? (kioskName || deviceHost || '') : 'disconnected';
+  const canonicalDeviceId = normalizeDeviceHost(kioskName || deviceHost || '');
+  const deviceKey = connected ? (canonicalDeviceId || 'connected') : 'disconnected';
   return (
-      <DeviceKeyContext.Provider value={deviceKey}>
+    <DeviceKeyContext.Provider value={deviceKey}>
       <DeviceHostContext.Provider value={{ deviceHost, setDeviceHost }}>
         <Layout
           kioskName={kioskName}
@@ -696,7 +697,7 @@ function AppContent() {
           </Routes>
         </Layout>
       </DeviceHostContext.Provider>
-      </DeviceKeyContext.Provider>
+    </DeviceKeyContext.Provider>
   );
 }
 
