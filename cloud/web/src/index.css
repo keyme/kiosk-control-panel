@@ -9,8 +9,15 @@
   box-sizing: border-box;
 }
 
+html {
+  overflow: hidden;
+  height: 100%;
+}
+
 body {
   margin: 0;
+  height: 100%;
+  overflow: hidden;
   font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 15px;
   -webkit-font-smoothing: antialiased;
