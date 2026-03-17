@@ -44,6 +44,10 @@ from control_panel.cloud.api.pickup_y_calibration import (
     list_pickup_y_runs,
     list_pickup_y_images,
 )
+from control_panel.cloud.api.carousel_calibration import (
+    list_carousel_runs,
+    list_carousel_images,
+)
 from control_panel.cloud.api.calibration_trace import (
     list_trace_runs,
     get_trace,
@@ -413,6 +417,41 @@ def create_router():
             return sections
         except Exception as e:
             _log.exception("Pickup Y calibration list images failed")
+            return JSONResponse({"error": str(e)}, status_code=503)
+
+    @router.get("/calibration/carousel_calibration/runs")
+    def calibration_carousel_runs(kiosk: str = Query(None)):
+        _log.info(f"calibration carousel_calibration runs {kiosk=}")
+        if not kiosk:
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
+        host = kiosk_to_hostname(kiosk)
+        if not host:
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
+        try:
+            s3 = boto3.client("s3")
+            runs = list_carousel_runs(s3, TESTCUTS_BUCKET, host)
+            return runs
+        except Exception as e:
+            _log.exception("Carousel calibration list runs failed")
+            return JSONResponse({"error": str(e)}, status_code=503)
+
+    @router.get("/calibration/carousel_calibration/images")
+    def calibration_carousel_images(kiosk: str = Query(None), run_id: str = Query(None)):
+        _log.info(f"calibration carousel_calibration images {kiosk=} {run_id=}")
+        if not kiosk:
+            return JSONResponse({"error": "Missing required query parameter: kiosk"}, status_code=400)
+        if not run_id or not run_id.strip():
+            return JSONResponse({"error": "Missing required query parameter: run_id"}, status_code=400)
+        run_id_val = run_id.strip()
+        host = kiosk_to_hostname(kiosk)
+        if not host:
+            return JSONResponse({"error": "Invalid kiosk"}, status_code=400)
+        try:
+            s3 = boto3.client("s3")
+            sections = list_carousel_images(s3, TESTCUTS_BUCKET, host, run_id_val)
+            return sections
+        except Exception as e:
+            _log.exception("Carousel calibration list images failed")
             return JSONResponse({"error": str(e)}, status_code=503)
 
     @router.get("/calibration/trace/gripper_cam/runs")

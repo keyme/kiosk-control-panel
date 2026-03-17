@@ -28,7 +28,8 @@ export default function CalibrationReportSection({ kioskName, socket }) {
     sectionId === 'gripper_cam_calibration' ||
     sectionId === 'gripper_leds_check' ||
     sectionId === 'overhead_cam_calibration' ||
-    sectionId === 'pickup_y_calibration'
+    sectionId === 'pickup_y_calibration' ||
+    sectionId === 'carousel_calibration'
   ) {
     return <RunBasedCalibrationPage sectionId={sectionId} kioskName={kioskName} />;
   }

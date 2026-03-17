@@ -62,6 +62,10 @@ def _seed_bucket(s3):
         put(f"{prefix}/{KIOSK_SHORT}/{KIOSK_SHORT}_{TS1}_front{ext}")
         put(f"{prefix}/{KIOSK_SHORT}/{KIOSK_SHORT}_{TS2}_front{ext}")
 
+    # ── carousel calibration (flat, timestamp in filename) ─────────────────
+    put(f"carousel_calibration/{KIOSK_SHORT}/{KIOSK_SHORT}_{TS1}_pre_alignment_check.jpg")
+    put(f"carousel_calibration/{KIOSK_SHORT}/{KIOSK_SHORT}_{TS2}_pre_alignment_check_mag_1_annotated.jpg")
+
     # ── calibration trace ────────────────────────────────────────────────
     trace_run_prefix = f"gripper_cam_calibration/{KIOSK_SHORT}/trace_{TS1}/"
     trace_json = {
