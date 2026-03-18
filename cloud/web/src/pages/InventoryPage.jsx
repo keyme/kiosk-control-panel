@@ -158,6 +158,7 @@ export default function InventoryPage({ connected, socket }) {
     const handleKey = (e) => {
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault();
+        e.stopPropagation();
         if (!fullscreenImages.length) return;
         const delta = e.key === 'ArrowLeft' ? -1 : 1;
         const nextIndex = (fullscreenIndex + delta + fullscreenImages.length) % fullscreenImages.length;
@@ -171,6 +172,8 @@ export default function InventoryPage({ connected, socket }) {
           });
         }
       } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
         setFullscreenImage(null);
         setFullscreenImages(null);
         setFullscreenIndex(null);
