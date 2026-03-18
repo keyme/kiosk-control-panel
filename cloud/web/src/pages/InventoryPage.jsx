@@ -300,7 +300,7 @@ export default function InventoryPage({ connected, socket }) {
     setEjectionLoading(true);
     try {
       const res = await apiFetch(
-        `/api/calibration/ejection_images?kiosk=${encodeURIComponent(k)}`
+        `/api/calibration/ejection_images?kiosk=${encodeURIComponent(k)}&max_ids=500`
       );
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
