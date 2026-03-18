@@ -120,7 +120,9 @@ export default function InventoryPage({ connected, socket }) {
   const [captureError, setCaptureError] = useState(null);
   const [captureImages, setCaptureImages] = useState(null);
   const [captureRunAnyway, setCaptureRunAnyway] = useState(false);
-  const [fullscreenImage, setFullscreenImage] = useState(null); // { base64, label } or null
+  const [fullscreenImage, setFullscreenImage] = useState(null); // { base64?, url?, label } or null
+  const [fullscreenImages, setFullscreenImages] = useState(null); // optional array of { url, filename }
+  const [fullscreenIndex, setFullscreenIndex] = useState(null); // index into fullscreenImages when present
   const [restoreFromAdminModalOpen, setRestoreFromAdminModalOpen] = useState(false);
   const [restoreFromAdminKiosk, setRestoreFromAdminKiosk] = useState('');
   const [fetchedStock, setFetchedStock] = useState(null);
@@ -1733,13 +1735,15 @@ export default function InventoryPage({ connected, socket }) {
                           key={`${img.key || img.filename || idx}`}
                           type="button"
                           className="group flex flex-col gap-1 rounded-md border border-border bg-background p-1 text-left"
-                          onClick={() =>
+                          onClick={() => {
+                            setFullscreenImages(ejectionCheckImages);
+                            setFullscreenIndex(idx);
                             setFullscreenImage({
                               base64: null,
                               label: img.filename || 'Image',
                               url: img.url,
-                            })
-                          }
+                            });
+                          }}
                         >
                           <img
                             src={img.url}
@@ -1811,19 +1815,68 @@ export default function InventoryPage({ connected, socket }) {
               role="dialog"
               aria-modal="true"
               aria-label={`Fullscreen: ${fullscreenImage.label}`}
-              onClick={() => setFullscreenImage(null)}
+              onClick={() => {
+                setFullscreenImage(null);
+                setFullscreenImages(null);
+                setFullscreenIndex(null);
+              }}
             >
               <p className="absolute left-4 top-4 text-sm text-white/90">{fullscreenImage.label}</p>
               <button
                 type="button"
-                onClick={() => setFullscreenImage(null)}
+                onClick={() => {
+                  setFullscreenImage(null);
+                  setFullscreenImages(null);
+                  setFullscreenIndex(null);
+                }}
                 className="absolute right-4 top-4 rounded-md bg-white/10 p-2 text-white hover:bg-white/20"
                 aria-label="Close fullscreen"
               >
                 <X className="size-5" />
               </button>
+              {fullscreenImages && fullscreenImages.length > 1 && fullscreenIndex != null && (
+                <>
+                  <button
+                    type="button"
+                    className="absolute left-4 top-1/2 -translate-y-1/2 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+                    aria-label="Previous image"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const nextIndex =
+                        (fullscreenIndex - 1 + fullscreenImages.length) % fullscreenImages.length;
+                      setFullscreenIndex(nextIndex);
+                      const img = fullscreenImages[nextIndex];
+                      setFullscreenImage({
+                        base64: null,
+                        url: img.url,
+                        label: img.filename || fullscreenImage.label,
+                      });
+                    }}
+                  >
+                    ‹
+                  </button>
+                  <button
+                    type="button"
+                    className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+                    aria-label="Next image"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const nextIndex = (fullscreenIndex + 1) % fullscreenImages.length;
+                      setFullscreenIndex(nextIndex);
+                      const img = fullscreenImages[nextIndex];
+                      setFullscreenImage({
+                        base64: null,
+                        url: img.url,
+                        label: img.filename || fullscreenImage.label,
+                      });
+                    }}
+                  >
+                    ›
+                  </button>
+                </>
+              )}
               <img
-                src={captureImageDataUrl(fullscreenImage.base64)}
+                src={fullscreenImage.url || (fullscreenImage.base64 ? captureImageDataUrl(fullscreenImage.base64) : '')}
                 alt={fullscreenImage.label}
                 className="max-h-[90vh] max-w-full object-contain"
                 onClick={(e) => e.stopPropagation()}
