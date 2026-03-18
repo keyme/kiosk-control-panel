@@ -248,6 +248,46 @@ export default function InventoryPage({ connected, socket }) {
     setActionMessage({ text: message, isError });
   };
 
+  const openEjectionGalleryForSelected = useCallback(async () => {
+    const magNum = selectedMagazine;
+    const k = (kiosk || '').trim();
+    if (!magNum || !k) return;
+    const entry = ejectionImagesByMag[magNum];
+    if (!entry) return;
+    setEjectionCheckError(null);
+    setEjectionCheckLoading(false);
+    setEjectionCheckPolling(false);
+    setEjectionCheckResult({ id: entry.id, image: entry.image });
+    setEjectionCheckImages(null);
+    setEjectionCheckImagesLoading(true);
+    setEjectionCheckConfirmOpen(true);
+    try {
+      const resp = await apiFetch(
+        `/api/calibration/testcuts/images?kiosk=${encodeURIComponent(k)}&id=${encodeURIComponent(
+          String(entry.id),
+        )}`,
+      );
+      if (resp.ok) {
+        const payload = await resp.json();
+        let imgsSource = null;
+        if (payload && typeof payload === 'object') {
+          const values = Object.values(payload);
+          if (values.length > 0 && Array.isArray(values[0])) {
+            imgsSource = values[0];
+          }
+        }
+        const imgs = Array.isArray(imgsSource) ? imgsSource.filter((img) => img && img.url) : [];
+        setEjectionCheckImages(imgs);
+      } else {
+        setEjectionCheckImages([]);
+      }
+    } catch {
+      setEjectionCheckImages([]);
+    } finally {
+      setEjectionCheckImagesLoading(false);
+    }
+  }, [selectedMagazine, kiosk, ejectionImagesByMag]);
+
   const runAction = (event, data) => {
     if (!socket?.requestIfSupported || actionLoading || isDisabled) return;
     setActionMessage(null);
@@ -1256,6 +1296,13 @@ export default function InventoryPage({ connected, socket }) {
                         <p className="text-[11px] text-muted-foreground break-all">
                           {selImg.filename}
                         </p>
+                        <button
+                          type="button"
+                          onClick={openEjectionGalleryForSelected}
+                          className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent"
+                        >
+                          View ejection run images
+                        </button>
                       </div>
                     );
                   })()}
