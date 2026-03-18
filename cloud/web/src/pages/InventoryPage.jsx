@@ -1607,8 +1607,23 @@ export default function InventoryPage({ connected, socket }) {
               </div>
             )}
           </aside>
-          <Dialog open={captureConfirmOpen} onOpenChange={(open) => !open && handleCloseCaptureModal()}>
-            <DialogContent showClose={true} onClose={handleCloseCaptureModal} className="max-w-5xl w-[92vw] max-h-[90vh] overflow-y-auto">
+          <Dialog
+            open={captureConfirmOpen}
+            onOpenChange={(open) => {
+              if (!open && !fullscreenImage) handleCloseCaptureModal();
+            }}
+          >
+            <DialogContent
+              showClose={true}
+              onClose={handleCloseCaptureModal}
+              onEscapeKeyDown={(e) => {
+                if (fullscreenImage) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }
+              }}
+              className="max-w-5xl w-[92vw] max-h-[90vh] overflow-y-auto"
+            >
               <DialogHeader>
                 <DialogTitle>Rotate to camera &amp; capture</DialogTitle>
                 {!captureLoading && !captureImages && !captureError && (
@@ -1756,11 +1771,22 @@ export default function InventoryPage({ connected, socket }) {
               </div>
             </DialogContent>
           </Dialog>
-          <Dialog open={ejectionCheckConfirmOpen} onOpenChange={(open) => !open && handleCloseEjectionCheckModal()}>
+          <Dialog
+            open={ejectionCheckConfirmOpen}
+            onOpenChange={(open) => {
+              if (!open && !fullscreenImage) handleCloseEjectionCheckModal();
+            }}
+          >
             <DialogContent
               showClose={true}
               onClose={handleCloseEjectionCheckModal}
               onInteractOutside={(e) => e.preventDefault()}
+              onEscapeKeyDown={(e) => {
+                if (fullscreenImage) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }
+              }}
               className="max-w-xl w-[92vw]"
             >
               <DialogHeader>
@@ -1893,14 +1919,13 @@ export default function InventoryPage({ connected, socket }) {
           </Dialog>
           {fullscreenImage && (
             <div
-              className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/95 p-4"
+              className="fixed inset-0 z-[100] pointer-events-auto flex flex-col items-center justify-center bg-black/95 p-4"
               role="dialog"
               aria-modal="true"
               aria-label={`Fullscreen: ${fullscreenImage.label}`}
-              onClick={() => {
-                setFullscreenImage(null);
-                setFullscreenImages(null);
-                setFullscreenIndex(null);
+              onClick={(e) => {
+                // Prevent accidental background clicks from interacting with underlying modals.
+                e.stopPropagation();
               }}
             >
               <p className="absolute left-4 top-4 text-sm text-white/90">{fullscreenImage.label}</p>
@@ -1961,9 +1986,21 @@ export default function InventoryPage({ connected, socket }) {
                 src={fullscreenImage.url || (fullscreenImage.base64 ? captureImageDataUrl(fullscreenImage.base64) : '')}
                 alt={fullscreenImage.label}
                 className="max-h-[90vh] max-w-full object-contain"
-                onClick={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!fullscreenImages || fullscreenImages.length <= 1 || fullscreenIndex == null) return;
+                  const nextIndex = (fullscreenIndex + 1) % fullscreenImages.length;
+                  setFullscreenIndex(nextIndex);
+                  const img = fullscreenImages[nextIndex];
+                  if (!img?.url) return;
+                  setFullscreenImage({
+                    base64: null,
+                    url: img.url,
+                    label: img.filename || fullscreenImage.label,
+                  });
+                }}
               />
-              <p className="mt-2 text-xs text-white/70">Click outside or press Escape to close</p>
+              <p className="mt-2 text-xs text-white/70">Esc or X closes. Click image or use Left/Right arrows to cycle.</p>
             </div>
           )}
         </>
