@@ -741,6 +741,11 @@ def inventory_run_ejection_checks(data):
     Gate: same as fleet (kiosk in use / remote session)."""
     data = data if isinstance(data, dict) else {}
     keyme.log.info("WS: requesting inventory_run_ejection_checks")
+    keyme.log.info(
+        "inventory_run_ejection_checks inputs override_remote=%s data=%s",
+        data.get("override_remote"),
+        {k: v for k, v in data.items() if k != "token"},
+    )
     allowed, errors = check_fleet_command_allowed(data)
     if not allowed:
         return WebsocketError([SocketErrors.OTHER.value, (errors or ["Not allowed"])[0]]).to_json()
@@ -765,6 +770,7 @@ def inventory_run_ejection_checks(data):
             "make_ticket": False,
         },
     }
+    keyme.log.info("inventory_run_ejection_checks dispatching job_payload=%s", job_payload)
     try:
         # RUN_JOB is fire-and-forget; GUI5 uses send(), not send_sync().
         keyme.ipc.send('JOB_SERVER', 'RUN_JOB', job_payload)
