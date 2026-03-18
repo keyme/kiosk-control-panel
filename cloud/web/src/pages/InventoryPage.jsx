@@ -142,6 +142,8 @@ export default function InventoryPage({ connected, socket }) {
   const [ejectionCheckResult, setEjectionCheckResult] = useState(null); // { id, image }
   const [ejectionCheckImages, setEjectionCheckImages] = useState(null); // array of { url, filename, key }
   const [ejectionCheckImagesLoading, setEjectionCheckImagesLoading] = useState(false);
+  const [ejectionCheckImagesFetchError, setEjectionCheckImagesFetchError] = useState(null);
+  const ejectionPollAbortRef = useRef(false);
 
   useEffect(() => {
     if (!hasPendingPricingUpdate) return;
@@ -263,6 +265,7 @@ export default function InventoryPage({ connected, socket }) {
     setEjectionCheckResult({ id: entry.id, image: entry.image });
     setEjectionCheckImages(null);
     setEjectionCheckImagesLoading(true);
+    setEjectionCheckImagesFetchError(null);
     setEjectionCheckConfirmOpen(true);
     try {
       const resp = await apiFetch(
@@ -284,7 +287,8 @@ export default function InventoryPage({ connected, socket }) {
       } else {
         setEjectionCheckImages([]);
       }
-    } catch {
+    } catch (err) {
+      setEjectionCheckImagesFetchError(err?.message || 'Failed to load ejection image gallery');
       setEjectionCheckImages([]);
     } finally {
       setEjectionCheckImagesLoading(false);
@@ -413,6 +417,7 @@ export default function InventoryPage({ connected, socket }) {
     const previousId = previousEntry?.id ?? null;
     setEjectionCheckError(null);
     setEjectionCheckResult(null);
+    setEjectionCheckImagesFetchError(null);
     setEjectionCheckLoading(true);
     try {
       const payload = {
@@ -427,10 +432,12 @@ export default function InventoryPage({ connected, socket }) {
         // Start polling for a newer ejection image for this magazine.
         const k = (kiosk || '').trim();
         if (k) {
+          ejectionPollAbortRef.current = false;
           setEjectionCheckPolling(true);
           (async () => {
             const maxAttempts = 24; // ~2 minutes at 5s intervals
             for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+              if (ejectionPollAbortRef.current) return;
               try {
                 const resp = await apiFetch(
                   `/api/calibration/ejection_images?kiosk=${encodeURIComponent(k)}&max_ids=500`
@@ -445,6 +452,7 @@ export default function InventoryPage({ connected, socket }) {
                       // Fetch all images for this testcut id using the existing testcuts images API.
                       setEjectionCheckImagesLoading(true);
                       setEjectionCheckImages(null);
+                      setEjectionCheckImagesFetchError(null);
                       try {
                         const fullResp = await apiFetch(
                           `/api/calibration/testcuts/images?kiosk=${encodeURIComponent(k)}&id=${encodeURIComponent(
@@ -465,10 +473,15 @@ export default function InventoryPage({ connected, socket }) {
                           const imgs = Array.isArray(imgsSource) ? imgsSource.filter((img) => img && img.url) : [];
                           setEjectionCheckImages(imgs);
                         } else {
+                          const errData = await fullResp.json().catch(() => ({}));
+                          setEjectionCheckImagesFetchError(
+                            errData?.error || fullResp.statusText || 'Failed to load ejection image gallery'
+                          );
                           setEjectionCheckImages([]);
                         }
-                      } catch {
-                        // ignore; we'll still have the key head image
+                      } catch (err) {
+                        setEjectionCheckImagesFetchError(err?.message || 'Failed to load ejection image gallery');
+                        setEjectionCheckImages([]);
                       } finally {
                         setEjectionCheckImagesLoading(false);
                       }
@@ -483,7 +496,7 @@ export default function InventoryPage({ connected, socket }) {
               // eslint-disable-next-line no-await-in-loop
               await new Promise((resolve) => setTimeout(resolve, 5000));
             }
-            setEjectionCheckPolling(false);
+            if (!ejectionPollAbortRef.current) setEjectionCheckPolling(false);
           })();
         }
       } else {
@@ -498,6 +511,7 @@ export default function InventoryPage({ connected, socket }) {
   }, [selectedMagazine, socket, kiosk, ejectionImagesByMag, showActionMessage, ejectionCheckOverrideRemote, setEjectionImagesByMag]);
 
   const handleCloseEjectionCheckModal = useCallback(() => {
+    ejectionPollAbortRef.current = true;
     setEjectionCheckConfirmOpen(false);
     setEjectionCheckError(null);
     setEjectionCheckLoading(false);
@@ -506,6 +520,7 @@ export default function InventoryPage({ connected, socket }) {
     setEjectionCheckResult(null);
     setEjectionCheckImages(null);
     setEjectionCheckImagesLoading(false);
+    setEjectionCheckImagesFetchError(null);
   }, []);
 
   const handleConfirmCapture = useCallback(async () => {
@@ -1863,6 +1878,9 @@ export default function InventoryPage({ connected, socket }) {
                       ))}
                     </div>
                   </div>
+                )}
+                {ejectionCheckImagesFetchError && !ejectionCheckImagesLoading && (
+                  <p className="text-xs text-destructive">{ejectionCheckImagesFetchError}</p>
                 )}
                 {ejectionCheckImages && ejectionCheckImages.length === 0 && !ejectionCheckImagesLoading && (
                   <p className="text-xs text-muted-foreground">
