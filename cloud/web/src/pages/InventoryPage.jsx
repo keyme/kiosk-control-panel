@@ -380,18 +380,9 @@ export default function InventoryPage({ connected, socket }) {
                           )}`,
                         );
                         if (fullResp.ok) {
-                          const sections = await fullResp.json();
-                          // Flatten all images from all sections into a single list for display.
-                          const imgs = [];
-                          Object.values(sections || {}).forEach((section) => {
-                            if (section && Array.isArray(section.images)) {
-                              section.images.forEach((img) => {
-                                if (img && img.url) {
-                                  imgs.push(img);
-                                }
-                              });
-                            }
-                          });
+                          const payload = await fullResp.json();
+                          // API returns { "<kiosk>": [ { key, filename, url }, ... ] }
+                          const imgs = Array.isArray(payload?.[k]) ? payload[k].filter((img) => img && img.url) : [];
                           setEjectionCheckImages(imgs);
                         }
                       } catch {
@@ -1733,7 +1724,13 @@ export default function InventoryPage({ connected, socket }) {
                           key={`${img.key || img.filename || idx}`}
                           type="button"
                           className="group flex flex-col gap-1 rounded-md border border-border bg-background p-1 text-left"
-                          onClick={() => setFullscreenImage({ base64: null, label: img.filename || 'Image' })}
+                          onClick={() =>
+                            setFullscreenImage({
+                              base64: null,
+                              label: img.filename || 'Image',
+                              url: img.url,
+                            })
+                          }
                         >
                           <img
                             src={img.url}
