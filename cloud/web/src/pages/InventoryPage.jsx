@@ -138,6 +138,8 @@ export default function InventoryPage({ connected, socket }) {
   const [ejectionCheckOverrideRemote, setEjectionCheckOverrideRemote] = useState(false);
   const [ejectionCheckPolling, setEjectionCheckPolling] = useState(false);
   const [ejectionCheckResult, setEjectionCheckResult] = useState(null); // { id, image }
+  const [ejectionCheckImages, setEjectionCheckImages] = useState(null); // array of { url, filename, key }
+  const [ejectionCheckImagesLoading, setEjectionCheckImagesLoading] = useState(false);
 
   useEffect(() => {
     if (!hasPendingPricingUpdate) return;
@@ -368,6 +370,35 @@ export default function InventoryPage({ connected, socket }) {
                     if (entry && (!previousId || entry.id !== previousId)) {
                       setEjectionImagesByMag(data);
                       setEjectionCheckResult({ id: entry.id, image: entry.image });
+                      // Fetch all images for this testcut id using the existing testcuts images API.
+                      setEjectionCheckImagesLoading(true);
+                      setEjectionCheckImages(null);
+                      try {
+                        const fullResp = await apiFetch(
+                          `/api/calibration/testcuts/images?kiosk=${encodeURIComponent(k)}&id=${encodeURIComponent(
+                            String(entry.id),
+                          )}`,
+                        );
+                        if (fullResp.ok) {
+                          const sections = await fullResp.json();
+                          // Flatten all images from all sections into a single list for display.
+                          const imgs = [];
+                          Object.values(sections || {}).forEach((section) => {
+                            if (section && Array.isArray(section.images)) {
+                              section.images.forEach((img) => {
+                                if (img && img.url) {
+                                  imgs.push(img);
+                                }
+                              });
+                            }
+                          });
+                          setEjectionCheckImages(imgs);
+                        }
+                      } catch {
+                        // ignore; we'll still have the key head image
+                      } finally {
+                        setEjectionCheckImagesLoading(false);
+                      }
                       break;
                     }
                   }
@@ -401,6 +432,8 @@ export default function InventoryPage({ connected, socket }) {
     setEjectionCheckOverrideRemote(false);
     setEjectionCheckPolling(false);
     setEjectionCheckResult(null);
+    setEjectionCheckImages(null);
+    setEjectionCheckImagesLoading(false);
   }, []);
 
   const handleConfirmCapture = useCallback(async () => {
@@ -1683,6 +1716,36 @@ export default function InventoryPage({ connected, socket }) {
                     <p className="text-[11px] text-muted-foreground break-all">
                       {ejectionCheckResult.image.filename}
                     </p>
+                  </div>
+                )}
+                {ejectionCheckImagesLoading && (
+                  <div className="flex flex-col items-center justify-center gap-2 py-4">
+                    <Loader2 className="size-5 animate-spin text-muted-foreground" aria-hidden />
+                    <p className="text-xs text-muted-foreground">Loading all images for this ejection run…</p>
+                  </div>
+                )}
+                {ejectionCheckImages && ejectionCheckImages.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-foreground/80">All images for this ejection run</p>
+                    <div className="grid grid-cols-2 gap-2 max-h-72 overflow-y-auto">
+                      {ejectionCheckImages.map((img, idx) => (
+                        <button
+                          key={`${img.key || img.filename || idx}`}
+                          type="button"
+                          className="group flex flex-col gap-1 rounded-md border border-border bg-background p-1 text-left"
+                          onClick={() => setFullscreenImage({ base64: null, label: img.filename || 'Image' })}
+                        >
+                          <img
+                            src={img.url}
+                            alt={img.filename}
+                            className="h-28 w-full rounded border border-border object-contain bg-muted/40"
+                          />
+                          <span className="line-clamp-2 break-all text-[11px] text-muted-foreground group-hover:text-foreground">
+                            {img.filename}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
                 {ejectionCheckError && !ejectionCheckLoading && (
