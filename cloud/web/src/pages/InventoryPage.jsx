@@ -429,12 +429,19 @@ export default function InventoryPage({ connected, socket }) {
       const res = await socket.requestIfSupported('inventory_run_ejection_checks', payload);
       if (res?.success) {
         showActionMessage('Ejection check started. Images will appear below once available.');
+        console.debug('ejection check started', {
+          kiosk,
+          magazine: magNum,
+          previousEjectionId: previousId,
+          overrideRemote: ejectionCheckOverrideRemote,
+        });
         // Start polling for a newer ejection image for this magazine.
         const k = (kiosk || '').trim();
         if (k) {
           ejectionPollAbortRef.current = false;
           setEjectionCheckPolling(true);
           (async () => {
+            console.debug('ejection polling loop started', { kiosk: k, magNum, previousId });
             const maxAttempts = 24; // ~2 minutes at 5s intervals
             for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
               if (ejectionPollAbortRef.current) return;
@@ -449,6 +456,7 @@ export default function InventoryPage({ connected, socket }) {
                     if (entry && (!previousId || entry.id !== previousId)) {
                       setEjectionImagesByMag(data);
                       setEjectionCheckResult({ id: entry.id, image: entry.image });
+                      console.debug('new ejection id detected', { magNum, newId: entry.id });
                       // Fetch all images for this testcut id using the existing testcuts images API.
                       setEjectionCheckImagesLoading(true);
                       setEjectionCheckImages(null);
@@ -472,14 +480,17 @@ export default function InventoryPage({ connected, socket }) {
                           }
                           const imgs = Array.isArray(imgsSource) ? imgsSource.filter((img) => img && img.url) : [];
                           setEjectionCheckImages(imgs);
+                          console.debug('ejection gallery fetched', { testcutId: entry.id, imageCount: imgs.length });
                         } else {
                           const errData = await fullResp.json().catch(() => ({}));
                           setEjectionCheckImagesFetchError(
                             errData?.error || fullResp.statusText || 'Failed to load ejection image gallery'
                           );
+                          console.debug('ejection gallery fetch non-ok', { status: fullResp.status });
                           setEjectionCheckImages([]);
                         }
                       } catch (err) {
+                        console.debug('ejection gallery fetch threw', err);
                         setEjectionCheckImagesFetchError(err?.message || 'Failed to load ejection image gallery');
                         setEjectionCheckImages([]);
                       } finally {
@@ -496,7 +507,10 @@ export default function InventoryPage({ connected, socket }) {
               // eslint-disable-next-line no-await-in-loop
               await new Promise((resolve) => setTimeout(resolve, 5000));
             }
-            if (!ejectionPollAbortRef.current) setEjectionCheckPolling(false);
+            if (!ejectionPollAbortRef.current) {
+              console.debug('ejection polling loop ended (timeout)', { maxAttempts });
+              setEjectionCheckPolling(false);
+            }
           })();
         }
       } else {
@@ -511,6 +525,7 @@ export default function InventoryPage({ connected, socket }) {
   }, [selectedMagazine, socket, kiosk, ejectionImagesByMag, showActionMessage, ejectionCheckOverrideRemote, setEjectionImagesByMag]);
 
   const handleCloseEjectionCheckModal = useCallback(() => {
+    console.debug('ejection modal close: abort polling');
     ejectionPollAbortRef.current = true;
     setEjectionCheckConfirmOpen(false);
     setEjectionCheckError(null);
