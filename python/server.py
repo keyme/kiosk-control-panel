@@ -766,8 +766,8 @@ def inventory_run_ejection_checks(data):
         },
     }
     try:
-        # RUN_JOB returns immediately; long-running work happens in JOB_SERVER.
-        resp = keyme.ipc.send_sync('JOB_SERVER', 'RUN_JOB', job_payload, logging=True)
+        # RUN_JOB is fire-and-forget; GUI5 uses send(), not send_sync().
+        keyme.ipc.send('JOB_SERVER', 'RUN_JOB', job_payload)
     except _IPC_ERRORS as e:
         keyme.log.error(f"inventory_run_ejection_checks: RUN_JOB IPC failed: {e}")
         return WebsocketError([SocketErrors.OTHER.value, "Failed to start ejector checks"]).to_json()
@@ -775,8 +775,8 @@ def inventory_run_ejection_checks(data):
         keyme.log.error(f"inventory_run_ejection_checks: unexpected error: {e}")
         return WebsocketError([SocketErrors.OTHER.value, "Failed to start ejector checks"]).to_json()
 
-    # Shape of resp may vary; treat successful IPC call as success and surface raw payload for debugging.
-    return WebsocketSuccess({"job_response": resp}).to_json()
+    # Assume success if IPC send did not raise.
+    return WebsocketSuccess({"started": True}).to_json()
 
 
 def clear_cache():
