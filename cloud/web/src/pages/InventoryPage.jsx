@@ -135,6 +135,7 @@ export default function InventoryPage({ connected, socket }) {
   const [ejectionCheckConfirmOpen, setEjectionCheckConfirmOpen] = useState(false);
   const [ejectionCheckLoading, setEjectionCheckLoading] = useState(false);
   const [ejectionCheckError, setEjectionCheckError] = useState(null);
+  const [ejectionCheckOverrideRemote, setEjectionCheckOverrideRemote] = useState(false);
 
   useEffect(() => {
     if (!hasPendingPricingUpdate) return;
@@ -334,9 +335,13 @@ export default function InventoryPage({ connected, socket }) {
     setEjectionCheckError(null);
     setEjectionCheckLoading(true);
     try {
-      const res = await socket.requestIfSupported('inventory_run_ejection_checks', {
+      const payload = {
         magazine: selectedMagazine,
-      });
+      };
+      if (ejectionCheckOverrideRemote) {
+        payload.override_remote = true;
+      }
+      const res = await socket.requestIfSupported('inventory_run_ejection_checks', payload);
       if (res?.success) {
         showActionMessage('Ejection check started. Images will appear once available.');
         // Refresh ejection images so newly generated test cuts show up when ready.
@@ -351,12 +356,13 @@ export default function InventoryPage({ connected, socket }) {
     } finally {
       setEjectionCheckLoading(false);
     }
-  }, [selectedMagazine, socket, loadEjectionImages]);
+  }, [selectedMagazine, socket, loadEjectionImages, ejectionCheckOverrideRemote]);
 
   const handleCloseEjectionCheckModal = useCallback(() => {
     setEjectionCheckConfirmOpen(false);
     setEjectionCheckError(null);
     setEjectionCheckLoading(false);
+    setEjectionCheckOverrideRemote(false);
   }, []);
 
   const handleConfirmCapture = useCallback(async () => {
@@ -1620,22 +1626,33 @@ export default function InventoryPage({ connected, socket }) {
                   </>
                 )}
                 {!ejectionCheckLoading && !ejectionCheckError && (
-                  <div className="flex justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={handleCloseEjectionCheckModal}
-                      className="rounded-md bg-muted px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/80"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleConfirmEjectionCheck}
-                      className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-                    >
-                      Run ejection check
-                    </button>
-                  </div>
+                  <>
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={ejectionCheckOverrideRemote}
+                        onChange={(e) => setEjectionCheckOverrideRemote(e.target.checked)}
+                        className="rounded border-input"
+                      />
+                      Allow while developer/fab session is connected (override safety check)
+                    </label>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={handleCloseEjectionCheckModal}
+                        className="rounded-md bg-muted px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/80"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleConfirmEjectionCheck}
+                        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                      >
+                        Run ejection check
+                      </button>
+                    </div>
+                  </>
                 )}
               </div>
             </DialogContent>
