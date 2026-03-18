@@ -381,9 +381,19 @@ export default function InventoryPage({ connected, socket }) {
                         );
                         if (fullResp.ok) {
                           const payload = await fullResp.json();
-                          // API returns { "<kiosk>": [ { key, filename, url }, ... ] }
-                          const imgs = Array.isArray(payload?.[k]) ? payload[k].filter((img) => img && img.url) : [];
+                          // API returns { "<kiosk>": [ { key, filename, url }, ... ] }.
+                          // Be defensive about the key and just take the first array value.
+                          let imgsSource = null;
+                          if (payload && typeof payload === 'object') {
+                            const values = Object.values(payload);
+                            if (values.length > 0 && Array.isArray(values[0])) {
+                              imgsSource = values[0];
+                            }
+                          }
+                          const imgs = Array.isArray(imgsSource) ? imgsSource.filter((img) => img && img.url) : [];
                           setEjectionCheckImages(imgs);
+                        } else {
+                          setEjectionCheckImages([]);
                         }
                       } catch {
                         // ignore; we'll still have the key head image
@@ -1744,6 +1754,11 @@ export default function InventoryPage({ connected, socket }) {
                       ))}
                     </div>
                   </div>
+                )}
+                {ejectionCheckImages && ejectionCheckImages.length === 0 && !ejectionCheckImagesLoading && (
+                  <p className="text-xs text-muted-foreground">
+                    No additional images were returned for this ejection run from the cloud API.
+                  </p>
                 )}
                 {ejectionCheckError && !ejectionCheckLoading && (
                   <>
