@@ -1619,7 +1619,6 @@ export default function InventoryPage({ connected, socket }) {
               onEscapeKeyDown={(e) => {
                 if (fullscreenImage) {
                   e.preventDefault();
-                  e.stopPropagation();
                 }
               }}
               className="max-w-5xl w-[92vw] max-h-[90vh] overflow-y-auto"
@@ -1784,7 +1783,6 @@ export default function InventoryPage({ connected, socket }) {
               onEscapeKeyDown={(e) => {
                 if (fullscreenImage) {
                   e.preventDefault();
-                  e.stopPropagation();
                 }
               }}
               className="max-w-xl w-[92vw]"
