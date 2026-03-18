@@ -351,7 +351,7 @@ export default function InventoryPage({ connected, socket }) {
       }
       const res = await socket.requestIfSupported('inventory_run_ejection_checks', payload);
       if (res?.success) {
-        showActionMessage('Ejection check started. Images will appear once available.');
+        showActionMessage('Ejection check started. Images will appear below once available.');
         // Start polling for a newer ejection image for this magazine.
         const k = (kiosk || '').trim();
         if (k) {
@@ -414,7 +414,6 @@ export default function InventoryPage({ connected, socket }) {
             setEjectionCheckPolling(false);
           })();
         }
-        setEjectionCheckConfirmOpen(false);
       } else {
         const msg = (res?.errors && res.errors[0]) || 'Failed to start ejection check';
         setEjectionCheckError(msg);
@@ -1682,7 +1681,7 @@ export default function InventoryPage({ connected, socket }) {
             <DialogContent showClose={true} onClose={handleCloseEjectionCheckModal} className="max-w-xl w-[92vw]">
               <DialogHeader>
                 <DialogTitle>Run ejection check</DialogTitle>
-                {!ejectionCheckLoading && !ejectionCheckError && (
+                {!ejectionCheckLoading && !ejectionCheckError && !ejectionCheckPolling && (
                   <DialogDescription>
                     This will run the ejector checks script for magazine {selectedMagazine}. The kiosk will eject one key (with retries)
                     and record test cuts. New key head images will appear in the ejection grid and below once processing completes. Continue?
