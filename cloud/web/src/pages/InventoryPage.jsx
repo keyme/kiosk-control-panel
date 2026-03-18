@@ -136,6 +136,8 @@ export default function InventoryPage({ connected, socket }) {
   const [ejectionCheckLoading, setEjectionCheckLoading] = useState(false);
   const [ejectionCheckError, setEjectionCheckError] = useState(null);
   const [ejectionCheckOverrideRemote, setEjectionCheckOverrideRemote] = useState(false);
+  const [ejectionCheckPolling, setEjectionCheckPolling] = useState(false);
+  const [ejectionCheckResult, setEjectionCheckResult] = useState(null); // { id, image }
 
   useEffect(() => {
     if (!hasPendingPricingUpdate) return;
@@ -332,7 +334,11 @@ export default function InventoryPage({ connected, socket }) {
 
   const handleConfirmEjectionCheck = useCallback(async () => {
     if (selectedMagazine == null || !socket?.requestIfSupported) return;
+    const magNum = selectedMagazine;
+    const previousEntry = ejectionImagesByMag[magNum];
+    const previousId = previousEntry?.id ?? null;
     setEjectionCheckError(null);
+    setEjectionCheckResult(null);
     setEjectionCheckLoading(true);
     try {
       const payload = {
@@ -344,8 +350,38 @@ export default function InventoryPage({ connected, socket }) {
       const res = await socket.requestIfSupported('inventory_run_ejection_checks', payload);
       if (res?.success) {
         showActionMessage('Ejection check started. Images will appear once available.');
-        // Refresh ejection images so newly generated test cuts show up when ready.
-        loadEjectionImages();
+        // Start polling for a newer ejection image for this magazine.
+        const k = (kiosk || '').trim();
+        if (k) {
+          setEjectionCheckPolling(true);
+          (async () => {
+            const maxAttempts = 24; // ~2 minutes at 5s intervals
+            for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+              try {
+                const resp = await apiFetch(
+                  `/api/calibration/ejection_images?kiosk=${encodeURIComponent(k)}&max_ids=500`
+                );
+                if (resp.ok) {
+                  const data = await resp.json();
+                  if (data && typeof data === 'object') {
+                    const entry = data[magNum];
+                    if (entry && (!previousId || entry.id !== previousId)) {
+                      setEjectionImagesByMag(data);
+                      setEjectionCheckResult({ id: entry.id, image: entry.image });
+                      break;
+                    }
+                  }
+                }
+              } catch {
+                // swallow and retry
+              }
+              // wait 5 seconds before next attempt
+              // eslint-disable-next-line no-await-in-loop
+              await new Promise((resolve) => setTimeout(resolve, 5000));
+            }
+            setEjectionCheckPolling(false);
+          })();
+        }
         setEjectionCheckConfirmOpen(false);
       } else {
         const msg = (res?.errors && res.errors[0]) || 'Failed to start ejection check';
@@ -356,13 +392,15 @@ export default function InventoryPage({ connected, socket }) {
     } finally {
       setEjectionCheckLoading(false);
     }
-  }, [selectedMagazine, socket, loadEjectionImages, ejectionCheckOverrideRemote]);
+  }, [selectedMagazine, socket, kiosk, ejectionImagesByMag, showActionMessage, ejectionCheckOverrideRemote, setEjectionImagesByMag]);
 
   const handleCloseEjectionCheckModal = useCallback(() => {
     setEjectionCheckConfirmOpen(false);
     setEjectionCheckError(null);
     setEjectionCheckLoading(false);
     setEjectionCheckOverrideRemote(false);
+    setEjectionCheckPolling(false);
+    setEjectionCheckResult(null);
   }, []);
 
   const handleConfirmCapture = useCallback(async () => {
@@ -1599,7 +1637,7 @@ export default function InventoryPage({ connected, socket }) {
                 {!ejectionCheckLoading && !ejectionCheckError && (
                   <DialogDescription>
                     This will run the ejector checks script for magazine {selectedMagazine}. The kiosk will eject one key (with retries)
-                    and record test cuts. New key head images will appear in the ejection grid once processing completes. Continue?
+                    and record test cuts. New key head images will appear in the ejection grid and below once processing completes. Continue?
                   </DialogDescription>
                 )}
               </DialogHeader>
@@ -1609,6 +1647,28 @@ export default function InventoryPage({ connected, socket }) {
                     <Loader2 className="size-8 animate-spin text-muted-foreground" aria-hidden />
                     <p className="text-sm text-muted-foreground">Starting ejector checks…</p>
                     <p className="text-xs text-muted-foreground">This can take several minutes. The kiosk may move and eject keys.</p>
+                  </div>
+                )}
+                {ejectionCheckPolling && !ejectionCheckLoading && !ejectionCheckError && !ejectionCheckResult && (
+                  <div className="flex flex-col items-center justify-center gap-2 py-4">
+                    <Loader2 className="size-6 animate-spin text-muted-foreground" aria-hidden />
+                    <p className="text-sm text-muted-foreground">Waiting for new ejection image from cloud…</p>
+                    <p className="text-xs text-muted-foreground">We refresh recent test cuts every few seconds. This can take up to a couple of minutes.</p>
+                  </div>
+                )}
+                {ejectionCheckResult && (
+                  <div className="space-y-2 rounded-md border bg-muted/10 p-3">
+                    <p className="text-xs font-medium text-foreground/80">
+                      Latest ejection image for magazine {selectedMagazine} (ID {ejectionCheckResult.id})
+                    </p>
+                    <img
+                      src={ejectionCheckResult.image.url}
+                      alt={ejectionCheckResult.image.filename}
+                      className="max-h-48 w-full rounded border border-border object-contain bg-background"
+                    />
+                    <p className="text-[11px] text-muted-foreground break-all">
+                      {ejectionCheckResult.image.filename}
+                    </p>
                   </div>
                 )}
                 {ejectionCheckError && !ejectionCheckLoading && (
