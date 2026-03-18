@@ -1034,10 +1034,20 @@ export default function InventoryPage({ connected, socket }) {
       {Object.keys(ejectionImagesByMag || {}).length > 0 && (
         <Card>
           <CardContent className="pt-6 space-y-4">
-            <h3 className="text-sm font-medium">Ejection key head images</h3>
-            <p className="text-xs text-muted-foreground">
-              Showing the most recent key head check image found per magazine from recent test cuts.
-            </p>
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-medium">Ejection key head images</h3>
+                <p className="text-xs text-muted-foreground">
+                  Showing the most recent key head check image found per magazine from recent test cuts.
+                </p>
+              </div>
+              {ejectionCheckPolling && (
+                <div className="flex items-center gap-2 rounded-full border border-border bg-muted/60 px-2.5 py-1 text-[11px] text-muted-foreground">
+                  <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                  <span>Updating after ejection check…</span>
+                </div>
+              )}
+            </div>
             <div className="grid gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
               {Array.from({ length: SEGMENT_COUNT }, (_, i) => {
                 const magNum = i + 1;
@@ -1456,12 +1466,16 @@ export default function InventoryPage({ connected, socket }) {
                 <div className="space-y-1">
                   <button
                     type="button"
-                    disabled={isDisabled || actionLoading || ejectionCheckLoading}
+                    disabled={isDisabled || actionLoading || ejectionCheckLoading || ejectionCheckPolling}
                     onClick={handleOpenEjectionCheckConfirm}
                     className="w-full inline-flex items-center justify-center gap-2 rounded-md border border-indigo-500/50 bg-indigo-500/10 px-3 py-2 text-sm font-medium text-indigo-800 hover:bg-indigo-500/20 disabled:opacity-50 dark:text-indigo-200"
                   >
-                    {ejectionCheckLoading ? <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden /> : <Camera className="size-5 shrink-0" aria-hidden />}
-                    Run ejection check
+                    {(ejectionCheckLoading || ejectionCheckPolling) ? (
+                      <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden />
+                    ) : (
+                      <Camera className="size-5 shrink-0" aria-hidden />
+                    )}
+                    {ejectionCheckPolling ? 'Running ejection check…' : 'Run ejection check'}
                   </button>
                   {selectedMagazine != null && ejectionImagesByMag[selectedMagazine] && (() => {
                     const selImg = ejectionImagesByMag[selectedMagazine].image;
