@@ -1754,7 +1754,12 @@ export default function InventoryPage({ connected, socket }) {
             </DialogContent>
           </Dialog>
           <Dialog open={ejectionCheckConfirmOpen} onOpenChange={(open) => !open && handleCloseEjectionCheckModal()}>
-            <DialogContent showClose={true} onClose={handleCloseEjectionCheckModal} className="max-w-xl w-[92vw]">
+            <DialogContent
+              showClose={true}
+              onClose={handleCloseEjectionCheckModal}
+              onInteractOutside={(e) => e.preventDefault()}
+              className="max-w-xl w-[92vw]"
+            >
               <DialogHeader>
                 <DialogTitle>Run ejection check</DialogTitle>
                 {!ejectionCheckLoading && !ejectionCheckError && !ejectionCheckPolling && (
