@@ -154,6 +154,33 @@ export default function InventoryPage({ connected, socket }) {
   }, [hasPendingPricingUpdate]);
 
   useEffect(() => {
+    if (!fullscreenImage || !fullscreenImages || fullscreenIndex == null) return;
+    const handleKey = (e) => {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        if (!fullscreenImages.length) return;
+        const delta = e.key === 'ArrowLeft' ? -1 : 1;
+        const nextIndex = (fullscreenIndex + delta + fullscreenImages.length) % fullscreenImages.length;
+        setFullscreenIndex(nextIndex);
+        const img = fullscreenImages[nextIndex];
+        if (img && img.url) {
+          setFullscreenImage({
+            base64: null,
+            url: img.url,
+            label: img.filename || fullscreenImage.label,
+          });
+        }
+      } else if (e.key === 'Escape') {
+        setFullscreenImage(null);
+        setFullscreenImages(null);
+        setFullscreenIndex(null);
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [fullscreenImage, fullscreenImages, fullscreenIndex]);
+
+  useEffect(() => {
     if (!bulkMenuOpen) return;
     const handleClickOutside = (e) => {
       if (bulkMenuRef.current && !bulkMenuRef.current.contains(e.target)) {
