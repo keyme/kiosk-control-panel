@@ -159,9 +159,17 @@ export default function InventoryPage({ connected, socket }) {
   }, [hasPendingPricingUpdate]);
 
   useEffect(() => {
-    if (!fullscreenImage || !fullscreenImages || fullscreenIndex == null) return;
+    if (!fullscreenImage) return;
     const handleKey = (e) => {
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        setFullscreenImage(null);
+        setFullscreenImages(null);
+        setFullscreenIndex(null);
+        return;
+      }
+      if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && fullscreenImages && fullscreenIndex != null) {
         e.preventDefault();
         e.stopPropagation();
         if (!fullscreenImages.length) return;
@@ -176,12 +184,6 @@ export default function InventoryPage({ connected, socket }) {
             label: img.filename || fullscreenImage.label,
           });
         }
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        setFullscreenImage(null);
-        setFullscreenImages(null);
-        setFullscreenIndex(null);
       }
     };
     window.addEventListener('keydown', handleKey);
@@ -434,8 +436,7 @@ export default function InventoryPage({ connected, socket }) {
       if (ejectionCheckOverrideRemote) {
         payload.override_remote = true;
       }
-      const res = await socket.requestIfSupported('inventory_run_ejection_checks', payload);
-      if (res?.success) {
+      await socket.requestIfSupported('inventory_run_ejection_checks', payload);
         showActionMessage('Ejection check started. Images will appear below once available.');
         console.debug('ejection check started', {
           kiosk,
@@ -524,17 +525,20 @@ export default function InventoryPage({ connected, socket }) {
                   return;
                 }
 
-                let allImgs = [];
-                for (const id of uniqueTestCutIds) {
+                const fetches = uniqueTestCutIds.map(async (id) => {
                   const fullResp = await apiFetch(
                     `/api/calibration/testcuts/images?kiosk=${encodeURIComponent(kNow)}&id=${encodeURIComponent(
                       String(id)
                     )}`
                   );
-                  if (!fullResp.ok) continue;
+                  if (!fullResp.ok) return [];
                   const payload = await fullResp.json();
-                  allImgs = allImgs.concat(flattenSections(payload));
-                }
+                  return flattenSections(payload);
+                });
+                const settled = await Promise.allSettled(fetches);
+                const allImgs = settled
+                  .filter((r) => r.status === 'fulfilled')
+                  .flatMap((r) => r.value);
                 setEjectionCheckImages(allImgs);
               } catch (err) {
                 setEjectionCheckImagesFetchError(err?.message || 'Failed to load ejection image gallery');
@@ -594,11 +598,6 @@ export default function InventoryPage({ connected, socket }) {
               ejectionCheckStartGuardRef.current = false;
             }
           })();
-        }
-      } else {
-        const msg = (res?.errors && res.errors[0]) || 'Failed to start ejection check';
-        setEjectionCheckError(msg);
-        ejectionCheckStartGuardRef.current = false;
       }
     } catch (err) {
       setEjectionCheckError(err?.message || 'Failed to start ejection check');
@@ -664,12 +663,6 @@ export default function InventoryPage({ connected, socket }) {
   const captureImageDataUrl = (base64) => `data:image/jpeg;base64,${base64}`;
   const handleCaptureImageFullscreen = (base64, label) => setFullscreenImage({ base64, label: label || 'Image' });
 
-  useEffect(() => {
-    if (!fullscreenImage) return;
-    const onKeyDown = (e) => { if (e.key === 'Escape') setFullscreenImage(null); };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [fullscreenImage]);
   const handleCaptureImageDownload = (base64, label) => {
     const a = document.createElement('a');
     a.href = captureImageDataUrl(base64);
