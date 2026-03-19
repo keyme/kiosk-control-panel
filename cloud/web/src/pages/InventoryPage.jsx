@@ -275,15 +275,18 @@ export default function InventoryPage({ connected, socket }) {
       );
       if (resp.ok) {
         const payload = await resp.json();
-        let imgsSource = null;
+        let imgs = [];
         if (payload && typeof payload === 'object') {
-          const values = Object.values(payload);
-          if (values.length > 0 && Array.isArray(values[0])) {
-            imgsSource = values[0];
+          const sectionNames = Object.keys(payload).sort();
+          for (const section of sectionNames) {
+            const arr = payload[section];
+            if (Array.isArray(arr)) {
+              imgs = imgs.concat(arr);
+            }
           }
         }
-        const imgs = Array.isArray(imgsSource) ? imgsSource.filter((img) => img && img.url) : [];
-        setEjectionCheckImages(imgs);
+        const filtered = imgs.filter((img) => img && img.url);
+        setEjectionCheckImages(filtered);
       } else {
         setEjectionCheckImages([]);
       }
@@ -469,18 +472,21 @@ export default function InventoryPage({ connected, socket }) {
                         );
                         if (fullResp.ok) {
                           const payload = await fullResp.json();
-                          // API returns { "<kiosk>": [ { key, filename, url }, ... ] }.
-                          // Be defensive about the key and just take the first array value.
-                          let imgsSource = null;
+                          // API returns { "<section>": [ { key, filename, url }, ... ], ... }.
+                          // Concatenate all sections in deterministic (sorted) order.
+                          let imgs = [];
                           if (payload && typeof payload === 'object') {
-                            const values = Object.values(payload);
-                            if (values.length > 0 && Array.isArray(values[0])) {
-                              imgsSource = values[0];
+                            const sectionNames = Object.keys(payload).sort();
+                            for (const section of sectionNames) {
+                              const arr = payload[section];
+                              if (Array.isArray(arr)) {
+                                imgs = imgs.concat(arr);
+                              }
                             }
                           }
-                          const imgs = Array.isArray(imgsSource) ? imgsSource.filter((img) => img && img.url) : [];
-                          setEjectionCheckImages(imgs);
-                          console.debug('ejection gallery fetched', { testcutId: entry.id, imageCount: imgs.length });
+                          const filtered = imgs.filter((img) => img && img.url);
+                          setEjectionCheckImages(filtered);
+                          console.debug('ejection gallery fetched', { testcutId: entry.id, imageCount: filtered.length });
                         } else {
                           const errData = await fullResp.json().catch(() => ({}));
                           setEjectionCheckImagesFetchError(
