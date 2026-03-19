@@ -19,6 +19,37 @@ function formatKeyHeadTaken(keyOrFilename) {
   return `${month} ${parseInt(d, 10)}, ${y}, ${h}:${min} UTC`;
 }
 
+/** Parse "YYYY-MM-DD-HH-MM-SS-UTC" from filename/key to epoch ms; null when absent. */
+function extractTimestampMs(keyOrFilename) {
+  if (!keyOrFilename || typeof keyOrFilename !== 'string') return null;
+  const m = String(keyOrFilename).match(/(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-UTC/);
+  if (!m) return null;
+  const [, y, mo, d, h, min, s] = m;
+  const ms = Date.UTC(
+    parseInt(y, 10),
+    parseInt(mo, 10) - 1,
+    parseInt(d, 10),
+    parseInt(h, 10),
+    parseInt(min, 10),
+    parseInt(s, 10),
+  );
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** Deterministic oldest->newest ordering for ejection gallery images. */
+function sortEjectionGalleryImages(images) {
+  return [...(images || [])].sort((a, b) => {
+    const aKey = a?.filename || a?.key || '';
+    const bKey = b?.filename || b?.key || '';
+    const aTs = extractTimestampMs(aKey);
+    const bTs = extractTimestampMs(bKey);
+    if (aTs != null && bTs != null && aTs !== bTs) return aTs - bTs;
+    if (aTs != null && bTs == null) return -1;
+    if (aTs == null && bTs != null) return 1;
+    return String(aKey).localeCompare(String(bKey));
+  });
+}
+
 /** Gen 3 kiosks: strip leading zeros after "ns" (e.g. NS003512 -> NS3512). */
 function normalizeKioskName(name) {
   if (name == null || typeof name !== 'string') return '';
@@ -291,7 +322,7 @@ export default function InventoryPage({ connected, socket }) {
           }
         }
         const filtered = imgs.filter((img) => img && img.url);
-        setEjectionCheckImages(filtered);
+        setEjectionCheckImages(sortEjectionGalleryImages(filtered));
       } else {
         setEjectionCheckImages([]);
       }
@@ -539,7 +570,7 @@ export default function InventoryPage({ connected, socket }) {
                 const allImgs = settled
                   .filter((r) => r.status === 'fulfilled')
                   .flatMap((r) => r.value);
-                setEjectionCheckImages(allImgs);
+                setEjectionCheckImages(sortEjectionGalleryImages(allImgs));
               } catch (err) {
                 setEjectionCheckImagesFetchError(err?.message || 'Failed to load ejection image gallery');
                 setEjectionCheckImages([]);
