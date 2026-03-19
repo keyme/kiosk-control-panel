@@ -741,10 +741,9 @@ def inventory_run_ejection_checks(data):
     Gate: same as fleet (kiosk in use / remote session)."""
     data = data if isinstance(data, dict) else {}
     keyme.log.info("WS: requesting inventory_run_ejection_checks")
+    sanitized = {k: v for k, v in data.items() if k != "token"}
     keyme.log.info(
-        "inventory_run_ejection_checks inputs override_remote=%s data=%s",
-        data.get("override_remote"),
-        {k: v for k, v in data.items() if k != "token"},
+        f"inventory_run_ejection_checks inputs override_remote={data.get('override_remote')} data={sanitized}"
     )
     allowed, errors = check_fleet_command_allowed(data, allow_remote_override=True)
     if not allowed:
