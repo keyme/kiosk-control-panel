@@ -25,6 +25,22 @@ function sectionSortKey(sectionName) {
   return m ? parseInt(m[1], 10) : 0;
 }
 
+function imageTimestampMs(img) {
+  const source = String(img?.filename || img?.key || '');
+  const m = source.match(/(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-UTC/);
+  if (!m) return null;
+  const [, y, mo, d, h, min, s] = m;
+  const ms = Date.UTC(
+    parseInt(y, 10),
+    parseInt(mo, 10) - 1,
+    parseInt(d, 10),
+    parseInt(h, 10),
+    parseInt(min, 10),
+    parseInt(s, 10),
+  );
+  return Number.isFinite(ms) ? ms : null;
+}
+
 function flattenTestcutImages(payload) {
   if (!payload || typeof payload !== 'object') return [];
   const out = [];
@@ -42,7 +58,15 @@ function flattenTestcutImages(payload) {
       if (img && img.url) out.push(img);
     }
   }
-  return out;
+  // UI-friendly sequence: oldest -> newest by embedded timestamp; fallback to testcuts order.
+  return out.sort((a, b) => {
+    const aTs = imageTimestampMs(a);
+    const bTs = imageTimestampMs(b);
+    if (aTs != null && bTs != null && aTs !== bTs) return aTs - bTs;
+    if (aTs != null && bTs == null) return -1;
+    if (aTs == null && bTs != null) return 1;
+    return 0;
+  });
 }
 
 /** Gen 3 kiosks: strip leading zeros after "ns" (e.g. NS003512 -> NS3512). */
