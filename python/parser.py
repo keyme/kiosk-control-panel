@@ -33,6 +33,14 @@ class ControlPanelParser(keyme.ipc.Parser):
         """DEVICE_DIRECTOR sends RESET_RESULT per device to CONTROL_PANEL."""
         pass
 
+    def handle_async_JOB_RESULT(self, request):
+        """JOB_SERVER sends async JOB_RESULT for RUN_JOB.
+
+        We primarily rely on ws_server.emit_async_request() to forward this to WS clients.
+        Having an explicit handler here prevents CONTROL_PANEL from replying async_UNHANDLED.
+        """
+        pass
+
     def handle_PING(self, request):
         """Sync handler so other services can validate the IPC path."""
         return request.response("OK", {"pong": True})

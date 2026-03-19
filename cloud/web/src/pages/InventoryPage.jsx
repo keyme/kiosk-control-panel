@@ -144,6 +144,8 @@ export default function InventoryPage({ connected, socket }) {
   const [ejectionCheckImagesLoading, setEjectionCheckImagesLoading] = useState(false);
   const [ejectionCheckImagesFetchError, setEjectionCheckImagesFetchError] = useState(null);
   const ejectionPollAbortRef = useRef(false);
+  const ejectionJobResultHandlerRef = useRef(null);
+  const lastEjectionJobResultIdRef = useRef(null);
 
   useEffect(() => {
     if (!hasPendingPricingUpdate) return;
@@ -438,6 +440,109 @@ export default function InventoryPage({ connected, socket }) {
           previousEjectionId: previousId,
           overrideRemote: ejectionCheckOverrideRemote,
         });
+        const ejectionJobHandler = (jobData) => {
+          try {
+            const jobName = jobData?.name;
+            if (jobName !== 'test_ejections') return;
+            if (ejectionPollAbortRef.current) return;
+            const jobResultId = jobData?.id ?? null;
+            if (jobResultId && lastEjectionJobResultIdRef.current === jobResultId) return;
+
+            const magazineData = jobData?.result?.magazine_data;
+            if (!Array.isArray(magazineData)) return;
+            const matching = magazineData.filter((m) => Number(m?.magazine_number) === Number(magNum));
+            const testCutIds = matching.flatMap((m) => (Array.isArray(m?.test_cut_ids) ? m.test_cut_ids : []));
+            const uniqueTestCutIds = [];
+            for (const id of testCutIds) {
+              const n = Number(id);
+              if (!Number.isFinite(n)) continue;
+              if (!uniqueTestCutIds.includes(n)) uniqueTestCutIds.push(n);
+            }
+            if (!uniqueTestCutIds.length) return;
+            if (previousId && uniqueTestCutIds.every((id) => Number(id) === Number(previousId))) return;
+
+            lastEjectionJobResultIdRef.current = jobResultId;
+            ejectionPollAbortRef.current = true;
+            setEjectionCheckPolling(false);
+            setEjectionCheckImagesLoading(true);
+            setEjectionCheckImages(null);
+            setEjectionCheckImagesFetchError(null);
+
+            if (socket && ejectionJobResultHandlerRef.current) {
+              socket.off('async.JOB_RESULT', ejectionJobResultHandlerRef.current);
+              ejectionJobResultHandlerRef.current = null;
+            }
+
+            void (async () => {
+              try {
+                const kNow = (kiosk || '').trim();
+
+                // Best-effort update the drawer "latest key head" card.
+                if (kNow) {
+                  try {
+                    const keyHeadResp = await apiFetch(
+                      `/api/calibration/ejection_images?kiosk=${encodeURIComponent(kNow)}&max_ids=500`
+                    );
+                    if (keyHeadResp.ok) {
+                      const data = await keyHeadResp.json();
+                      setEjectionImagesByMag(data);
+                      const entry = data?.[magNum];
+                      if (entry) setEjectionCheckResult({ id: entry.id, image: entry.image });
+                    }
+                  } catch (e) {
+                    // Not fatal; the full gallery can still render.
+                  }
+                }
+
+                const flattenSections = (payload) => {
+                  const out = [];
+                  if (payload && typeof payload === 'object') {
+                    const sectionNames = Object.keys(payload).sort();
+                    for (const section of sectionNames) {
+                      const arr = payload[section];
+                      if (Array.isArray(arr)) out.push(...arr);
+                    }
+                  }
+                  return out.filter((img) => img && img.url);
+                };
+
+                if (!jobData?.succeeded) {
+                  const msg = jobData?.error || jobData?.error_type || 'Ejection check failed';
+                  setEjectionCheckError(msg);
+                  setEjectionCheckImages([]);
+                  return;
+                }
+
+                let allImgs = [];
+                for (const id of uniqueTestCutIds) {
+                  const fullResp = await apiFetch(
+                    `/api/calibration/testcuts/images?kiosk=${encodeURIComponent(String(kNow))}&id=${encodeURIComponent(
+                      String(id)
+                    )}`
+                  );
+                  if (!fullResp.ok) continue;
+                  const payload = await fullResp.json();
+                  allImgs = allImgs.concat(flattenSections(payload));
+                }
+                setEjectionCheckImages(allImgs);
+              } catch (err) {
+                setEjectionCheckImagesFetchError(err?.message || 'Failed to load ejection image gallery');
+                setEjectionCheckImages([]);
+              } finally {
+                setEjectionCheckImagesLoading(false);
+              }
+            })();
+          } catch {
+            // ignore malformed jobData payloads
+          }
+        };
+
+        if (socket && ejectionJobResultHandlerRef.current) {
+          socket.off('async.JOB_RESULT', ejectionJobResultHandlerRef.current);
+          ejectionJobResultHandlerRef.current = null;
+        }
+        ejectionJobResultHandlerRef.current = ejectionJobHandler;
+        if (socket) socket.on('async.JOB_RESULT', ejectionJobHandler);
         // Start polling for a newer ejection image for this magazine.
         const k = (kiosk || '').trim();
         if (k) {
@@ -460,49 +565,6 @@ export default function InventoryPage({ connected, socket }) {
                       setEjectionImagesByMag(data);
                       setEjectionCheckResult({ id: entry.id, image: entry.image });
                       console.debug('new ejection id detected', { magNum, newId: entry.id });
-                      // Fetch all images for this testcut id using the existing testcuts images API.
-                      setEjectionCheckImagesLoading(true);
-                      setEjectionCheckImages(null);
-                      setEjectionCheckImagesFetchError(null);
-                      try {
-                        const fullResp = await apiFetch(
-                          `/api/calibration/testcuts/images?kiosk=${encodeURIComponent(k)}&id=${encodeURIComponent(
-                            String(entry.id),
-                          )}`,
-                        );
-                        if (fullResp.ok) {
-                          const payload = await fullResp.json();
-                          // API returns { "<section>": [ { key, filename, url }, ... ], ... }.
-                          // Concatenate all sections in deterministic (sorted) order.
-                          let imgs = [];
-                          if (payload && typeof payload === 'object') {
-                            const sectionNames = Object.keys(payload).sort();
-                            for (const section of sectionNames) {
-                              const arr = payload[section];
-                              if (Array.isArray(arr)) {
-                                imgs = imgs.concat(arr);
-                              }
-                            }
-                          }
-                          const filtered = imgs.filter((img) => img && img.url);
-                          setEjectionCheckImages(filtered);
-                          console.debug('ejection gallery fetched', { testcutId: entry.id, imageCount: filtered.length });
-                        } else {
-                          const errData = await fullResp.json().catch(() => ({}));
-                          setEjectionCheckImagesFetchError(
-                            errData?.error || fullResp.statusText || 'Failed to load ejection image gallery'
-                          );
-                          console.debug('ejection gallery fetch non-ok', { status: fullResp.status });
-                          setEjectionCheckImages([]);
-                        }
-                      } catch (err) {
-                        console.debug('ejection gallery fetch threw', err);
-                        setEjectionCheckImagesFetchError(err?.message || 'Failed to load ejection image gallery');
-                        setEjectionCheckImages([]);
-                      } finally {
-                        setEjectionCheckImagesLoading(false);
-                      }
-                      setEjectionCheckPolling(false);
                       break;
                     }
                   }
@@ -534,6 +596,11 @@ export default function InventoryPage({ connected, socket }) {
   const handleCloseEjectionCheckModal = useCallback(() => {
     console.debug('ejection modal close: abort polling');
     ejectionPollAbortRef.current = true;
+    if (socket && ejectionJobResultHandlerRef.current) {
+      socket.off('async.JOB_RESULT', ejectionJobResultHandlerRef.current);
+      ejectionJobResultHandlerRef.current = null;
+    }
+    lastEjectionJobResultIdRef.current = null;
     setEjectionCheckConfirmOpen(false);
     setEjectionCheckError(null);
     setEjectionCheckLoading(false);
@@ -543,7 +610,7 @@ export default function InventoryPage({ connected, socket }) {
     setEjectionCheckImages(null);
     setEjectionCheckImagesLoading(false);
     setEjectionCheckImagesFetchError(null);
-  }, []);
+  }, [socket]);
 
   const handleConfirmCapture = useCallback(async () => {
     if (selectedMagazine == null || !socket?.requestIfSupported) return;
