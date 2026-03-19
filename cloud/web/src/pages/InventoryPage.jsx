@@ -144,6 +144,7 @@ export default function InventoryPage({ connected, socket }) {
   const [ejectionCheckImagesLoading, setEjectionCheckImagesLoading] = useState(false);
   const [ejectionCheckImagesFetchError, setEjectionCheckImagesFetchError] = useState(null);
   const ejectionPollAbortRef = useRef(false);
+  const ejectionCheckStartGuardRef = useRef(false);
   const ejectionJobResultHandlerRef = useRef(null);
   const lastEjectionJobResultIdRef = useRef(null);
 
@@ -417,6 +418,8 @@ export default function InventoryPage({ connected, socket }) {
 
   const handleConfirmEjectionCheck = useCallback(async () => {
     if (selectedMagazine == null || !socket?.requestIfSupported) return;
+    if (ejectionCheckStartGuardRef.current) return;
+    ejectionCheckStartGuardRef.current = true;
     const magNum = selectedMagazine;
     const previousEntry = ejectionImagesByMag[magNum];
     const previousId = previousEntry?.id ?? null;
@@ -480,6 +483,7 @@ export default function InventoryPage({ connected, socket }) {
                   setEjectionCheckImagesFetchError('Kiosk name not available.');
                   setEjectionCheckImages([]);
                   setEjectionCheckPolling(false);
+                  ejectionCheckStartGuardRef.current = false;
                   return;
                 }
 
@@ -516,6 +520,7 @@ export default function InventoryPage({ connected, socket }) {
                   const msg = jobData?.error || jobData?.error_type || 'Ejection check failed';
                   setEjectionCheckError(msg);
                   setEjectionCheckImages([]);
+                  ejectionCheckStartGuardRef.current = false;
                   return;
                 }
 
@@ -536,6 +541,7 @@ export default function InventoryPage({ connected, socket }) {
                 setEjectionCheckImages([]);
               } finally {
                 setEjectionCheckImagesLoading(false);
+                ejectionCheckStartGuardRef.current = false;
               }
             })();
           } catch {
@@ -585,15 +591,18 @@ export default function InventoryPage({ connected, socket }) {
             if (!ejectionPollAbortRef.current) {
               console.debug('ejection polling loop ended (timeout)', { maxAttempts });
               setEjectionCheckPolling(false);
+              ejectionCheckStartGuardRef.current = false;
             }
           })();
         }
       } else {
         const msg = (res?.errors && res.errors[0]) || 'Failed to start ejection check';
         setEjectionCheckError(msg);
+        ejectionCheckStartGuardRef.current = false;
       }
     } catch (err) {
       setEjectionCheckError(err?.message || 'Failed to start ejection check');
+      ejectionCheckStartGuardRef.current = false;
     } finally {
       setEjectionCheckLoading(false);
     }
@@ -602,6 +611,7 @@ export default function InventoryPage({ connected, socket }) {
   const handleCloseEjectionCheckModal = useCallback(() => {
     console.debug('ejection modal close: abort polling');
     ejectionPollAbortRef.current = true;
+    ejectionCheckStartGuardRef.current = false;
     if (socket && ejectionJobResultHandlerRef.current) {
       socket.off('async.JOB_RESULT', ejectionJobResultHandlerRef.current);
       ejectionJobResultHandlerRef.current = null;
@@ -1688,16 +1698,22 @@ export default function InventoryPage({ connected, socket }) {
                 <div className="space-y-1">
                   <button
                     type="button"
-                    disabled={isDisabled || actionLoading || ejectionCheckLoading || ejectionCheckPolling}
+                    disabled={
+                      isDisabled || actionLoading || ejectionCheckLoading || ejectionCheckPolling || ejectionCheckImagesLoading
+                    }
                     onClick={handleOpenEjectionCheckConfirm}
                     className="w-full inline-flex items-center justify-center gap-2 rounded-md border border-indigo-500/50 bg-indigo-500/10 px-3 py-2 text-sm font-medium text-indigo-800 hover:bg-indigo-500/20 disabled:opacity-50 dark:text-indigo-200"
                   >
-                    {(ejectionCheckLoading || ejectionCheckPolling) ? (
+                    {(ejectionCheckLoading || ejectionCheckPolling || ejectionCheckImagesLoading) ? (
                       <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden />
                     ) : (
                       <Camera className="size-5 shrink-0" aria-hidden />
                     )}
-                    {ejectionCheckPolling ? 'Running ejection check…' : 'Run ejection check'}
+                    {ejectionCheckPolling
+                      ? 'Running ejection check…'
+                      : ejectionCheckImagesLoading
+                        ? 'Loading ejection images…'
+                        : 'Run ejection check'}
                   </button>
                   {selectedMagazine != null && ejectionImagesByMag[selectedMagazine] && (() => {
                     const selImg = ejectionImagesByMag[selectedMagazine].image;
@@ -2002,6 +2018,7 @@ export default function InventoryPage({ connected, socket }) {
                       <input
                         type="checkbox"
                         checked={ejectionCheckOverrideRemote}
+                        disabled={ejectionCheckLoading || ejectionCheckPolling || ejectionCheckImagesLoading}
                         onChange={(e) => setEjectionCheckOverrideRemote(e.target.checked)}
                         className="rounded border-input"
                       />
@@ -2018,6 +2035,9 @@ export default function InventoryPage({ connected, socket }) {
                       <button
                         type="button"
                         onClick={handleConfirmEjectionCheck}
+                        disabled={
+                          isDisabled || ejectionCheckLoading || ejectionCheckPolling || ejectionCheckImagesLoading
+                        }
                         className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
                       >
                         Run ejection check
