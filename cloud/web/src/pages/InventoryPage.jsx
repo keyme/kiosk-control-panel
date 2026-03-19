@@ -476,6 +476,12 @@ export default function InventoryPage({ connected, socket }) {
             void (async () => {
               try {
                 const kNow = (kiosk || '').trim();
+                if (!kNow) {
+                  setEjectionCheckImagesFetchError('Kiosk name not available.');
+                  setEjectionCheckImages([]);
+                  setEjectionCheckPolling(false);
+                  return;
+                }
 
                 // Best-effort update the drawer "latest key head" card.
                 if (kNow) {
@@ -516,7 +522,7 @@ export default function InventoryPage({ connected, socket }) {
                 let allImgs = [];
                 for (const id of uniqueTestCutIds) {
                   const fullResp = await apiFetch(
-                    `/api/calibration/testcuts/images?kiosk=${encodeURIComponent(String(kNow))}&id=${encodeURIComponent(
+                    `/api/calibration/testcuts/images?kiosk=${encodeURIComponent(kNow)}&id=${encodeURIComponent(
                       String(id)
                     )}`
                   );
