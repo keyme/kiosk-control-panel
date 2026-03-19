@@ -19,35 +19,30 @@ function formatKeyHeadTaken(keyOrFilename) {
   return `${month} ${parseInt(d, 10)}, ${y}, ${h}:${min} UTC`;
 }
 
-/** Parse "YYYY-MM-DD-HH-MM-SS-UTC" from filename/key to epoch ms; null when absent. */
-function extractTimestampMs(keyOrFilename) {
-  if (!keyOrFilename || typeof keyOrFilename !== 'string') return null;
-  const m = String(keyOrFilename).match(/(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-UTC/);
-  if (!m) return null;
-  const [, y, mo, d, h, min, s] = m;
-  const ms = Date.UTC(
-    parseInt(y, 10),
-    parseInt(mo, 10) - 1,
-    parseInt(d, 10),
-    parseInt(h, 10),
-    parseInt(min, 10),
-    parseInt(s, 10),
-  );
-  return Number.isFinite(ms) ? ms : null;
+/** Match backend testcuts.py ordering: section numeric prefix, then image key. */
+function sectionSortKey(sectionName) {
+  const m = String(sectionName || '').match(/^(\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
 }
 
-/** Deterministic oldest->newest ordering for ejection gallery images. */
-function sortEjectionGalleryImages(images) {
-  return [...(images || [])].sort((a, b) => {
-    const aKey = a?.filename || a?.key || '';
-    const bKey = b?.filename || b?.key || '';
-    const aTs = extractTimestampMs(aKey);
-    const bTs = extractTimestampMs(bKey);
-    if (aTs != null && bTs != null && aTs !== bTs) return aTs - bTs;
-    if (aTs != null && bTs == null) return -1;
-    if (aTs == null && bTs != null) return 1;
-    return String(aKey).localeCompare(String(bKey));
+function flattenTestcutImages(payload) {
+  if (!payload || typeof payload !== 'object') return [];
+  const out = [];
+  const sectionNames = Object.keys(payload).sort((a, b) => {
+    const aNum = sectionSortKey(a);
+    const bNum = sectionSortKey(b);
+    if (aNum !== bNum) return aNum - bNum;
+    return String(a).localeCompare(String(b));
   });
+  for (const section of sectionNames) {
+    const arr = payload[section];
+    if (!Array.isArray(arr)) continue;
+    const sortedInSection = [...arr].sort((a, b) => String(a?.key || '').localeCompare(String(b?.key || '')));
+    for (const img of sortedInSection) {
+      if (img && img.url) out.push(img);
+    }
+  }
+  return out;
 }
 
 /** Gen 3 kiosks: strip leading zeros after "ns" (e.g. NS003512 -> NS3512). */
@@ -311,18 +306,7 @@ export default function InventoryPage({ connected, socket }) {
       );
       if (resp.ok) {
         const payload = await resp.json();
-        let imgs = [];
-        if (payload && typeof payload === 'object') {
-          const sectionNames = Object.keys(payload).sort();
-          for (const section of sectionNames) {
-            const arr = payload[section];
-            if (Array.isArray(arr)) {
-              imgs = imgs.concat(arr);
-            }
-          }
-        }
-        const filtered = imgs.filter((img) => img && img.url);
-        setEjectionCheckImages(sortEjectionGalleryImages(filtered));
+        setEjectionCheckImages(flattenTestcutImages(payload));
       } else {
         setEjectionCheckImages([]);
       }
@@ -536,18 +520,6 @@ export default function InventoryPage({ connected, socket }) {
                   }
                 }
 
-                const flattenSections = (payload) => {
-                  const out = [];
-                  if (payload && typeof payload === 'object') {
-                    const sectionNames = Object.keys(payload).sort();
-                    for (const section of sectionNames) {
-                      const arr = payload[section];
-                      if (Array.isArray(arr)) out.push(...arr);
-                    }
-                  }
-                  return out.filter((img) => img && img.url);
-                };
-
                 if (!jobData?.succeeded) {
                   const msg = jobData?.error || jobData?.error_type || 'Ejection check failed';
                   setEjectionCheckError(msg);
@@ -564,13 +536,13 @@ export default function InventoryPage({ connected, socket }) {
                   );
                   if (!fullResp.ok) return [];
                   const payload = await fullResp.json();
-                  return flattenSections(payload);
+                  return flattenTestcutImages(payload);
                 });
                 const settled = await Promise.allSettled(fetches);
                 const allImgs = settled
                   .filter((r) => r.status === 'fulfilled')
                   .flatMap((r) => r.value);
-                setEjectionCheckImages(sortEjectionGalleryImages(allImgs));
+                setEjectionCheckImages(allImgs);
               } catch (err) {
                 setEjectionCheckImagesFetchError(err?.message || 'Failed to load ejection image gallery');
                 setEjectionCheckImages([]);
