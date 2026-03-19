@@ -746,7 +746,7 @@ def inventory_run_ejection_checks(data):
         data.get("override_remote"),
         {k: v for k, v in data.items() if k != "token"},
     )
-    allowed, errors = check_fleet_command_allowed(data)
+    allowed, errors = check_fleet_command_allowed(data, allow_remote_override=True)
     if not allowed:
         return WebsocketError([SocketErrors.OTHER.value, (errors or ["Not allowed"])[0]]).to_json()
 

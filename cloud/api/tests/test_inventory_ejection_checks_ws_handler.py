@@ -61,13 +61,13 @@ def test_check_fleet_command_allowed_override_remote(monkeypatch):
     assert errors and "Remote (fab/SSH) session detected" in errors[0]
 
     # Case 2: developer/fab session detected, override -> allowed (if kiosk not in use)
-    allowed, errors = fleet_commands.check_fleet_command_allowed({"override_remote": True})
+    allowed, errors = fleet_commands.check_fleet_command_allowed({"override_remote": True}, allow_remote_override=True)
     assert allowed is True
     assert errors == []
 
     # Case 3: kiosk is in use still blocks unless force=True (even with override_remote)
     monkeypatch.setattr(fleet_commands.activity, "is_kiosk_in_use", lambda: True)
-    allowed, errors = fleet_commands.check_fleet_command_allowed({"override_remote": True})
+    allowed, errors = fleet_commands.check_fleet_command_allowed({"override_remote": True}, allow_remote_override=True)
     assert allowed is False
     assert errors and "Kiosk is in use" in errors[0]
 
@@ -77,7 +77,7 @@ def test_inventory_run_ejection_checks_input_validation_and_dispatch(monkeypatch
     from control_panel.python import server
 
     # Allow gate for input validation tests.
-    monkeypatch.setattr(server, "check_fleet_command_allowed", lambda data: (True, []))
+    monkeypatch.setattr(server, "check_fleet_command_allowed", lambda data, **kwargs: (True, []))
 
     send_mock = MagicMock()
     monkeypatch.setattr(server.keyme.ipc, "send", send_mock)
