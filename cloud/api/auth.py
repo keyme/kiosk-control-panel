@@ -1,11 +1,10 @@
-"""KeyMe opaque-token authentication via the ANF service.
+"""KeyMe opaque-token authentication via the admin API.
 
 Token validation flow:
 1. Extract ``KEYME-TOKEN`` header from the incoming request.
 2. Check the in-memory TTL cache for a previous successful validation.
-3. On cache miss, call ``GET {ANF_BASE_URL}/api/permission/check?permission_slug=check_kiosk_status``
-   with the token forwarded in the ``KEYME-TOKEN`` header.
-4. If the response is non-200 **or** ``granted`` is not ``true``, reject with HTTP 401.
+3. On cache miss, call ``GET {LOGIN_BASE_URL}/users/permission_check`` with JSON body ``{"token": "..."}``.
+4. Admin returns an array of permission slugs. If ``check_kiosk_status`` is not in the array, reject with HTTP 401.
 5. On success, cache the result for 300 s and return it.
 """
 
@@ -42,8 +41,13 @@ _ANF_BASE_URLS: dict[str, str] = {
     "stg": "http://anf.k8s.staging.keymecloud.com",
     "prod": "https://anf.k8s.production.keymecloud.com",
 }
+ANF_BASE_URL: str = _ANF_BASE_URLS[API_ENV]  # Used for logout only
 
-ANF_BASE_URL: str = _ANF_BASE_URLS[API_ENV]
+_LOGIN_BASE_URLS: dict[str, str] = {
+    "stg": "https://admin.k8s.staging.keymecloud.com",
+    "prod": "https://admin.k8s.production.keymecloud.com",
+}
+LOGIN_BASE_URL: str = _LOGIN_BASE_URLS[API_ENV]
 
 # TODO: Remove stg permission bypass below once we figure out how to re-enable permissions in stg.
 
@@ -76,8 +80,31 @@ keyme_token_header = APIKeyHeader(name="KEYME-TOKEN", auto_error=False)
 # ---------------------------------------------------------------------------
 
 
+def _fetch_permissions_from_admin(token: str) -> list[str] | None:
+    """Call admin /users/permission_check. Returns list of permission slugs or None on failure."""
+    url = f"{LOGIN_BASE_URL}/users/permission_check"
+    try:
+        resp = httpx.request(
+            "GET",
+            url,
+            json={"token": token},
+            timeout=10.0,
+        )
+    except httpx.HTTPError as exc:
+        log.warning("Admin permission check failed: %s", exc)
+        return None
+    if resp.status_code != 200:
+        log.info("Admin returned %s for permission check", resp.status_code)
+        return None
+    data = resp.json()
+    if not isinstance(data, list):
+        log.warning("Admin permission check returned non-list: %s", type(data))
+        return None
+    return data
+
+
 def validate_token(token: str | None) -> dict:
-    """Validate the opaque KeyMe token via ANF and return permission info.
+    """Validate the opaque KeyMe token via admin permission_check and return permission info.
 
     Raises HTTPException(401) on failure. Uses the same cache as REST.
     Safe to call from WebSocket handler (run in executor if async).
@@ -91,27 +118,18 @@ def validate_token(token: str | None) -> dict:
         if cached is not None:
             return cached
 
-    # Validate against ANF ----------------------------------------------------
-    url = f"{ANF_BASE_URL}/api/permission/check"
-    try:
-        resp = httpx.get(
-            url,
-            params={"permission_slug": REQUIRED_PERMISSION_SLUG},
-            headers={"KEYME-TOKEN": token},
-            timeout=10.0,
+    # Validate against admin --------------------------------------------------
+    permissions = _fetch_permissions_from_admin(token)
+    if permissions is None:
+        raise HTTPException(status_code=401, detail="Token validation failed")
+
+    granted = REQUIRED_PERMISSION_SLUG in permissions
+    if API_ENV != "stg" and not granted:
+        log.info(
+            "Permission not granted: required=%s permissions=%s",
+            REQUIRED_PERMISSION_SLUG,
+            permissions[:5] if len(permissions) > 5 else permissions,
         )
-    except httpx.HTTPError as exc:
-        log.warning("ANF permission check failed: %s", exc)
-        raise HTTPException(status_code=401, detail="Token validation failed") from exc
-
-    if resp.status_code != 200:
-        log.info("ANF returned %s for permission check", resp.status_code)
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
-    data = resp.json()
-    # In stg, require valid token only; skip permission check. Re-enable later.
-    if API_ENV != "stg" and not data.get("granted"):
-        log.info("Permission not granted: required=%s response=%s", REQUIRED_PERMISSION_SLUG, data)
         raise HTTPException(
             status_code=401,
             detail=(
@@ -121,11 +139,34 @@ def validate_token(token: str | None) -> dict:
         )
 
     # Cache successful validation ---------------------------------------------
+    data = {"granted": granted, "permissions": permissions}
     with _cache_lock:
         _token_cache[token] = data
-        uid = data.get("email") or data.get("user_id")
-        if uid:
-            _user_identifier_by_token[token] = (uid, int((time.time() + 300) * 1000))
+    return data
+
+
+async def _fetch_permissions_from_admin_async(
+    client: httpx.AsyncClient, token: str
+) -> list[str] | None:
+    """Call admin /users/permission_check (async). Returns list of permission slugs or None on failure."""
+    url = f"{LOGIN_BASE_URL}/users/permission_check"
+    try:
+        resp = await client.request(
+            "GET",
+            url,
+            json={"token": token},
+            timeout=10.0,
+        )
+    except httpx.HTTPError as exc:
+        log.warning("Admin permission check failed: %s", exc)
+        return None
+    if resp.status_code != 200:
+        log.info("Admin returned %s for permission check", resp.status_code)
+        return None
+    data = resp.json()
+    if not isinstance(data, list):
+        log.warning("Admin permission check returned non-list: %s", type(data))
+        return None
     return data
 
 
@@ -139,26 +180,17 @@ async def validate_token_async(client: httpx.AsyncClient, token: str | None) -> 
         if cached is not None:
             return cached
 
-    url = f"{ANF_BASE_URL}/api/permission/check"
-    try:
-        resp = await client.get(
-            url,
-            params={"permission_slug": REQUIRED_PERMISSION_SLUG},
-            headers={"KEYME-TOKEN": token},
-            timeout=10.0,
+    permissions = await _fetch_permissions_from_admin_async(client, token)
+    if permissions is None:
+        raise HTTPException(status_code=401, detail="Token validation failed")
+
+    granted = REQUIRED_PERMISSION_SLUG in permissions
+    if API_ENV != "stg" and not granted:
+        log.info(
+            "Permission not granted: required=%s permissions=%s",
+            REQUIRED_PERMISSION_SLUG,
+            permissions[:5] if len(permissions) > 5 else permissions,
         )
-    except httpx.HTTPError as exc:
-        log.warning("ANF permission check failed: %s", exc)
-        raise HTTPException(status_code=401, detail="Token validation failed") from exc
-
-    if resp.status_code != 200:
-        log.info("ANF returned %s for permission check", resp.status_code)
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
-    data = resp.json()
-    # In stg, require valid token only; skip permission check. Re-enable later.
-    if API_ENV != "stg" and not data.get("granted"):
-        log.info("Permission not granted: required=%s response=%s", REQUIRED_PERMISSION_SLUG, data)
         raise HTTPException(
             status_code=401,
             detail=(
@@ -167,11 +199,9 @@ async def validate_token_async(client: httpx.AsyncClient, token: str | None) -> 
             ),
         )
 
+    data = {"granted": granted, "permissions": permissions}
     with _cache_lock:
         _token_cache[token] = data
-        uid = data.get("email") or data.get("user_id")
-        if uid:
-            _user_identifier_by_token[token] = (uid, int((time.time() + 300) * 1000))
     return data
 
 
@@ -183,7 +213,7 @@ async def validate_token_async(client: httpx.AsyncClient, token: str | None) -> 
 def store_user_identifier_for_token(
     token: str, identifier: str | None, expires_at_ms: int | None = None
 ) -> None:
-    """Store token -> user identifier for audit logging. expires_at_ms from ANF login (ms since epoch); else 300s from now."""
+    """Store token -> user identifier for audit logging. expires_at_ms from admin login (ms since epoch); else 300s from now."""
     if not token or not identifier:
         return
     if expires_at_ms is None:
@@ -207,7 +237,7 @@ def get_user_identifier_for_token(token: str | None) -> str | None:
             return identifier
         cached = _token_cache.get(token)
         if cached is not None:
-            return cached.get("email") or cached.get("user_id")
+            return cached.get("email") or cached.get("user_id")  # Admin doesn't return these
     return None
 
 
@@ -223,9 +253,9 @@ def evict_token_caches(token: str) -> None:
 # ---------------------------------------------------------------------------
 
 def validate_permission(token: str | None, permission_slug: str) -> tuple[bool, str | None]:
-    """Check if token has the given permission via ANF. Returns (granted, user_identifier).
+    """Check if token has the given permission via admin permission_check. Returns (granted, user_identifier).
 
-    user_identifier is from ANF response (e.g. email) when present, for use in error messages.
+    user_identifier is None (admin doesn't return it in permission_check).
     Safe to call from WebSocket handler (run in executor if async).
     In stg, permission check is bypassed (always granted) so user only needs to be logged in.
     """
@@ -240,31 +270,24 @@ def validate_permission(token: str | None, permission_slug: str) -> tuple[bool, 
             granted = bool(cached.get("granted"))
             user_id = cached.get("email") or cached.get("user_id")
             return (granted, user_id)
+        # Check if we have permissions from validate_token cache
+        token_cached = _token_cache.get(token)
+        if token_cached is not None:
+            perms = token_cached.get("permissions") or []
+            granted = permission_slug in perms
+            _permission_cache[key] = {"granted": granted}
+            return (granted, None)
 
-    url = f"{ANF_BASE_URL}/api/permission/check"
-    try:
-        resp = httpx.get(
-            url,
-            params={"permission_slug": permission_slug},
-            headers={"KEYME-TOKEN": token},
-            timeout=10.0,
-        )
-    except httpx.HTTPError as exc:
-        log.warning("ANF permission check failed for %s: %s", permission_slug, exc)
+    permissions = _fetch_permissions_from_admin(token)
+    if permissions is None:
         return (False, None)
-
-    if resp.status_code != 200:
-        log.info("ANF returned %s for permission check slug=%s", resp.status_code, permission_slug)
-        return (False, None)
-
-    data = resp.json()
-    granted = bool(data.get("granted"))
-    user_id = data.get("email") or data.get("user_id")
+    granted = permission_slug in permissions
     with _cache_lock:
-        _permission_cache[key] = data
-        if user_id:
-            _user_identifier_by_token[token] = (user_id, int((time.time() + 300) * 1000))
-    return (granted, user_id)
+        _permission_cache[key] = {"granted": granted}
+        # Populate token cache so future validate_token hits are fast
+        if _token_cache.get(token) is None:
+            _token_cache[token] = {"granted": REQUIRED_PERMISSION_SLUG in permissions, "permissions": permissions}
+    return (granted, None)
 
 
 async def validate_permission_async(
@@ -284,31 +307,22 @@ async def validate_permission_async(
             granted = bool(cached.get("granted"))
             user_id = cached.get("email") or cached.get("user_id")
             return (granted, user_id)
+        token_cached = _token_cache.get(token)
+        if token_cached is not None:
+            perms = token_cached.get("permissions") or []
+            granted = permission_slug in perms
+            _permission_cache[key] = {"granted": granted}
+            return (granted, None)
 
-    url = f"{ANF_BASE_URL}/api/permission/check"
-    try:
-        resp = await client.get(
-            url,
-            params={"permission_slug": permission_slug},
-            headers={"KEYME-TOKEN": token},
-            timeout=10.0,
-        )
-    except httpx.HTTPError as exc:
-        log.warning("ANF permission check failed for %s: %s", permission_slug, exc)
+    permissions = await _fetch_permissions_from_admin_async(client, token)
+    if permissions is None:
         return (False, None)
-
-    if resp.status_code != 200:
-        log.info("ANF returned %s for permission check slug=%s", resp.status_code, permission_slug)
-        return (False, None)
-
-    data = resp.json()
-    granted = bool(data.get("granted"))
-    user_id = data.get("email") or data.get("user_id")
+    granted = permission_slug in permissions
     with _cache_lock:
-        _permission_cache[key] = data
-        if user_id:
-            _user_identifier_by_token[token] = (user_id, int((time.time() + 300) * 1000))
-    return (granted, user_id)
+        _permission_cache[key] = {"granted": granted}
+        if _token_cache.get(token) is None:
+            _token_cache[token] = {"granted": REQUIRED_PERMISSION_SLUG in permissions, "permissions": permissions}
+    return (granted, None)
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +331,7 @@ async def validate_permission_async(
 
 
 def get_current_user(token: str | None = Depends(keyme_token_header)) -> dict:
-    """Validate the opaque KeyMe token via ANF and return permission info.
+    """Validate the opaque KeyMe token via admin permission_check and return permission info.
 
     Usage::
 
