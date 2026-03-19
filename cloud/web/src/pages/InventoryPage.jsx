@@ -502,6 +502,7 @@ export default function InventoryPage({ connected, socket }) {
                       } finally {
                         setEjectionCheckImagesLoading(false);
                       }
+                      setEjectionCheckPolling(false);
                       break;
                     }
                   }
