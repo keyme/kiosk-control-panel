@@ -647,6 +647,8 @@ function AppContent() {
 
   const reconnect = useCallback(() => {
     setLastError(null);
+    // Force a fresh connection by tearing down any existing WebSocket first.
+    socket?.disconnect();
     socket?.connect();
   }, [socket]);
 
