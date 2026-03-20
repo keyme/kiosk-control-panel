@@ -188,6 +188,7 @@ def _dispatch_request(client_id, request_id, event, data, connection_count, conn
         'inventory_update_api_pricing': lambda: handlers.inventory_update_api_pricing(data or {}),
         'inventory_rotate_and_capture': lambda: handlers.inventory_rotate_and_capture(data or {}),
         'inventory_admin_restore': lambda: handlers.inventory_admin_restore(data or {}),
+        'inventory_run_ejection_checks': lambda: handlers.inventory_run_ejection_checks(data or {}),
     }
     if event not in ws_protocol.SUPPORTED_REQUEST_EVENTS:
         return {'id': request_id, 'success': False, 'errors': [ws_protocol.ERROR_UNSUPPORTED_COMMAND]}

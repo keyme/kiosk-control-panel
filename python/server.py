@@ -736,6 +736,54 @@ def inventory_rotate_and_capture(data):
         _motion_lock.release()
 
 
+def inventory_run_ejection_checks(data):
+    """Run ejector checks for a single magazine via JOB_SERVER test_ejections job.
+    Gate: same as fleet (kiosk in use / remote session)."""
+    data = data if isinstance(data, dict) else {}
+    keyme.log.info("WS: requesting inventory_run_ejection_checks")
+    sanitized = {k: v for k, v in data.items() if k != "token"}
+    keyme.log.info(
+        f"inventory_run_ejection_checks inputs override_remote={data.get('override_remote')} data={sanitized}"
+    )
+    allowed, errors = check_fleet_command_allowed(data, allow_remote_override=True)
+    if not allowed:
+        return WebsocketError([SocketErrors.OTHER.value, (errors or ["Not allowed"])[0]]).to_json()
+
+    magazine = data.get("magazine")
+    if magazine is None:
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "magazine required"]).to_json()
+    try:
+        magazine = int(magazine)
+    except (TypeError, ValueError):
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "magazine must be 1-20"]).to_json()
+    if not (1 <= magazine <= 20):
+        return WebsocketError([SocketErrors.INVALID_INPUT.value, "magazine must be 1-20"]).to_json()
+
+    job_payload = {
+        "name": "test_ejections",
+        "inputs": {
+            "mag_numbers": [magazine],
+            # Match GUI5 default behavior: single ejection, ticket optional.
+            "eject_keys": 1,
+            "retries": 3,
+            "make_ticket": False,
+        },
+    }
+    keyme.log.info("inventory_run_ejection_checks dispatching job_payload=%s", job_payload)
+    try:
+        # RUN_JOB is fire-and-forget; GUI5 uses send(), not send_sync().
+        keyme.ipc.send('JOB_SERVER', 'RUN_JOB', job_payload)
+    except _IPC_ERRORS as e:
+        keyme.log.error(f"inventory_run_ejection_checks: RUN_JOB IPC failed: {e}")
+        return WebsocketError([SocketErrors.OTHER.value, "Failed to start ejector checks"]).to_json()
+    except Exception as e:
+        keyme.log.error(f"inventory_run_ejection_checks: unexpected error: {e}")
+        return WebsocketError([SocketErrors.OTHER.value, "Failed to start ejector checks"]).to_json()
+
+    # Assume success if IPC send did not raise.
+    return WebsocketSuccess({"started": True}).to_json()
+
+
 def clear_cache():
     """Clear TTL cache (e.g. when last client disconnects)."""
     with _cache_lock:

@@ -54,6 +54,21 @@ class TestTestcutImages:
                 assert isinstance(img["url"], str)
                 assert img["url"].startswith("https://")
 
+    def test_response_values_are_image_lists(self, client):
+        """Contract test: all values in the response are lists of image dicts."""
+        resp = client.get(
+            "/api/calibration/testcuts/images",
+            params={"kiosk": "ns9999", "id": "1"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, dict)
+        assert len(data) > 0
+        for images in data.values():
+            assert isinstance(images, list)
+            for img in images:
+                assert "key" in img and "filename" in img and "url" in img
+
     def test_missing_kiosk(self, client):
         resp = client.get("/api/calibration/testcuts/images", params={"id": "1"})
         assert resp.status_code == 400
