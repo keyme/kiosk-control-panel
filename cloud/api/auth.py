@@ -96,9 +96,16 @@ def _fetch_permissions_from_admin(token: str) -> list[str] | None:
     if resp.status_code != 200:
         log.info("Admin returned %s for permission check", resp.status_code)
         return None
-    data = resp.json()
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        log.warning("Admin permission check returned invalid JSON: %s", exc)
+        return None
     if not isinstance(data, list):
         log.warning("Admin permission check returned non-list: %s", type(data))
+        return None
+    if not all(isinstance(item, str) for item in data):
+        log.warning("Admin permission check returned list with non-string elements")
         return None
     return data
 
@@ -163,9 +170,16 @@ async def _fetch_permissions_from_admin_async(
     if resp.status_code != 200:
         log.info("Admin returned %s for permission check", resp.status_code)
         return None
-    data = resp.json()
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        log.warning("Admin permission check returned invalid JSON: %s", exc)
+        return None
     if not isinstance(data, list):
         log.warning("Admin permission check returned non-list: %s", type(data))
+        return None
+    if not all(isinstance(item, str) for item in data):
+        log.warning("Admin permission check returned list with non-string elements")
         return None
     return data
 

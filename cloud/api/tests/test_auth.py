@@ -48,7 +48,7 @@ class TestMissingToken:
 
 class TestInvalidToken:
     @patch("control_panel.cloud.api.auth.httpx.request")
-    def test_anf_non_200_returns_401(self, mock_request):
+    def test_admin_non_200_returns_401(self, mock_request):
         mock_resp = MagicMock()
         mock_resp.status_code = 403
         mock_request.return_value = mock_resp
@@ -120,7 +120,7 @@ class TestValidatePermission:
 
     @patch("control_panel.cloud.api.auth.API_ENV", "prod")
     @patch("control_panel.cloud.api.auth._fetch_permissions_from_admin")
-    def test_granted_true_returns_true_and_user_id(self, mock_fetch):
+    def test_granted_true_returns_true_no_user_identifier(self, mock_fetch):
         self._clear_permission_cache()
         # Admin returns list of permissions; user_id is None (admin doesn't return it)
         mock_fetch.return_value = ["reboot_kiosk", "check_kiosk_status"]
@@ -128,7 +128,7 @@ class TestValidatePermission:
         from control_panel.cloud.api.auth import validate_permission
         granted, user_id = validate_permission("tok", "reboot_kiosk")
         assert granted is True
-        assert user_id is None  # Admin permission_check doesn't return user identifier
+        assert user_id is None
         assert mock_fetch.call_count == 1
 
     @patch("control_panel.cloud.api.auth.API_ENV", "prod")
