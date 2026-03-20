@@ -254,6 +254,35 @@ export default function InventoryPage({ connected, socket }) {
   const isSocketDisabled = !connected || !socket?.connected;
   const isDisabled = isSocketDisabled || !hasLoaded;
 
+  const loadEjectionImages = useCallback(async () => {
+    const k = (kiosk || '').trim();
+    if (!k) {
+      setEjectionError('Kiosk name not available.');
+      return;
+    }
+    setEjectionError(null);
+    setEjectionLoading(true);
+    try {
+      const res = await apiFetch(
+        `/api/calibration/ejection_images?kiosk=${encodeURIComponent(k)}&max_ids=500`
+      );
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData?.error || res.statusText || 'Failed to load ejection images');
+      }
+      const data = await res.json();
+      if (!data || typeof data !== 'object') {
+        setEjectionImagesByMag({});
+        return;
+      }
+      setEjectionImagesByMag(data);
+    } catch (err) {
+      setEjectionError(err?.message || 'Failed to load ejection images');
+    } finally {
+      setEjectionLoading(false);
+    }
+  }, [kiosk]);
+
   const fetchInventory = useCallback(() => {
     if (!socket?.requestIfSupported) return;
     setError(null);
@@ -282,8 +311,11 @@ export default function InventoryPage({ connected, socket }) {
         const msg = err?.code === ERROR_UNSUPPORTED_COMMAND ? UNSUPPORTED_FEATURE_MESSAGE : (err?.message || 'Failed to load inventory');
         setError(msg);
       })
-      .finally(() => setLoading(false));
-  }, [socket]);
+      .finally(() => {
+        setLoading(false);
+        loadEjectionImages();
+      });
+  }, [socket, loadEjectionImages]);
 
   const handleSelect = (magNumRaw) => {
     const magNum = Number(magNumRaw);
@@ -416,35 +448,6 @@ export default function InventoryPage({ connected, socket }) {
     a.click();
     URL.revokeObjectURL(url);
   }, [kiosk, magazines]);
-
-  const loadEjectionImages = useCallback(async () => {
-    const k = (kiosk || '').trim();
-    if (!k) {
-      setEjectionError('Kiosk name not available.');
-      return;
-    }
-    setEjectionError(null);
-    setEjectionLoading(true);
-    try {
-      const res = await apiFetch(
-        `/api/calibration/ejection_images?kiosk=${encodeURIComponent(k)}&max_ids=500`
-      );
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData?.error || res.statusText || 'Failed to load ejection images');
-      }
-      const data = await res.json();
-      if (!data || typeof data !== 'object') {
-        setEjectionImagesByMag({});
-        return;
-      }
-      setEjectionImagesByMag(data);
-    } catch (err) {
-      setEjectionError(err?.message || 'Failed to load ejection images');
-    } finally {
-      setEjectionLoading(false);
-    }
-  }, [kiosk]);
 
   const handleOpenCaptureConfirm = () => {
     setCaptureError(null);
