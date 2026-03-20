@@ -22,7 +22,6 @@ log = logging.getLogger(__name__)
 
 # Permission required to access the control panel cloud API.
 REQUIRED_PERMISSION_SLUG = "check_kiosk_status"
-PERMISSIONS_ADMIN_URL = "https://admin.key.me/permissions"
 
 # ---------------------------------------------------------------------------
 # Environment / base URL
@@ -37,19 +36,13 @@ if API_ENV not in _VALID_ENVS:
         f"Invalid API_ENV={API_ENV!r}. Must be one of {sorted(_VALID_ENVS)}."
     )
 
-_ANF_BASE_URLS: dict[str, str] = {
-    "stg": "http://anf.k8s.staging.keymecloud.com",
-    "prod": "https://anf.k8s.production.keymecloud.com",
-}
-ANF_BASE_URL: str = _ANF_BASE_URLS[API_ENV]  # Used for logout only
-
-_LOGIN_BASE_URLS: dict[str, str] = {
+_ADMIN_BASE_URLS: dict[str, str] = {
     "stg": "https://admin.k8s.staging.keymecloud.com",
-    "prod": "https://admin.k8s.production.keymecloud.com",
+    "prod": "https://admin.key.me",
 }
-LOGIN_BASE_URL: str = _LOGIN_BASE_URLS[API_ENV]
-
-# TODO: Remove stg permission bypass below once we figure out how to re-enable permissions in stg.
+# Optional override for local/Docker when admin hostname is not resolvable (e.g. k8s internal DNS)
+LOGIN_BASE_URL: str = os.environ.get("ADMIN_BASE_URL", "").rstrip("/") or _ADMIN_BASE_URLS[API_ENV]
+PERMISSIONS_ADMIN_URL: str = f"{LOGIN_BASE_URL}/permissions"
 
 # ---------------------------------------------------------------------------
 # Token cache (connect-time check_kiosk_status)
@@ -58,12 +51,12 @@ LOGIN_BASE_URL: str = _LOGIN_BASE_URLS[API_ENV]
 _token_cache: TTLCache = TTLCache(maxsize=1000, ttl=300)
 
 # ---------------------------------------------------------------------------
-# Permission cache for fleet commands: (token, permission_slug) -> ANF response
+# Permission cache for fleet commands: (token, permission_slug) -> admin response
 # ---------------------------------------------------------------------------
 
 _permission_cache: TTLCache = TTLCache(maxsize=2000, ttl=300)
 
-# Token -> (identifier, expires_at_ms). Primed from login (expires_at from ANF); backfill uses 300s.
+# Token -> (identifier, expires_at_ms). Primed from login (expires_at from admin); backfill uses 300s.
 _user_identifier_by_token: dict[str, tuple[str, int]] = {}
 
 # Lock for thread-safe cache access (sync REST and async WS paths both touch caches).
@@ -131,7 +124,7 @@ def validate_token(token: str | None) -> dict:
         raise HTTPException(status_code=401, detail="Token validation failed")
 
     granted = REQUIRED_PERMISSION_SLUG in permissions
-    if API_ENV != "stg" and not granted:
+    if not granted:
         log.info(
             "Permission not granted: required=%s permissions=%s",
             REQUIRED_PERMISSION_SLUG,
@@ -199,7 +192,7 @@ async def validate_token_async(client: httpx.AsyncClient, token: str | None) -> 
         raise HTTPException(status_code=401, detail="Token validation failed")
 
     granted = REQUIRED_PERMISSION_SLUG in permissions
-    if API_ENV != "stg" and not granted:
+    if not granted:
         log.info(
             "Permission not granted: required=%s permissions=%s",
             REQUIRED_PERMISSION_SLUG,
@@ -227,7 +220,7 @@ async def validate_token_async(client: httpx.AsyncClient, token: str | None) -> 
 def store_user_identifier_for_token(
     token: str, identifier: str | None, expires_at_ms: int | None = None
 ) -> None:
-    """Store token -> user identifier for audit logging. expires_at_ms from admin login (ms since epoch); else 300s from now."""
+    """Store token -> user identifier for audit logging. expires_at_ms from login (ms since epoch); else 300s from now."""
     if not token or not identifier:
         return
     if expires_at_ms is None:

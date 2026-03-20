@@ -26,7 +26,7 @@ This document provides guidance for AI agents (and humans) working on the **cont
 - Cloud proxies WebSocket (`/ws`) to the selected device over WSS (TLS).
 - Cloud proxies WebSocket (`/ai`) for AI log analysis (Codex).
 
-**Auth:** Token-based via KeyMe ANF service. `KEYME-TOKEN` header for REST; first message `{ event: "auth", token, device }` for WebSockets.
+**Auth:** Token-based via KeyMe admin API. `KEYME-TOKEN` header for REST; first message `{ event: "auth", token, device }` for WebSockets.
 
 ---
 
