@@ -594,6 +594,7 @@ export default function InventoryPage({ connected, socket }) {
           (async () => {
             console.debug('ejection polling loop started', { kiosk: k, magNum, previousId });
             const maxAttempts = 24; // ~2 minutes at 5s intervals
+            let foundNewImage = false;
             for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
               if (ejectionPollAbortRef.current) return;
               try {
@@ -608,6 +609,7 @@ export default function InventoryPage({ connected, socket }) {
                       setEjectionImagesByMag(data);
                       setEjectionCheckResult({ id: entry.id, image: entry.image });
                       console.debug('new ejection id detected', { magNum, newId: entry.id });
+                      foundNewImage = true;
                       break;
                     }
                   }
@@ -620,9 +622,14 @@ export default function InventoryPage({ connected, socket }) {
               await new Promise((resolve) => setTimeout(resolve, 5000));
             }
             if (!ejectionPollAbortRef.current) {
-              console.debug('ejection polling loop ended (timeout)', { maxAttempts });
               setEjectionCheckPolling(false);
-              ejectionCheckStartGuardRef.current = false;
+              if (!foundNewImage) {
+                console.debug('ejection polling loop ended (timeout)', { maxAttempts });
+                // Reset the run guard only on a real timeout. If we broke early due to
+                // a newly detected image, the JOB_RESULT handler + gallery fetch should
+                // be responsible for resetting the guard.
+                ejectionCheckStartGuardRef.current = false;
+              }
             }
           })();
       }
