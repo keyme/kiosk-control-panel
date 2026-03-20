@@ -27,18 +27,26 @@ _RESET_RESULT_TIMEOUT_SEC = 55  # Stay under typical WS request timeout (60s)
 _pending_reset_lock = threading.Lock()
 _pending_reset = None  # { 'event': Event(), 'expected': set of device names, 'results': list of dicts }
 
-def check_fleet_command_allowed(data=None):
+def check_fleet_command_allowed(data=None, allow_remote_override: bool = False):
     """Return (allowed, errors). If not allowed, errors is a non-empty list of strings.
-    When data has force=True, skip the kiosk-in-use check (for tech on site / interrupt)."""
-    if has_logged_in_user():
-        return ( False, [ ( "Remote (fab/SSH) session detected. Commands are temporarily"
-                " disabled to prevent conflicts while a developer is connected.") ])
-    if activity.is_kiosk_in_use() and not (data and data.get('force')):
+    When data has force=True, skip the kiosk-in-use check (for tech on site / interrupt).
+    When allow_remote_override is True and data has override_remote=True, allow commands even
+    if a fab/SSH session is active. Handlers must explicitly opt in by passing allow_remote_override=True."""
+    data = data if isinstance(data, dict) else {}
+    override_remote = bool(data.get('override_remote')) if allow_remote_override else False
+    if has_logged_in_user() and not override_remote:
+        return (False, [("Remote (fab/SSH) session detected. Commands are temporarily"
+                " disabled to prevent conflicts while a developer is connected.")])
+    if activity.is_kiosk_in_use() and not data.get('force'):
         return (False, ["Kiosk is in use. Fleet commands are not allowed while a customer is using the kiosk."])
     return (True, [])
 
 def require_fleet_allowed(f):
-    """Decorator: run check_fleet_command_allowed(data); if not allowed return error dict, else call f."""
+    """Decorator: run check_fleet_command_allowed(data); if not allowed return error dict, else call f.
+
+    NOTE: This decorator does NOT allow remote override; handlers that need override_remote must call
+    check_fleet_command_allowed(data, allow_remote_override=True) directly instead of using this decorator.
+    """
     @wraps(f)
     def wrapper(data, *args, **kwargs):
         allowed, errors = check_fleet_command_allowed(data)

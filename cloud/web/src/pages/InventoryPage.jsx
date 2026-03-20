@@ -19,6 +19,56 @@ function formatKeyHeadTaken(keyOrFilename) {
   return `${month} ${parseInt(d, 10)}, ${y}, ${h}:${min} UTC`;
 }
 
+/** Match backend testcuts.py ordering: section numeric prefix, then image key. */
+function sectionSortKey(sectionName) {
+  const m = String(sectionName || '').match(/^(\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+function imageTimestampMs(img) {
+  const source = String(img?.filename || img?.key || '');
+  const m = source.match(/(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-UTC/);
+  if (!m) return null;
+  const [, y, mo, d, h, min, s] = m;
+  const ms = Date.UTC(
+    parseInt(y, 10),
+    parseInt(mo, 10) - 1,
+    parseInt(d, 10),
+    parseInt(h, 10),
+    parseInt(min, 10),
+    parseInt(s, 10),
+  );
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function flattenTestcutImages(payload) {
+  if (!payload || typeof payload !== 'object') return [];
+  const out = [];
+  const sectionNames = Object.keys(payload).sort((a, b) => {
+    const aNum = sectionSortKey(a);
+    const bNum = sectionSortKey(b);
+    if (aNum !== bNum) return aNum - bNum;
+    return String(a).localeCompare(String(b));
+  });
+  for (const section of sectionNames) {
+    const arr = payload[section];
+    if (!Array.isArray(arr)) continue;
+    const sortedInSection = [...arr].sort((a, b) => String(a?.key || '').localeCompare(String(b?.key || '')));
+    for (const img of sortedInSection) {
+      if (img && img.url) out.push(img);
+    }
+  }
+  // UI-friendly sequence: oldest -> newest by embedded timestamp; fallback to testcuts order.
+  return out.sort((a, b) => {
+    const aTs = imageTimestampMs(a);
+    const bTs = imageTimestampMs(b);
+    if (aTs != null && bTs != null && aTs !== bTs) return aTs - bTs;
+    if (aTs != null && bTs == null) return -1;
+    if (aTs == null && bTs != null) return 1;
+    return 0;
+  });
+}
+
 /** Gen 3 kiosks: strip leading zeros after "ns" (e.g. NS003512 -> NS3512). */
 function normalizeKioskName(name) {
   if (name == null || typeof name !== 'string') return '';
@@ -120,7 +170,9 @@ export default function InventoryPage({ connected, socket }) {
   const [captureError, setCaptureError] = useState(null);
   const [captureImages, setCaptureImages] = useState(null);
   const [captureRunAnyway, setCaptureRunAnyway] = useState(false);
-  const [fullscreenImage, setFullscreenImage] = useState(null); // { base64, label } or null
+  const [fullscreenImage, setFullscreenImage] = useState(null); // { base64?, url?, label } or null
+  const [fullscreenImages, setFullscreenImages] = useState(null); // optional array of { url, filename }
+  const [fullscreenIndex, setFullscreenIndex] = useState(null); // index into fullscreenImages when present
   const [restoreFromAdminModalOpen, setRestoreFromAdminModalOpen] = useState(false);
   const [restoreFromAdminKiosk, setRestoreFromAdminKiosk] = useState('');
   const [fetchedStock, setFetchedStock] = useState(null);
@@ -132,6 +184,20 @@ export default function InventoryPage({ connected, socket }) {
   const [ejectionLoading, setEjectionLoading] = useState(false);
   const [ejectionError, setEjectionError] = useState(null);
 
+  const [ejectionCheckConfirmOpen, setEjectionCheckConfirmOpen] = useState(false);
+  const [ejectionCheckLoading, setEjectionCheckLoading] = useState(false);
+  const [ejectionCheckError, setEjectionCheckError] = useState(null);
+  const [ejectionCheckOverrideRemote, setEjectionCheckOverrideRemote] = useState(false);
+  const [ejectionCheckPolling, setEjectionCheckPolling] = useState(false);
+  const [ejectionCheckResult, setEjectionCheckResult] = useState(null); // { id, image }
+  const [ejectionCheckImages, setEjectionCheckImages] = useState(null); // array of { url, filename, key }
+  const [ejectionCheckImagesLoading, setEjectionCheckImagesLoading] = useState(false);
+  const [ejectionCheckImagesFetchError, setEjectionCheckImagesFetchError] = useState(null);
+  const ejectionPollAbortRef = useRef(false);
+  const ejectionCheckStartGuardRef = useRef(false);
+  const ejectionJobResultHandlerRef = useRef(null);
+  const lastEjectionJobResultIdRef = useRef(null);
+
   useEffect(() => {
     if (!hasPendingPricingUpdate) return;
     const onBeforeUnload = (e) => {
@@ -141,6 +207,38 @@ export default function InventoryPage({ connected, socket }) {
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [hasPendingPricingUpdate]);
+
+  useEffect(() => {
+    if (!fullscreenImage) return;
+    const handleKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        setFullscreenImage(null);
+        setFullscreenImages(null);
+        setFullscreenIndex(null);
+        return;
+      }
+      if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && fullscreenImages && fullscreenIndex != null) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!fullscreenImages.length) return;
+        const delta = e.key === 'ArrowLeft' ? -1 : 1;
+        const nextIndex = (fullscreenIndex + delta + fullscreenImages.length) % fullscreenImages.length;
+        setFullscreenIndex(nextIndex);
+        const img = fullscreenImages[nextIndex];
+        if (img && img.url) {
+          setFullscreenImage({
+            base64: null,
+            url: img.url,
+            label: img.filename || fullscreenImage.label,
+          });
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [fullscreenImage, fullscreenImages, fullscreenIndex]);
 
   useEffect(() => {
     if (!bulkMenuOpen) return;
@@ -209,6 +307,40 @@ export default function InventoryPage({ connected, socket }) {
   const showActionMessage = (message, isError = false) => {
     setActionMessage({ text: message, isError });
   };
+
+  const openEjectionGalleryForSelected = useCallback(async () => {
+    const magNum = selectedMagazine;
+    const k = (kiosk || '').trim();
+    if (!magNum || !k) return;
+    const entry = ejectionImagesByMag[magNum];
+    if (!entry) return;
+    setEjectionCheckError(null);
+    setEjectionCheckLoading(false);
+    setEjectionCheckPolling(false);
+    setEjectionCheckResult({ id: entry.id, image: entry.image });
+    setEjectionCheckImages(null);
+    setEjectionCheckImagesLoading(true);
+    setEjectionCheckImagesFetchError(null);
+    setEjectionCheckConfirmOpen(true);
+    try {
+      const resp = await apiFetch(
+        `/api/calibration/testcuts/images?kiosk=${encodeURIComponent(k)}&id=${encodeURIComponent(
+          String(entry.id),
+        )}`,
+      );
+      if (resp.ok) {
+        const payload = await resp.json();
+        setEjectionCheckImages(flattenTestcutImages(payload));
+      } else {
+        setEjectionCheckImages([]);
+      }
+    } catch (err) {
+      setEjectionCheckImagesFetchError(err?.message || 'Failed to load ejection image gallery');
+      setEjectionCheckImages([]);
+    } finally {
+      setEjectionCheckImagesLoading(false);
+    }
+  }, [selectedMagazine, kiosk, ejectionImagesByMag]);
 
   const runAction = (event, data) => {
     if (!socket?.requestIfSupported || actionLoading || isDisabled) return;
@@ -295,7 +427,7 @@ export default function InventoryPage({ connected, socket }) {
     setEjectionLoading(true);
     try {
       const res = await apiFetch(
-        `/api/calibration/ejection_images?kiosk=${encodeURIComponent(k)}`
+        `/api/calibration/ejection_images?kiosk=${encodeURIComponent(k)}&max_ids=500`
       );
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
@@ -319,6 +451,215 @@ export default function InventoryPage({ connected, socket }) {
     setCaptureImages(null);
     setCaptureConfirmOpen(true);
   };
+
+  const handleOpenEjectionCheckConfirm = () => {
+    setEjectionCheckError(null);
+    setEjectionCheckConfirmOpen(true);
+  };
+
+  const handleConfirmEjectionCheck = useCallback(async () => {
+    if (selectedMagazine == null || !socket?.requestIfSupported) return;
+    if (ejectionCheckStartGuardRef.current) return;
+    ejectionCheckStartGuardRef.current = true;
+    const magNum = selectedMagazine;
+    const previousEntry = ejectionImagesByMag[magNum];
+    const previousId = previousEntry?.id ?? null;
+    setEjectionCheckError(null);
+    setEjectionCheckResult(null);
+    setEjectionCheckImagesFetchError(null);
+    setEjectionCheckLoading(true);
+    try {
+      const payload = {
+        magazine: selectedMagazine,
+      };
+      if (ejectionCheckOverrideRemote) {
+        payload.override_remote = true;
+      }
+      await socket.requestIfSupported('inventory_run_ejection_checks', payload);
+        showActionMessage('Ejection check started. Images will appear below once available.');
+        console.debug('ejection check started', {
+          kiosk,
+          magazine: magNum,
+          previousEjectionId: previousId,
+          overrideRemote: ejectionCheckOverrideRemote,
+        });
+        const ejectionJobHandler = (jobData) => {
+          try {
+            const jobName = jobData?.name;
+            if (jobName !== 'test_ejections') return;
+            if (ejectionPollAbortRef.current) return;
+            const jobResultId = jobData?.id ?? null;
+            if (jobResultId && lastEjectionJobResultIdRef.current === jobResultId) return;
+
+            const magazineData = jobData?.result?.magazine_data;
+            if (!Array.isArray(magazineData)) return;
+            const matching = magazineData.filter((m) => Number(m?.magazine_number) === Number(magNum));
+            const testCutIds = matching.flatMap((m) => (Array.isArray(m?.test_cut_ids) ? m.test_cut_ids : []));
+            const uniqueTestCutIds = [];
+            for (const id of testCutIds) {
+              const n = Number(id);
+              if (!Number.isFinite(n)) continue;
+              if (!uniqueTestCutIds.includes(n)) uniqueTestCutIds.push(n);
+            }
+            if (!uniqueTestCutIds.length) return;
+            if (previousId && uniqueTestCutIds.every((id) => Number(id) === Number(previousId))) return;
+
+            lastEjectionJobResultIdRef.current = jobResultId;
+            ejectionPollAbortRef.current = true;
+            setEjectionCheckPolling(false);
+            setEjectionCheckImagesLoading(true);
+            setEjectionCheckImages(null);
+            setEjectionCheckImagesFetchError(null);
+
+            if (socket && ejectionJobResultHandlerRef.current) {
+              socket.off('async.JOB_RESULT', ejectionJobResultHandlerRef.current);
+              ejectionJobResultHandlerRef.current = null;
+            }
+
+            void (async () => {
+              try {
+                const kNow = (kiosk || '').trim();
+                if (!kNow) {
+                  setEjectionCheckImagesFetchError('Kiosk name not available.');
+                  setEjectionCheckImages([]);
+                  setEjectionCheckPolling(false);
+                  ejectionCheckStartGuardRef.current = false;
+                  return;
+                }
+
+                // Best-effort update the drawer "latest key head" card.
+                if (kNow) {
+                  try {
+                    const keyHeadResp = await apiFetch(
+                      `/api/calibration/ejection_images?kiosk=${encodeURIComponent(kNow)}&max_ids=500`
+                    );
+                    if (keyHeadResp.ok) {
+                      const data = await keyHeadResp.json();
+                      setEjectionImagesByMag(data);
+                      const entry = data?.[magNum];
+                      if (entry) setEjectionCheckResult({ id: entry.id, image: entry.image });
+                    }
+                  } catch (e) {
+                    // Not fatal; the full gallery can still render.
+                  }
+                }
+
+                if (!jobData?.succeeded) {
+                  const msg = jobData?.error || jobData?.error_type || 'Ejection check failed';
+                  setEjectionCheckError(msg);
+                  setEjectionCheckImages([]);
+                  ejectionCheckStartGuardRef.current = false;
+                  return;
+                }
+
+                const fetches = uniqueTestCutIds.map(async (id) => {
+                  const fullResp = await apiFetch(
+                    `/api/calibration/testcuts/images?kiosk=${encodeURIComponent(kNow)}&id=${encodeURIComponent(
+                      String(id)
+                    )}`
+                  );
+                  if (!fullResp.ok) return [];
+                  const payload = await fullResp.json();
+                  return flattenTestcutImages(payload);
+                });
+                const settled = await Promise.allSettled(fetches);
+                const allImgs = settled
+                  .filter((r) => r.status === 'fulfilled')
+                  .flatMap((r) => r.value);
+                setEjectionCheckImages(allImgs);
+              } catch (err) {
+                setEjectionCheckImagesFetchError(err?.message || 'Failed to load ejection image gallery');
+                setEjectionCheckImages([]);
+              } finally {
+                setEjectionCheckImagesLoading(false);
+                ejectionCheckStartGuardRef.current = false;
+              }
+            })();
+          } catch {
+            // ignore malformed jobData payloads
+          }
+        };
+
+        if (socket && ejectionJobResultHandlerRef.current) {
+          socket.off('async.JOB_RESULT', ejectionJobResultHandlerRef.current);
+          ejectionJobResultHandlerRef.current = null;
+        }
+        ejectionJobResultHandlerRef.current = ejectionJobHandler;
+        if (socket) socket.on('async.JOB_RESULT', ejectionJobHandler);
+        // Start polling for a newer ejection image for this magazine.
+        const k = (kiosk || '').trim();
+        if (k) {
+          ejectionPollAbortRef.current = false;
+          setEjectionCheckPolling(true);
+          (async () => {
+            console.debug('ejection polling loop started', { kiosk: k, magNum, previousId });
+            const maxAttempts = 24; // ~2 minutes at 5s intervals
+            let foundNewImage = false;
+            for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+              if (ejectionPollAbortRef.current) return;
+              try {
+                const resp = await apiFetch(
+                  `/api/calibration/ejection_images?kiosk=${encodeURIComponent(k)}&max_ids=500`
+                );
+                if (resp.ok) {
+                  const data = await resp.json();
+                  if (data && typeof data === 'object') {
+                    const entry = data[magNum];
+                    if (entry && (!previousId || entry.id !== previousId)) {
+                      setEjectionImagesByMag(data);
+                      setEjectionCheckResult({ id: entry.id, image: entry.image });
+                      console.debug('new ejection id detected', { magNum, newId: entry.id });
+                      foundNewImage = true;
+                      break;
+                    }
+                  }
+                }
+              } catch {
+                // swallow and retry
+              }
+              // wait 5 seconds before next attempt
+              // eslint-disable-next-line no-await-in-loop
+              await new Promise((resolve) => setTimeout(resolve, 5000));
+            }
+            if (!ejectionPollAbortRef.current) {
+              setEjectionCheckPolling(false);
+              if (!foundNewImage) {
+                console.debug('ejection polling loop ended (timeout)', { maxAttempts });
+                // Reset the run guard only on a real timeout. If we broke early due to
+                // a newly detected image, the JOB_RESULT handler + gallery fetch should
+                // be responsible for resetting the guard.
+                ejectionCheckStartGuardRef.current = false;
+              }
+            }
+          })();
+      }
+    } catch (err) {
+      setEjectionCheckError(err?.message || 'Failed to start ejection check');
+      ejectionCheckStartGuardRef.current = false;
+    } finally {
+      setEjectionCheckLoading(false);
+    }
+  }, [selectedMagazine, socket, kiosk, ejectionImagesByMag, showActionMessage, ejectionCheckOverrideRemote, setEjectionImagesByMag]);
+
+  const handleCloseEjectionCheckModal = useCallback(() => {
+    console.debug('ejection modal close: abort polling');
+    ejectionPollAbortRef.current = true;
+    ejectionCheckStartGuardRef.current = false;
+    if (socket && ejectionJobResultHandlerRef.current) {
+      socket.off('async.JOB_RESULT', ejectionJobResultHandlerRef.current);
+      ejectionJobResultHandlerRef.current = null;
+    }
+    lastEjectionJobResultIdRef.current = null;
+    setEjectionCheckConfirmOpen(false);
+    setEjectionCheckError(null);
+    setEjectionCheckLoading(false);
+    setEjectionCheckOverrideRemote(false);
+    setEjectionCheckPolling(false);
+    setEjectionCheckResult(null);
+    setEjectionCheckImages(null);
+    setEjectionCheckImagesLoading(false);
+    setEjectionCheckImagesFetchError(null);
+  }, [socket]);
 
   const handleConfirmCapture = useCallback(async () => {
     if (selectedMagazine == null || !socket?.requestIfSupported) return;
@@ -356,12 +697,6 @@ export default function InventoryPage({ connected, socket }) {
   const captureImageDataUrl = (base64) => `data:image/jpeg;base64,${base64}`;
   const handleCaptureImageFullscreen = (base64, label) => setFullscreenImage({ base64, label: label || 'Image' });
 
-  useEffect(() => {
-    if (!fullscreenImage) return;
-    const onKeyDown = (e) => { if (e.key === 'Escape') setFullscreenImage(null); };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [fullscreenImage]);
   const handleCaptureImageDownload = (base64, label) => {
     const a = document.createElement('a');
     a.href = captureImageDataUrl(base64);
@@ -951,10 +1286,20 @@ export default function InventoryPage({ connected, socket }) {
       {Object.keys(ejectionImagesByMag || {}).length > 0 && (
         <Card>
           <CardContent className="pt-6 space-y-4">
-            <h3 className="text-sm font-medium">Ejection key head images</h3>
-            <p className="text-xs text-muted-foreground">
-              Showing the most recent key head check image found per magazine from recent test cuts.
-            </p>
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-medium">Ejection key head images</h3>
+                <p className="text-xs text-muted-foreground">
+                  Showing the most recent key head check image found per magazine from recent test cuts.
+                </p>
+              </div>
+              {ejectionCheckPolling && (
+                <div className="flex items-center gap-2 rounded-full border border-border bg-muted/60 px-2.5 py-1 text-[11px] text-muted-foreground">
+                  <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                  <span>Updating after ejection check…</span>
+                </div>
+              )}
+            </div>
             <div className="grid gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
               {Array.from({ length: SEGMENT_COUNT }, (_, i) => {
                 const magNum = i + 1;
@@ -1101,6 +1446,13 @@ export default function InventoryPage({ connected, socket }) {
                         <p className="text-[11px] text-muted-foreground break-all">
                           {selImg.filename}
                         </p>
+                        <button
+                          type="button"
+                          onClick={openEjectionGalleryForSelected}
+                          className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent"
+                        >
+                          View ejection run images
+                        </button>
                       </div>
                     );
                   })()}
@@ -1360,7 +1712,7 @@ export default function InventoryPage({ connected, socket }) {
               )}
             </div>
             {advancedOpen && selectedMagazine != null && (
-              <div className="shrink-0 border-t border-border p-4">
+              <div className="shrink-0 border-t border-border p-4 space-y-2">
                 <button
                   type="button"
                   disabled={isDisabled || actionLoading || captureLoading}
@@ -1370,11 +1722,60 @@ export default function InventoryPage({ connected, socket }) {
                   {captureLoading ? <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden /> : <Camera className="size-5 shrink-0" aria-hidden />}
                   Rotate to this magazine & capture
                 </button>
+                <div className="space-y-1">
+                  <button
+                    type="button"
+                    disabled={
+                      isDisabled || actionLoading || ejectionCheckLoading || ejectionCheckPolling || ejectionCheckImagesLoading
+                    }
+                    onClick={handleOpenEjectionCheckConfirm}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-md border border-indigo-500/50 bg-indigo-500/10 px-3 py-2 text-sm font-medium text-indigo-800 hover:bg-indigo-500/20 disabled:opacity-50 dark:text-indigo-200"
+                  >
+                    {(ejectionCheckLoading || ejectionCheckPolling || ejectionCheckImagesLoading) ? (
+                      <Loader2 className="size-5 shrink-0 animate-spin" aria-hidden />
+                    ) : (
+                      <Camera className="size-5 shrink-0" aria-hidden />
+                    )}
+                    {ejectionCheckPolling
+                      ? 'Running ejection check…'
+                      : ejectionCheckImagesLoading
+                        ? 'Loading ejection images…'
+                        : 'Run ejection check'}
+                  </button>
+                  {selectedMagazine != null && ejectionImagesByMag[selectedMagazine] && (() => {
+                    const selImg = ejectionImagesByMag[selectedMagazine].image;
+                    const takenLabel = formatKeyHeadTaken(selImg.key ?? selImg.filename);
+                    return (
+                      <p className="text-xs text-muted-foreground">
+                        Last ejection image{takenLabel ? `: ${takenLabel}` : ''}.
+                      </p>
+                    );
+                  })()}
+                  {selectedMagazine != null && !ejectionImagesByMag[selectedMagazine] && (
+                    <p className="text-xs text-muted-foreground">
+                      No ejection image found yet for this magazine.
+                    </p>
+                  )}
+                </div>
               </div>
             )}
           </aside>
-          <Dialog open={captureConfirmOpen} onOpenChange={(open) => !open && handleCloseCaptureModal()}>
-            <DialogContent showClose={true} onClose={handleCloseCaptureModal} className="max-w-5xl w-[92vw] max-h-[90vh] overflow-y-auto">
+          <Dialog
+            open={captureConfirmOpen}
+            onOpenChange={(open) => {
+              if (!open && !fullscreenImage) handleCloseCaptureModal();
+            }}
+          >
+            <DialogContent
+              showClose={true}
+              onClose={handleCloseCaptureModal}
+              onEscapeKeyDown={(e) => {
+                if (fullscreenImage) {
+                  e.preventDefault();
+                }
+              }}
+              className="max-w-5xl w-[92vw] max-h-[90vh] overflow-y-auto"
+            >
               <DialogHeader>
                 <DialogTitle>Rotate to camera &amp; capture</DialogTitle>
                 {!captureLoading && !captureImages && !captureError && (
@@ -1522,30 +1923,242 @@ export default function InventoryPage({ connected, socket }) {
               </div>
             </DialogContent>
           </Dialog>
+          <Dialog
+            open={ejectionCheckConfirmOpen}
+            onOpenChange={(open) => {
+              if (!open && !fullscreenImage) handleCloseEjectionCheckModal();
+            }}
+          >
+            <DialogContent
+              showClose={true}
+              onClose={handleCloseEjectionCheckModal}
+              onInteractOutside={(e) => e.preventDefault()}
+              onEscapeKeyDown={(e) => {
+                if (fullscreenImage) {
+                  e.preventDefault();
+                }
+              }}
+              className="max-w-xl w-[92vw]"
+            >
+              <DialogHeader>
+                <DialogTitle>Run ejection check</DialogTitle>
+                {!ejectionCheckLoading && !ejectionCheckError && !ejectionCheckPolling && (
+                  <DialogDescription>
+                    This will run the ejector checks script for magazine {selectedMagazine}. The kiosk will eject one key (with retries)
+                    and record test cuts. New key head images will appear in the ejection grid and below once processing completes. Continue?
+                  </DialogDescription>
+                )}
+              </DialogHeader>
+              <div className="flex flex-col gap-4 pt-2">
+                {ejectionCheckLoading && (
+                  <div className="flex flex-col items-center justify-center gap-3 py-6">
+                    <Loader2 className="size-8 animate-spin text-muted-foreground" aria-hidden />
+                    <p className="text-sm text-muted-foreground">Starting ejector checks…</p>
+                    <p className="text-xs text-muted-foreground">This can take several minutes. The kiosk may move and eject keys.</p>
+                  </div>
+                )}
+                {ejectionCheckPolling && !ejectionCheckLoading && !ejectionCheckError && !ejectionCheckResult && (
+                  <div className="flex flex-col items-center justify-center gap-2 py-4">
+                    <Loader2 className="size-6 animate-spin text-muted-foreground" aria-hidden />
+                    <p className="text-sm text-muted-foreground">Waiting for new ejection image from cloud…</p>
+                    <p className="text-xs text-muted-foreground">We refresh recent test cuts every few seconds. This can take up to a couple of minutes.</p>
+                  </div>
+                )}
+                {ejectionCheckResult && (
+                  <div className="space-y-2 rounded-md border bg-muted/10 p-3">
+                    <p className="text-xs font-medium text-foreground/80">
+                      Latest ejection image for magazine {selectedMagazine} (ID {ejectionCheckResult.id})
+                    </p>
+                    <img
+                      src={ejectionCheckResult.image.url}
+                      alt={ejectionCheckResult.image.filename}
+                      className="max-h-48 w-full rounded border border-border object-contain bg-background"
+                    />
+                    <p className="text-[11px] text-muted-foreground break-all">
+                      {ejectionCheckResult.image.filename}
+                    </p>
+                  </div>
+                )}
+                {ejectionCheckImagesLoading && (
+                  <div className="flex flex-col items-center justify-center gap-2 py-4">
+                    <Loader2 className="size-5 animate-spin text-muted-foreground" aria-hidden />
+                    <p className="text-xs text-muted-foreground">Loading all images for this ejection run…</p>
+                  </div>
+                )}
+                {ejectionCheckImages && ejectionCheckImages.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-foreground/80">All images for this ejection run</p>
+                    <div className="grid grid-cols-2 gap-2 max-h-72 overflow-y-auto">
+                      {ejectionCheckImages.map((img, idx) => (
+                        <button
+                          key={`${img.key || img.filename || idx}`}
+                          type="button"
+                          className="group flex flex-col gap-1 rounded-md border border-border bg-background p-1 text-left"
+                          onClick={() => {
+                            setFullscreenImages(ejectionCheckImages);
+                            setFullscreenIndex(idx);
+                            setFullscreenImage({
+                              base64: null,
+                              label: img.filename || 'Image',
+                              url: img.url,
+                            });
+                          }}
+                        >
+                          <img
+                            src={img.url}
+                            alt={img.filename}
+                            className="h-28 w-full rounded border border-border object-contain bg-muted/40"
+                          />
+                          <span className="line-clamp-2 break-all text-[11px] text-muted-foreground group-hover:text-foreground">
+                            {img.filename}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {ejectionCheckImagesFetchError && !ejectionCheckImagesLoading && (
+                  <p className="text-xs text-destructive">{ejectionCheckImagesFetchError}</p>
+                )}
+                {ejectionCheckImages && ejectionCheckImages.length === 0 && !ejectionCheckImagesLoading && (
+                  <p className="text-xs text-muted-foreground">
+                    No additional images were returned for this ejection run from the cloud API.
+                  </p>
+                )}
+                {ejectionCheckError && !ejectionCheckLoading && (
+                  <>
+                    <p className="text-sm text-destructive">{ejectionCheckError}</p>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={handleCloseEjectionCheckModal}
+                        className="rounded-md bg-muted px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/80"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </>
+                )}
+                {!ejectionCheckLoading && !ejectionCheckError && (
+                  <>
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={ejectionCheckOverrideRemote}
+                        disabled={ejectionCheckLoading || ejectionCheckPolling || ejectionCheckImagesLoading}
+                        onChange={(e) => setEjectionCheckOverrideRemote(e.target.checked)}
+                        className="rounded border-input"
+                      />
+                      Allow while developer/fab session is connected (override safety check)
+                    </label>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={handleCloseEjectionCheckModal}
+                        className="rounded-md bg-muted px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/80"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleConfirmEjectionCheck}
+                        disabled={
+                          isDisabled || ejectionCheckLoading || ejectionCheckPolling || ejectionCheckImagesLoading
+                        }
+                        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                      >
+                        Run ejection check
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
           {fullscreenImage && (
             <div
-              className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/95 p-4"
+              className="fixed inset-0 z-[100] pointer-events-auto flex flex-col items-center justify-center bg-black/95 p-4"
               role="dialog"
               aria-modal="true"
               aria-label={`Fullscreen: ${fullscreenImage.label}`}
-              onClick={() => setFullscreenImage(null)}
+              onClick={(e) => {
+                // Prevent accidental background clicks from interacting with underlying modals.
+                e.stopPropagation();
+              }}
             >
               <p className="absolute left-4 top-4 text-sm text-white/90">{fullscreenImage.label}</p>
               <button
                 type="button"
-                onClick={() => setFullscreenImage(null)}
+                onClick={() => {
+                  setFullscreenImage(null);
+                  setFullscreenImages(null);
+                  setFullscreenIndex(null);
+                }}
                 className="absolute right-4 top-4 rounded-md bg-white/10 p-2 text-white hover:bg-white/20"
                 aria-label="Close fullscreen"
               >
                 <X className="size-5" />
               </button>
+              {fullscreenImages && fullscreenImages.length > 1 && fullscreenIndex != null && (
+                <>
+                  <button
+                    type="button"
+                    className="absolute left-4 top-1/2 -translate-y-1/2 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+                    aria-label="Previous image"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const nextIndex =
+                        (fullscreenIndex - 1 + fullscreenImages.length) % fullscreenImages.length;
+                      setFullscreenIndex(nextIndex);
+                      const img = fullscreenImages[nextIndex];
+                      setFullscreenImage({
+                        base64: null,
+                        url: img.url,
+                        label: img.filename || fullscreenImage.label,
+                      });
+                    }}
+                  >
+                    ‹
+                  </button>
+                  <button
+                    type="button"
+                    className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+                    aria-label="Next image"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const nextIndex = (fullscreenIndex + 1) % fullscreenImages.length;
+                      setFullscreenIndex(nextIndex);
+                      const img = fullscreenImages[nextIndex];
+                      setFullscreenImage({
+                        base64: null,
+                        url: img.url,
+                        label: img.filename || fullscreenImage.label,
+                      });
+                    }}
+                  >
+                    ›
+                  </button>
+                </>
+              )}
               <img
-                src={captureImageDataUrl(fullscreenImage.base64)}
+                src={fullscreenImage.url || (fullscreenImage.base64 ? captureImageDataUrl(fullscreenImage.base64) : '')}
                 alt={fullscreenImage.label}
                 className="max-h-[90vh] max-w-full object-contain"
-                onClick={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!fullscreenImages || fullscreenImages.length <= 1 || fullscreenIndex == null) return;
+                  const nextIndex = (fullscreenIndex + 1) % fullscreenImages.length;
+                  setFullscreenIndex(nextIndex);
+                  const img = fullscreenImages[nextIndex];
+                  if (!img?.url) return;
+                  setFullscreenImage({
+                    base64: null,
+                    url: img.url,
+                    label: img.filename || fullscreenImage.label,
+                  });
+                }}
               />
-              <p className="mt-2 text-xs text-white/70">Click outside or press Escape to close</p>
+              <p className="mt-2 text-xs text-white/70">Esc or X closes. Click image or use Left/Right arrows to cycle.</p>
             </div>
           )}
         </>
