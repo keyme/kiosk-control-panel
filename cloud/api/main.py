@@ -37,9 +37,9 @@ from starlette.staticfiles import StaticFiles
 
 from control_panel.cloud.api import create_auth_router, create_router
 from control_panel.cloud.api.auth import (
-    ANF_BASE_URL,
     API_ENV,
     get_user_identifier_for_token,
+    LOGIN_BASE_URL,
     PERMISSIONS_ADMIN_URL,
     validate_token_async,
     validate_permission_async,
@@ -291,7 +291,7 @@ class _AuditLogMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     log.info(
-        f"Control panel cloud API app loaded static_root={_STATIC_ROOT} API_ENV={API_ENV} ANF_BASE_URL={ANF_BASE_URL}"
+        f"Control panel cloud API app loaded static_root={_STATIC_ROOT} API_ENV={API_ENV} LOGIN_BASE_URL={LOGIN_BASE_URL}"
     )
     asyncio.create_task(_orphan_workspace_cleanup_loop())
     async with httpx.AsyncClient(timeout=10.0) as client:

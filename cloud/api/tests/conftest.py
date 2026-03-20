@@ -108,7 +108,7 @@ def client(_mock_aws_session):
     """FastAPI TestClient with mocked S3 underneath.
 
     Auth is bypassed: ``get_current_user`` always returns a fake user so
-    existing tests don't need a real KeyMe/ANF token.
+    existing tests don't need a real KeyMe/admin token.
     """
     from control_panel.cloud.api.auth import get_current_user
     from control_panel.cloud.api.main import app

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Body, Depends, Query
 from fastapi.responses import JSONResponse, Response
 
 from control_panel.cloud.api.auth import (
-    ANF_BASE_URL,
+    API_ENV,
     LOGIN_BASE_URL,
     evict_token_caches,
     get_current_user,
@@ -65,14 +65,15 @@ def create_auth_router() -> APIRouter:
     def login(body: dict = Body(...)):
         """Proxy login to admin users/authenticate. Returns keyme_token on success."""
         _log.info(f"login attempt email={body.get('email')}")
+        url = f"{LOGIN_BASE_URL}/users/authenticate"
         try:
             resp = httpx.post(
-                f"{LOGIN_BASE_URL}/users/authenticate",
+                url,
                 json=body,
                 timeout=10.0,
             )
         except httpx.HTTPError as exc:
-            _log.warning(f"Admin login request failed: {exc}")
+            _log.warning(f"Admin login request failed url={url} API_ENV={API_ENV} exc={exc}")
             return JSONResponse({"error": "Login service unavailable"}, status_code=502)
         if 200 <= resp.status_code < 300:
             data = resp.json()
@@ -85,20 +86,12 @@ def create_auth_router() -> APIRouter:
 
     @router.post("/logout")
     def logout(body: dict = Body(...)):
-        """Proxy logout to ANF and evict the token from the local cache."""
+        """Evict the token from the local cache. Admin does not have a logout endpoint."""
+        # TODO: Admin API does not have a logout endpoint; we only evict locally.
         session_token = body.get("session_token", "")
         _log.info("logout request")
         evict_token_caches(session_token)
-        try:
-            resp = httpx.post(
-                f"{ANF_BASE_URL}/api/logout",
-                json=body,
-                timeout=10.0,
-            )
-        except httpx.HTTPError as exc:
-            _log.warning(f"ANF logout request failed: {exc}")
-            return JSONResponse({"error": "Logout service unavailable"}, status_code=502)
-        return JSONResponse(resp.json(), status_code=resp.status_code)
+        return JSONResponse({"status": "ok"}, status_code=200)
 
     return router
 
