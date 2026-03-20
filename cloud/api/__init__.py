@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse, Response
 
 from control_panel.cloud.api.auth import (
     ANF_BASE_URL,
+    LOGIN_BASE_URL,
     evict_token_caches,
     get_current_user,
     store_user_identifier_for_token,
@@ -62,16 +63,16 @@ def create_auth_router() -> APIRouter:
 
     @router.post("/login")
     def login(body: dict = Body(...)):
-        """Proxy login to ANF. Returns keyme_token on success."""
+        """Proxy login to admin users/authenticate. Returns keyme_token on success."""
         _log.info(f"login attempt email={body.get('email')}")
         try:
             resp = httpx.post(
-                f"{ANF_BASE_URL}/api/login",
+                f"{LOGIN_BASE_URL}/users/authenticate",
                 json=body,
                 timeout=10.0,
             )
         except httpx.HTTPError as exc:
-            _log.warning(f"ANF login request failed: {exc}")
+            _log.warning(f"Admin login request failed: {exc}")
             return JSONResponse({"error": "Login service unavailable"}, status_code=502)
         if 200 <= resp.status_code < 300:
             data = resp.json()

@@ -1,4 +1,4 @@
-"""Tests for KeyMe/ANF opaque-token authentication."""
+"""Tests for KeyMe/admin opaque-token authentication."""
 
 from unittest.mock import patch, MagicMock
 
@@ -47,11 +47,11 @@ class TestMissingToken:
 
 
 class TestInvalidToken:
-    @patch("control_panel.cloud.api.auth.httpx.get")
-    def test_anf_non_200_returns_401(self, mock_get):
+    @patch("control_panel.cloud.api.auth.httpx.request")
+    def test_admin_non_200_returns_401(self, mock_request):
         mock_resp = MagicMock()
         mock_resp.status_code = 403
-        mock_get.return_value = mock_resp
+        mock_request.return_value = mock_resp
 
         client, app, dep, _cache = _make_raw_client()
         try:
@@ -61,12 +61,10 @@ class TestInvalidToken:
             _restore_override(app, dep)
 
     @patch("control_panel.cloud.api.auth.API_ENV", "prod")
-    @patch("control_panel.cloud.api.auth.httpx.get")
-    def test_granted_false_returns_401(self, mock_get):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"granted": False, "permission": "check_kiosk_status"}
-        mock_get.return_value = mock_resp
+    @patch("control_panel.cloud.api.auth._fetch_permissions_from_admin")
+    def test_granted_false_returns_401(self, mock_fetch):
+        # Admin returns list of permissions; missing check_kiosk_status -> Access denied
+        mock_fetch.return_value = ["other_permission"]
 
         client, app, dep, _cache = _make_raw_client()
         try:
@@ -78,12 +76,10 @@ class TestInvalidToken:
 
 
 class TestValidToken:
-    @patch("control_panel.cloud.api.auth.httpx.get")
-    def test_granted_true_allows_request(self, mock_get):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"granted": True, "permission": "check_kiosk_status"}
-        mock_get.return_value = mock_resp
+    @patch("control_panel.cloud.api.auth._fetch_permissions_from_admin")
+    def test_granted_true_allows_request(self, mock_fetch):
+        # Admin returns list including check_kiosk_status
+        mock_fetch.return_value = ["check_kiosk_status", "reboot_kiosk"]
 
         client, app, dep, _cache = _make_raw_client()
         try:
@@ -95,58 +91,51 @@ class TestValidToken:
 
 
 class TestTokenCaching:
-    @patch("control_panel.cloud.api.auth.httpx.get")
-    def test_second_call_uses_cache(self, mock_get):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"granted": True, "permission": "check_kiosk_status"}
-        mock_get.return_value = mock_resp
+    @patch("control_panel.cloud.api.auth._fetch_permissions_from_admin")
+    def test_second_call_uses_cache(self, mock_fetch):
+        mock_fetch.return_value = ["check_kiosk_status"]
 
         client, app, dep, _cache = _make_raw_client()
         try:
-            # First call — hits ANF
+            # First call — hits admin
             resp1 = client.get("/api/ping", headers={"KEYME-TOKEN": "cached-token"})
             assert resp1.status_code == 200
-            assert mock_get.call_count == 1
+            assert mock_fetch.call_count == 1
 
-            # Second call — should use cache, no additional ANF call
+            # Second call — should use cache, no additional admin call
             resp2 = client.get("/api/ping", headers={"KEYME-TOKEN": "cached-token"})
             assert resp2.status_code == 200
-            assert mock_get.call_count == 1  # still 1
+            assert mock_fetch.call_count == 1  # still 1
         finally:
             _restore_override(app, dep)
 
 
 class TestValidatePermission:
-    """validate_permission(token, permission_slug) for fleet commands. Uses API_ENV=prod so ANF is called."""
+    """validate_permission(token, permission_slug) for fleet commands. Uses API_ENV=prod so admin is called."""
 
     def _clear_permission_cache(self):
-        from control_panel.cloud.api.auth import _permission_cache
+        from control_panel.cloud.api.auth import _permission_cache, _token_cache
         _permission_cache.clear()
+        _token_cache.clear()
 
     @patch("control_panel.cloud.api.auth.API_ENV", "prod")
-    @patch("control_panel.cloud.api.auth.httpx.get")
-    def test_granted_true_returns_true_and_user_id(self, mock_get):
+    @patch("control_panel.cloud.api.auth._fetch_permissions_from_admin")
+    def test_granted_true_returns_true_no_user_identifier(self, mock_fetch):
         self._clear_permission_cache()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"granted": True, "email": "u@example.com"}
-        mock_get.return_value = mock_resp
+        # Admin returns list of permissions; user_id is None (admin doesn't return it)
+        mock_fetch.return_value = ["reboot_kiosk", "check_kiosk_status"]
 
         from control_panel.cloud.api.auth import validate_permission
         granted, user_id = validate_permission("tok", "reboot_kiosk")
         assert granted is True
-        assert user_id == "u@example.com"
-        assert mock_get.call_count == 1
+        assert user_id is None
+        assert mock_fetch.call_count == 1
 
     @patch("control_panel.cloud.api.auth.API_ENV", "prod")
-    @patch("control_panel.cloud.api.auth.httpx.get")
-    def test_granted_false_returns_false(self, mock_get):
+    @patch("control_panel.cloud.api.auth._fetch_permissions_from_admin")
+    def test_granted_false_returns_false(self, mock_fetch):
         self._clear_permission_cache()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"granted": False}
-        mock_get.return_value = mock_resp
+        mock_fetch.return_value = ["other_permission"]  # no reboot_kiosk
 
         from control_panel.cloud.api.auth import validate_permission
         granted, user_id = validate_permission("tok", "reboot_kiosk")
@@ -154,18 +143,15 @@ class TestValidatePermission:
         assert user_id is None
 
     @patch("control_panel.cloud.api.auth.API_ENV", "prod")
-    @patch("control_panel.cloud.api.auth.httpx.get")
-    def test_cache_prevents_second_anf_call(self, mock_get):
+    @patch("control_panel.cloud.api.auth._fetch_permissions_from_admin")
+    def test_cache_prevents_second_admin_call(self, mock_fetch):
         self._clear_permission_cache()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"granted": True}
-        mock_get.return_value = mock_resp
+        mock_fetch.return_value = ["clear_cutter_stuck", "check_kiosk_status"]
 
         from control_panel.cloud.api.auth import validate_permission
         validate_permission("cache-token", "clear_cutter_stuck")
         validate_permission("cache-token", "clear_cutter_stuck")
-        assert mock_get.call_count == 1
+        assert mock_fetch.call_count == 1
 
     def test_empty_token_returns_false_none(self):
         from control_panel.cloud.api.auth import validate_permission
@@ -174,12 +160,10 @@ class TestValidatePermission:
         assert user_id is None
 
     @patch("control_panel.cloud.api.auth.API_ENV", "prod")
-    @patch("control_panel.cloud.api.auth.httpx.get")
-    def test_non_200_returns_false_none(self, mock_get):
+    @patch("control_panel.cloud.api.auth._fetch_permissions_from_admin")
+    def test_non_200_returns_false_none(self, mock_fetch):
         self._clear_permission_cache()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 403
-        mock_get.return_value = mock_resp
+        mock_fetch.return_value = None  # Admin returns None on error
 
         from control_panel.cloud.api.auth import validate_permission
         granted, user_id = validate_permission("tok", "reboot_kiosk")
