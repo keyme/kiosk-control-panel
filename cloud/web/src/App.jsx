@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { createContext, useContext, useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
   Gauge,
@@ -45,7 +45,7 @@ import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import { getToken, apiFetch } from '@/lib/apiFetch';
 import LoginPage from '@/pages/LoginPage';
 
-const DeviceHostContext = createContext({ deviceHost: '', setDeviceHost: () => {} });
+const DeviceHostContext = createContext({ deviceHost: '', setDeviceHost: () => {}, reconnect: () => {} });
 /** Key that changes when the connected device changes; used to remount kiosk-scoped pages so they clear old data. */
 const DeviceKeyContext = createContext('');
 
@@ -125,7 +125,7 @@ function TitleItem({ icon: Icon, label, children, className, title, ...rest }) {
 }
 
 function Layout({ kioskName, connected, lastError, connectionRejected, disconnectedDueToInactivity, panelInfo, terminals, connectionCount, children }) {
-  const { deviceHost, setDeviceHost } = useContext(DeviceHostContext);
+  const { deviceHost, setDeviceHost, reconnect } = useContext(DeviceHostContext);
   const { logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -167,6 +167,10 @@ function Layout({ kioskName, connected, lastError, connectionRejected, disconnec
   const commitHost = () => {
     const v = normalizeDeviceHost(editValue.trim());
     if (!v) return;
+    if (v === deviceHost && !connected) {
+      reconnect();
+      return;
+    }
     setDeviceHost(v);
     const pathWithoutFirst = location.pathname.replace(/^\/[^/]+/, '') || '';
     navigate(`${pathWithoutFirst ? `/${v}${pathWithoutFirst}` : `/${v}`}`);
@@ -641,11 +645,16 @@ function AppContent() {
     };
   }, [socket, connected]);
 
+  const reconnect = useCallback(() => {
+    setLastError(null);
+    socket?.connect();
+  }, [socket]);
+
   const canonicalDeviceId = normalizeDeviceHost(kioskName || deviceHost || '');
   const deviceKey = connected ? (canonicalDeviceId || 'connected') : 'disconnected';
   return (
     <DeviceKeyContext.Provider value={deviceKey}>
-      <DeviceHostContext.Provider value={{ deviceHost, setDeviceHost }}>
+      <DeviceHostContext.Provider value={{ deviceHost, setDeviceHost, reconnect }}>
         <Layout
           kioskName={kioskName}
           connected={connected}
